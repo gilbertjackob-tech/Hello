@@ -1,0 +1,35 @@
+node_modules/
+build/
+dist/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
+
+# Android local/build artifacts
+apps/android.zip
+*.zip
+*.jks
+*.keystore
+pps/android.zip
+
+# Android signing secrets
+apps/android/local-signing.properties
+*.jks
+*.keystore
+/apps/android/gradle.properties
+apps/android/app/hello-release-key.jks
+apps/android/gradle.properties
+apps/android/hello-release-key.jks
+# Android Studio
+.idea/
+*.iml
+apps/.idea/
+apps/android/.idea/
+
+# Android build/cache
+apps/android/.kotlin/
+apps/android/.gradle/
+apps/android/build/
+apps/android/app/build/

@@ -1,0 +1,18 @@
+{
+  "name": "hello-glassbox-suite",
+  "private": true,
+  "version": "0.1.0",
+  "description": "GlassBox Browser integrated with Hello chat app",
+  "workspaces": [
+    "apps/browser",
+    "apps/hello"
+  ],
+  "scripts": {
+    "install:all": "npm install",
+    "dev": "npm run build && npm --workspace apps/browser run electron:integrated",
+    "browser:dev": "npm --workspace apps/browser run electron:dev",
+    "hello:dev": "npm --workspace apps/hello run dev",
+    "build": "npm --workspace apps/hello run build && npm --workspace apps/browser run build",
+    "test": "npm --workspace apps/browser run lint"
+  }
+}

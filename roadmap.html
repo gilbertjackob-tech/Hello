@@ -1,0 +1,990 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Hello / GlassChat Fix Roadmap Checklist</title>
+  <style>
+    :root {
+      --bg: #f4f7f6;
+      --card: #ffffff;
+      --text: #17211d;
+      --muted: #66746d;
+      --primary: #0f9f6e;
+      --primary-dark: #08714e;
+      --danger: #c62828;
+      --high: #e07000;
+      --medium: #8a6d00;
+      --low: #3867d6;
+      --border: #dce7e2;
+      --shadow: 0 10px 30px rgba(16, 42, 32, 0.08);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: Inter, Segoe UI, Roboto, Arial, sans-serif;
+      background: linear-gradient(135deg, #e9f8f0 0%, #f7fbfa 48%, #eef6ff 100%);
+      color: var(--text);
+      line-height: 1.55;
+    }
+
+    header {
+      padding: 34px 22px 20px;
+      background: #09291f;
+      color: white;
+      border-bottom: 5px solid var(--primary);
+    }
+
+    .wrap {
+      max-width: 1180px;
+      margin: 0 auto;
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: clamp(28px, 4vw, 46px);
+      letter-spacing: -0.04em;
+    }
+
+    .subtitle {
+      margin: 0;
+      color: #cfe8dd;
+      max-width: 900px;
+      font-size: 16px;
+    }
+
+    .toolbar {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      background: rgba(255, 255, 255, 0.94);
+      backdrop-filter: blur(10px);
+      border-bottom: 1px solid var(--border);
+      box-shadow: 0 8px 18px rgba(0,0,0,0.04);
+    }
+
+    .toolbar-inner {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 14px 22px;
+      display: grid;
+      gap: 12px;
+      grid-template-columns: 1fr auto auto auto;
+      align-items: center;
+    }
+
+    .progress-box {
+      min-width: 260px;
+    }
+
+    .progress-meta {
+      display: flex;
+      justify-content: space-between;
+      color: var(--muted);
+      font-size: 13px;
+      margin-bottom: 6px;
+    }
+
+    .progress-track {
+      width: 100%;
+      height: 12px;
+      background: #e7eee9;
+      border-radius: 999px;
+      overflow: hidden;
+    }
+
+    .progress-fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, var(--primary), #18c891);
+      transition: width 0.25s ease;
+    }
+
+    button, .file-btn {
+      border: 0;
+      background: var(--primary);
+      color: white;
+      padding: 10px 14px;
+      border-radius: 12px;
+      font-weight: 700;
+      cursor: pointer;
+      box-shadow: 0 8px 18px rgba(15,159,110,0.18);
+    }
+
+    button:hover, .file-btn:hover { background: var(--primary-dark); }
+    button.secondary { background: #edf5f1; color: #174837; box-shadow: none; border: 1px solid var(--border); }
+    button.danger { background: #b3261e; }
+
+    main {
+      padding: 26px 22px 60px;
+    }
+
+    .notice {
+      background: #fffdf3;
+      border: 1px solid #f0df9f;
+      border-left: 6px solid #d49a00;
+      border-radius: 18px;
+      padding: 16px 18px;
+      box-shadow: var(--shadow);
+      margin-bottom: 22px;
+    }
+
+    .notice strong { color: #6b4e00; }
+
+    .phase {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 24px;
+      box-shadow: var(--shadow);
+      margin-bottom: 24px;
+      overflow: hidden;
+    }
+
+    .phase-header {
+      padding: 20px 22px;
+      border-bottom: 1px solid var(--border);
+      background: linear-gradient(90deg, #ffffff, #f5fbf8);
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: center;
+    }
+
+    .phase h2 {
+      margin: 0;
+      font-size: 22px;
+      letter-spacing: -0.02em;
+    }
+
+    .phase-count {
+      color: var(--muted);
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .task {
+      padding: 18px 22px;
+      border-bottom: 1px solid var(--border);
+      display: grid;
+      grid-template-columns: 34px 1fr;
+      gap: 12px;
+    }
+
+    .task:last-child { border-bottom: 0; }
+
+    .task input[type="checkbox"] {
+      width: 22px;
+      height: 22px;
+      accent-color: var(--primary);
+      margin-top: 4px;
+      cursor: pointer;
+    }
+
+    .task-title {
+      font-size: 17px;
+      font-weight: 800;
+      margin-bottom: 6px;
+    }
+
+    .task-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+
+    .badge {
+      font-size: 12px;
+      font-weight: 800;
+      padding: 3px 8px;
+      border-radius: 999px;
+      background: #eef3f1;
+      color: #355247;
+    }
+
+    .critical { background: #ffebee; color: var(--danger); }
+    .high { background: #fff3e0; color: var(--high); }
+    .medium { background: #fff8d6; color: var(--medium); }
+    .low { background: #eaf0ff; color: var(--low); }
+
+    ul {
+      margin-top: 8px;
+      padding-left: 22px;
+    }
+
+    textarea {
+      width: 100%;
+      min-height: 80px;
+      resize: vertical;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 12px;
+      font-family: inherit;
+      margin-top: 10px;
+      background: #fbfefd;
+    }
+
+    .report-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+      padding: 22px;
+    }
+
+    .report-card {
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 16px;
+      background: #fbfefd;
+    }
+
+    .report-card h3 {
+      margin-top: 0;
+    }
+
+    .footer-note {
+      color: var(--muted);
+      font-size: 13px;
+      text-align: center;
+      margin-top: 32px;
+    }
+
+    @media (max-width: 820px) {
+      .toolbar-inner {
+        grid-template-columns: 1fr;
+      }
+      .report-grid {
+        grid-template-columns: 1fr;
+      }
+      .phase-header {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+    }
+
+    @media print {
+      .toolbar { display: none; }
+      body { background: white; }
+      .phase, .notice { box-shadow: none; break-inside: avoid; }
+      textarea { border: 1px solid #999; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap">
+      <h1>Hello / GlassChat Fix Roadmap</h1>
+      <p class="subtitle">Tickable task roadmap for AI/developer agents. Mark a box only when the code is implemented, tested, and proof is written. Security and data-integrity fixes must be completed before UI polish.</p>
+    </div>
+  </header>
+
+  <section class="toolbar">
+    <div class="toolbar-inner">
+      <div class="progress-box">
+        <div class="progress-meta">
+          <span id="progressText">0 / 0 completed</span>
+          <span id="progressPercent">0%</span>
+        </div>
+        <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
+      </div>
+      <button class="secondary" onclick="saveState()">Save Progress</button>
+      <button class="secondary" onclick="exportReport()">Export Report</button>
+      <button class="danger" onclick="resetState()">Reset</button>
+    </div>
+  </section>
+
+  <main class="wrap">
+    <div class="notice">
+      <strong>Agent Rule:</strong> Tick a task only when it is fully implemented and verified. For every completed item, write proof: changed files, test command/result, and manual validation. Do not tick partially completed tasks.
+    </div>
+
+    <section class="phase" data-phase="0">
+      <div class="phase-header">
+        <h2>Phase 0 — Baseline Verification</h2>
+        <span class="phase-count"></span>
+      </div>
+
+      <div class="task">
+        <input type="checkbox" id="t0-1" />
+        <label for="t0-1">
+          <div class="task-title">Confirm current project builds before changes</div>
+          <div class="task-meta"><span class="badge low">Baseline</span></div>
+          <ul>
+            <li>Run web build/test command.</li>
+            <li>Run Android build command: <code>cd apps/android && ./gradlew.bat build</code>.</li>
+            <li>Record failures before editing.</li>
+          </ul>
+          <textarea placeholder="Proof: commands run, results, current build status..."></textarea>
+        </label>
+      </div>
+
+      <div class="task">
+        <input type="checkbox" id="t0-2" />
+        <label for="t0-2">
+          <div class="task-title">Locate all affected source files</div>
+          <div class="task-meta"><span class="badge low">Baseline</span></div>
+          <ul>
+            <li>Web: server, API client, socket context, auth screen.</li>
+            <li>Android: SessionManager, SocketManager, HelloApiClient, auth/chat screens.</li>
+          </ul>
+          <textarea placeholder="Proof: list exact files and relevant functions/classes..."></textarea>
+        </label>
+      </div>
+
+      <div class="task">
+        <input type="checkbox" id="t0-3" />
+        <label for="t0-3">
+          <div class="task-title">Manually verify existing core flows</div>
+          <div class="task-meta"><span class="badge low">Baseline</span></div>
+          <ul>
+            <li>Register, login, logout.</li>
+            <li>Send/receive message.</li>
+            <li>Upload/open attachment.</li>
+          </ul>
+          <textarea placeholder="Proof: screenshots/logs/manual notes..."></textarea>
+        </label>
+      </div>
+    </section>
+
+    <section class="phase" data-phase="1">
+      <div class="phase-header">
+        <h2>Phase 1 — P0 Critical Security Fixes</h2>
+        <span class="phase-count"></span>
+      </div>
+
+      <div class="task">
+        <input type="checkbox" id="t1-1" />
+        <label for="t1-1">
+          <div class="task-title">Web: hash security answers instead of storing plaintext</div>
+          <div class="task-meta"><span class="badge critical">Critical</span><span class="badge">apps/hello/server.ts</span></div>
+          <ul>
+            <li>Use bcrypt or equivalent strong password hashing.</li>
+            <li>Registration stores only hashed answer.</li>
+            <li>Login verifies through hash compare.</li>
+            <li>Add migration/compatibility handling for old plaintext records if needed.</li>
+          </ul>
+          <textarea placeholder="Proof: files changed, database check, test result..."></textarea>
+        </label>
+      </div>
+
+      <div class="task">
+        <input type="checkbox" id="t1-2" />
+        <label for="t1-2">
+          <div class="task-title">Web: remove case-insensitive password/auth comparison</div>
+          <div class="task-meta"><span class="badge critical">Critical</span><span class="badge">Auth</span></div>
+          <ul>
+            <li>Remove <code>LOWER(securityAnswer)</code> and answer <code>.toLowerCase()</code> auth logic.</li>
+            <li>Exact answer should pass; case variants should fail.</li>
+          </ul>
+          <textarea placeholder="Proof: test MySecret vs mysecret/MYSECRET..."></textarea>
+        </label>
+      </div>
+
+      <div class="task">
+        <input type="checkbox" id="t1-3" />
+        <label for="t1-3">
+          <div class="task-title">Web: add real auth token/session layer</div>
+          <div class="task-meta"><span class="badge critical">Critical</span><span class="badge">Session/JWT</span></div>
+          <ul>
+            <li>Login returns authenticated token/session.</li>
+            <li>Protected endpoints verify token/session.</li>
+            <li>Logout clears/revokes session where applicable.</li>
+            <li>Do not trust client-provided identity.</li>
+          </ul>
+          <textarea placeholder="Proof: auth middleware, protected endpoint tests..."></textarea>
+        </label>
+      </div>
+
+      <div class="task">
+        <input type="checkbox" id="t1-4" />
+        <label for="t1-4">
+          <div class="task-title">Web: prevent sender identity spoofing</div>
+          <div class="task-meta"><span class="badge critical">Critical</span><span class="badge">Messaging</span></div>
+          <ul>
+            <li>Server derives senderId/senderName from authenticated session.</li>
+            <li>Ignore or reject spoofed sender fields from request body/socket payload.</li>
+            <li>Test fake senderId attack.</li>
+          </ul>
+          <textarea placeholder="Proof: spoof attempt rejected/overridden..."></textarea>
+        </label>
+      </div>
+
+      <div class="task">
+        <input type="checkbox" id="t1-5" />
+        <label for="t1-5">
+          <div class="task-title">Web: secure file upload validation</div>
+          <div class="task-meta"><span class="badge critical">Critical</span><span class="badge">Uploads</span></div>
+          <ul>
+            <li>Whitelist allowed MIME types.</li>
+            <li>Validate magic bytes, not only client MIME.</li>
+            <li>Sanitize filename and prevent path traversal.</li>
+            <li>Reject fake image/script upload.</li>
+          </ul>
+          <textarea placeholder="Proof: upload tests, rejected malicious file..."></textarea>
+        </label>
+      </div>
+
+      <div class="task">
+        <input type="checkbox" id="t1-6" />
+        <label for="t1-6">
+          <div class="task-title">Android: remove plaintext credential storage</div>
+          <div class="task-meta"><span class="badge critical">Critical</span><span class="badge">SessionManager.kt</span></div>
+          <ul>
+            <li>Do not store raw security answer locally.</li>
+            <li>If tokens are stored, use EncryptedSharedPreferences / Keystore-backed storage.</li>
+            <li>Verify raw answer/token is not visible in normal SharedPreferences.</li>
+          </ul>
+          <textarea placeholder="Proof: storage implementation and verification..."></textarea>
+        </label>
+      </div>
+
+      <div class="task">
+        <input type="checkbox" id="t1-7" />
+        <label for="t1-7">
+          <div class="task-title">Android: fix API error null-body crash path</div>
+          <div class="task-meta"><span class="badge critical">Critical</span><span class="badge">HelloApiClient.kt</span></div>
+          <ul>
+            <li>Safely handle null error body.</li>
+            <li>Show user-friendly messages for HTTP 400/401/404/500.</li>
+            <li>No crash on empty error response.</li>
+          </ul>
+          <textarea placeholder="Proof: failing endpoint test, app no longer crashes..."></textarea>
+        </label>
+      </div>
+
+      <div class="task">
+        <input type="checkbox" id="t1-8" />
+        <label for="t1-8">
+          <div class="task-title">Android: stop silent JSON parsing failures</div>
+          <div class="task-meta"><span class="badge critical">Critical</span><span class="badge">SocketManager.kt</span></div>
+          <ul>
+            <li>Log parse failures safely.</li>
+            <li>Do not silently drop malformed socket data.</li>
+            <li>Do not log sensitive data.</li>
+          </ul>
+          <textarea placeholder="Proof: malformed JSON test, visible safe log/error state..."></textarea>
+        </label>
+      </div>
+    </section>
+
+    <section class="phase" data-phase="2">
+      <div class="phase-header">
+        <h2>Phase 2 — P1 Realtime Reliability</h2>
+        <span class="phase-count"></span>
+      </div>
+
+      <div class="task">
+        <input type="checkbox" id="t2-1" />
+        <label for="t2-1">
+          <div class="task-title">Web: add auth rate limiting</div>
+          <div class="task-meta"><span class="badge high">High</span><span class="badge">Security</span></div>
+          <ul>
+            <li>Protect register, login, question fetch, and socket identify if applicable.</li>
+            <li>Suggested limit: 5 attempts / 15 minutes per IP/user.</li>
+          </ul>
+          <textarea placeholder="Proof: brute-force test result..."></textarea>
+        </label>
+      </div>
+
+      <div class="task">
+        <input type="checkbox" id="t2-2" />
+        <label for="t2-2">
+          <div class="task-title">Web: authenticate socket identity during handshake</div>
+          <div class="task-meta"><span class="badge high">High</span><span class="badge">Socket</span></div>
+          <ul>
+            <li>Move identity from separate async identify call into socket handshake/auth middleware.</li>
+            <li>Reject unauthenticated socket actions.</li>
+            <li>Reconnect should not create ghost/unidentified user state.</li>
+          </ul>
+          <textarea placeholder="Proof: reconnect/auth tests..."></textarea>
+        </label>
+      </div>
+
+      <div class="task">
+        <input type="checkbox" id="t2-3" />
+        <label for="t2-3">
+          <div class="task-title">Web + Android: implement message deduplication</div>
+          <div class="task-meta"><span class="badge high">High</span><span class="badge">Idempotency</span></div>
+          <ul>
+            <li>Use stable message ID or idempotency key.</li>
+            <li>Server dedupes repeated sends/events.</li>
+            <li>Clients dedupe received messages by stable ID.</li>
+          </ul>
+          <textarea placeholder="Proof: rapid reconnect duplicate test..."></textarea>
+        </label>
+      </div>
+
+      <div class="task">
+        <input type="checkbox" id="t2-4" />
+        <label for="t2-4">
+          <div class="task-title">Android: make socket manager thread-safe</div>
+          <div class="task-meta"><span class="badge high">High</span><span class="badge">SocketManager.kt</span></div>
+          <ul>
+            <li>Use synchronized, Mutex, or AtomicReference.</li>
+            <li>Prevent multiple simultaneous socket connections.</li>
+            <li>Disconnect cleans listeners and socket reference.</li>
+          </ul>
+          <textarea placeholder="Proof: concurrent connect test/logs..."></textarea>
+        </label>
+      </div>
+
+      <div class="task">
+        <input type="checkbox" id="t2-5" />
+        <label for="t2-5">
+          <div class="task-title">Web + Android: add message ACK protocol</div>
+          <div class="task-meta"><span class="badge high">High</span><span class="badge">Reliability</span></div>
+          <ul>
+            <li>Server emits ACK after message is accepted.</li>
+            <li>Clients show sending/sent/failed status.</li>
+            <li>Failed message allows retry.</li>
+          </ul>
+          <textarea placeholder="Proof: successful ACK and failed message retry test..."></textarea>
+        </label>
+      </div>
+
+      <div class="task">
+        <input type="checkbox" id="t2-6" />
+        <label for="t2-6">
+          <div class="task-title">Android: update chat list from socket events</div>
+          <div class="task-meta"><span class="badge high">High</span><span class="badge">ChatListScreen.kt</span></div>
+          <ul>
+            <li>Incoming messages update last message, timestamp, unread count if available, and ordering.</li>
+            <li>No manual refresh required.</li>
+          </ul>
+          <textarea placeholder="Proof: incoming message updates chat list instantly..."></textarea>
+        </label>
+      </div>
+    </section>
+
+    <section class="phase" data-phase="3">
+      <div class="phase-header">
+        <h2>Phase 3 — P2 Data Consistency, Performance & UX</h2>
+        <span class="phase-count"></span>
+      </div>
+
+      <div class="task">
+        <input type="checkbox" id="t3-1" />
+        <label for="t3-1">
+          <div class="task-title">Web + Android: use server-side message ordering</div>
+          <div class="task-meta"><span class="badge medium">Medium</span></div>
+          <ul>
+            <li>Add server timestamp and preferably monotonic sequence number.</li>
+            <li>Sort by server sequence/timestamp, not client timestamp.</li>
+          </ul>
+          <textarea placeholder="Proof: ordering test with rapid messages..."></textarea>
+        </label>
+      </div>
+
+      <div class="task">
+        <input type="checkbox" id="t3-2" />
+        <label for="t3-2">
+          <div class="task-title">Android: implement message pagination</div>
+          <div class="task-meta"><span class="badge high">High</span><span class="badge">Performance</span></div>
+          <ul>
+            <li>Backend supports limit/cursor if missing.</li>
+            <li>Android loads recent messages first.</li>
+            <li>Older messages lazy-load on scroll.</li>
+            <li>10,000-message chat does not freeze/crash.</li>
+          </ul>
+          <textarea placeholder="Proof: 10,000-message load result..."></textarea>
+        </label>
+      </div>
+
+      <div class="task">
+        <input type="checkbox" id="t3-3" />
+        <label for="t3-3">
+          <div class="task-title">Android: patch reactions without full chat reload</div>
+          <div class="task-meta"><span class="badge high">High</span><span class="badge">UX</span></div>
+          <ul>
+            <li>Patch only affected message.</li>
+            <li>Add optimistic update and rollback on failure.</li>
+            <li>Preserve scroll position.</li>
+          </ul>
+          <textarea placeholder="Proof: reaction update test..."></textarea>
+        </label>
+      </div>
+
+      <div class="task">
+        <input type="checkbox" id="t3-4" />
+        <label for="t3-4">
+          <div class="task-title">Web: cleanup typing indicator timers</div>
+          <div class="task-meta"><span class="badge medium">Medium</span><span class="badge">Memory</span></div>
+          <ul>
+            <li>Store timeout ID.</li>
+            <li>Clear previous timeout before setting new one.</li>
+            <li>Clear on component unmount.</li>
+          </ul>
+          <textarea placeholder="Proof: rapid typing test, no stale indicator..."></textarea>
+        </label>
+      </div>
+
+      <div class="task">
+        <input type="checkbox" id="t3-5" />
+        <label for="t3-5">
+          <div class="task-title">Web: protect username/display name from XSS</div>
+          <div class="task-meta"><span class="badge medium">Medium</span><span class="badge">Security</span></div>
+          <ul>
+            <li>Validate/sanitize names on server.</li>
+            <li>Escape user-generated text on render.</li>
+            <li>Do not use unsafe innerHTML.</li>
+            <li>Test malicious username payload.</li>
+          </ul>
+          <textarea placeholder="Proof: XSS payload rejected or rendered harmlessly..."></textarea>
+        </label>
+      </div>
+
+      <div class="task">
+        <input type="checkbox" id="t3-6" />
+        <label for="t3-6">
+          <div class="task-title">Web + Android: improve auth loading, retry, and validation states</div>
+          <div class="task-meta"><span class="badge medium">Medium</span><span class="badge">UX</span></div>
+          <ul>
+            <li>Show loading during security-question fetch.</li>
+            <li>Disable Continue during request.</li>
+            <li>Add retry UI on network failure.</li>
+            <li>Add username and answer validation.</li>
+            <li>Prevent duplicate submits.</li>
+          </ul>
+          <textarea placeholder="Proof: validation and network failure tests..."></textarea>
+        </label>
+      </div>
+
+      <div class="task">
+        <input type="checkbox" id="t3-7" />
+        <label for="t3-7">
+          <div class="task-title">Web + Android: clarify security-answer-as-password UX</div>
+          <div class="task-meta"><span class="badge medium">Medium</span><span class="badge">Parity</span></div>
+          <ul>
+            <li>Explain that answer is used like a password.</li>
+            <li>User must remember the exact answer.</li>
+            <li>Add confirm answer field if feasible.</li>
+            <li>Keep wording parity across web and Android.</li>
+          </ul>
+          <textarea placeholder="Proof: screenshots/copy comparison..."></textarea>
+        </label>
+      </div>
+
+      <div class="task">
+        <input type="checkbox" id="t3-8" />
+        <label for="t3-8">
+          <div class="task-title">Android: preserve auth state during mode switch</div>
+          <div class="task-meta"><span class="badge medium">Medium</span><span class="badge">State</span></div>
+          <ul>
+            <li>Do not accidentally lose typed input when switching login/register.</li>
+            <li>If request is in progress, cancel clearly or confirm before clearing.</li>
+          </ul>
+          <textarea placeholder="Proof: mode switch test..."></textarea>
+        </label>
+      </div>
+
+      <div class="task">
+        <input type="checkbox" id="t3-9" />
+        <label for="t3-9">
+          <div class="task-title">Android: auto-dismiss non-critical errors</div>
+          <div class="task-meta"><span class="badge medium">Medium</span><span class="badge">UX</span></div>
+          <ul>
+            <li>Snackbar/toast errors auto-dismiss after 2–3 seconds.</li>
+            <li>Critical errors can remain visible with retry action.</li>
+          </ul>
+          <textarea placeholder="Proof: screenshot/video/manual validation..."></textarea>
+        </label>
+      </div>
+
+      <div class="task">
+        <input type="checkbox" id="t3-10" />
+        <label for="t3-10">
+          <div class="task-title">Android: move server origin to config</div>
+          <div class="task-meta"><span class="badge medium">Medium</span><span class="badge">Config</span></div>
+          <ul>
+            <li>Move base URL to BuildConfig, Gradle config, or runtime setting.</li>
+            <li>Keep default origin and required paths.</li>
+          </ul>
+          <textarea placeholder="Proof: config file/BuildConfig usage..."></textarea>
+        </label>
+      </div>
+
+      <div class="task">
+        <input type="checkbox" id="t3-11" />
+        <label for="t3-11">
+          <div class="task-title">Android: use singleton OkHttpClient and socket lifecycle</div>
+          <div class="task-meta"><span class="badge medium">Medium</span><span class="badge">Architecture</span></div>
+          <ul>
+            <li>One shared OkHttpClient.</li>
+            <li>All screens use same socket manager.</li>
+            <li>Document connect/reconnect/disconnect/listener cleanup rules.</li>
+          </ul>
+          <textarea placeholder="Proof: code references and lifecycle test..."></textarea>
+        </label>
+      </div>
+    </section>
+
+    <section class="phase" data-phase="4">
+      <div class="phase-header">
+        <h2>Phase 4 — Parity Lock</h2>
+        <span class="phase-count"></span>
+      </div>
+
+      <div class="task">
+        <input type="checkbox" id="t4-1" />
+        <label for="t4-1">
+          <div class="task-title">Security question list matches exactly on web and Android</div>
+          <div class="task-meta"><span class="badge medium">Parity</span></div>
+          <ul>
+            <li>What was the name of your first pet?</li>
+            <li>In what city where you born?</li>
+            <li>What is your mother's maiden name?</li>
+            <li>What was the name of your first school?</li>
+            <li>What is your favorite book?</li>
+            <li>Do not silently fix typo unless migration/parity plan exists.</li>
+          </ul>
+          <textarea placeholder="Proof: web and Android constants/screenshots..."></textarea>
+        </label>
+      </div>
+
+      <div class="task">
+        <input type="checkbox" id="t4-2" />
+        <label for="t4-2">
+          <div class="task-title">Auth flow wording and order match web ↔ Android</div>
+          <div class="task-meta"><span class="badge medium">Parity</span></div>
+          <ul>
+            <li>Register: Create Account → Choose a Username → Security Question → Your Answer → Sign Up.</li>
+            <li>Login: Welcome Back → Username → Continue → Security Question → Your Answer → Sign In.</li>
+            <li>Back behavior matches expected flow.</li>
+          </ul>
+          <textarea placeholder="Proof: screenshots/snapshot tests..."></textarea>
+        </label>
+      </div>
+
+      <div class="task">
+        <input type="checkbox" id="t4-3" />
+        <label for="t4-3">
+          <div class="task-title">API and socket path parity confirmed</div>
+          <div class="task-meta"><span class="badge medium">Parity</span></div>
+          <ul>
+            <li>API base: <code>/hello/api</code></li>
+            <li>Socket path: <code>/hello/socket.io</code></li>
+            <li>Status: <code>/api/hello/status</code></li>
+            <li>Health fallback: <code>/hello/api/health</code></li>
+          </ul>
+          <textarea placeholder="Proof: config/code references..."></textarea>
+        </label>
+      </div>
+    </section>
+
+    <section class="phase" data-phase="5">
+      <div class="phase-header">
+        <h2>Phase 5 — Testing & Final Acceptance</h2>
+        <span class="phase-count"></span>
+      </div>
+
+      <div class="task">
+        <input type="checkbox" id="t5-1" />
+        <label for="t5-1">
+          <div class="task-title">Security test suite completed</div>
+          <div class="task-meta"><span class="badge critical">Required</span></div>
+          <ul>
+            <li>Brute-force protection test.</li>
+            <li>Spoofed senderId attack test.</li>
+            <li>Fake upload attack test.</li>
+            <li>Verify hashed credentials in DB.</li>
+            <li>Verify Android does not store raw answer/password.</li>
+            <li>Verify HTTPS-only communication.</li>
+          </ul>
+          <textarea placeholder="Proof: test commands/results..."></textarea>
+        </label>
+      </div>
+
+      <div class="task">
+        <input type="checkbox" id="t5-2" />
+        <label for="t5-2">
+          <div class="task-title">Functional test suite completed</div>
+          <div class="task-meta"><span class="badge high">Required</span></div>
+          <ul>
+            <li>Register → Login → Logout.</li>
+            <li>Register → Login → Send message → Receive message.</li>
+            <li>Attachment upload/download.</li>
+            <li>Socket reconnect without duplicate messages.</li>
+            <li>Failed message state and retry.</li>
+          </ul>
+          <textarea placeholder="Proof: test commands/results..."></textarea>
+        </label>
+      </div>
+
+      <div class="task">
+        <input type="checkbox" id="t5-3" />
+        <label for="t5-3">
+          <div class="task-title">Performance and lifecycle tests completed</div>
+          <div class="task-meta"><span class="badge medium">Required</span></div>
+          <ul>
+            <li>10,000-message chat loads without crash.</li>
+            <li>Initial chat load under target with pagination.</li>
+            <li>Rapid pull-to-refresh does not duplicate listeners.</li>
+            <li>Open/close app 5 times; socket reconnects cleanly.</li>
+          </ul>
+          <textarea placeholder="Proof: timing/log results..."></textarea>
+        </label>
+      </div>
+
+      <div class="task">
+        <input type="checkbox" id="t5-4" />
+        <label for="t5-4">
+          <div class="task-title">Accessibility and UX checks completed</div>
+          <div class="task-meta"><span class="badge medium">Required</span></div>
+          <ul>
+            <li>Web keyboard navigation.</li>
+            <li>Android TalkBack labels.</li>
+            <li>Form fields have accessible labels.</li>
+            <li>Dynamic security question is screen-reader friendly.</li>
+            <li>Buttons meet touch target expectations.</li>
+          </ul>
+          <textarea placeholder="Proof: manual accessibility notes/screenshots..."></textarea>
+        </label>
+      </div>
+    </section>
+
+    <section class="phase">
+      <div class="phase-header">
+        <h2>Required Final Report From AI Agent</h2>
+        <span class="phase-count">Fill before submission</span>
+      </div>
+      <div class="report-grid">
+        <div class="report-card">
+          <h3>Completed Task IDs</h3>
+          <textarea id="completedReport" placeholder="Example: t1-1, t1-2, t2-3..."></textarea>
+        </div>
+        <div class="report-card">
+          <h3>Not Completed + Reason</h3>
+          <textarea id="incompleteReport" placeholder="List incomplete tasks and why..."></textarea>
+        </div>
+        <div class="report-card">
+          <h3>Files Changed</h3>
+          <textarea id="filesReport" placeholder="List changed files..."></textarea>
+        </div>
+        <div class="report-card">
+          <h3>Security Fix Summary</h3>
+          <textarea id="securityReport" placeholder="Password hashing, sessions, sender spoofing, upload validation, Android secure storage..."></textarea>
+        </div>
+        <div class="report-card">
+          <h3>Test Results</h3>
+          <textarea id="testsReport" placeholder="Web build, Android build, security tests, functional tests, manual tests..."></textarea>
+        </div>
+        <div class="report-card">
+          <h3>Final Verdict</h3>
+          <textarea id="verdictReport" placeholder="Ready for production / Not ready for production + reason..."></textarea>
+        </div>
+      </div>
+    </section>
+
+    <p class="footer-note">This checklist saves progress in the browser localStorage. Use Export Report before sending final results back.</p>
+  </main>
+
+  <script>
+    const STORAGE_KEY = "hello_glasschat_fix_roadmap_v1";
+
+    function allInputs() {
+      return Array.from(document.querySelectorAll('input[type="checkbox"], textarea'));
+    }
+
+    function checkboxInputs() {
+      return Array.from(document.querySelectorAll('input[type="checkbox"]'));
+    }
+
+    function updateProgress() {
+      const boxes = checkboxInputs();
+      const done = boxes.filter(b => b.checked).length;
+      const total = boxes.length;
+      const percent = total ? Math.round((done / total) * 100) : 0;
+      document.getElementById('progressText').textContent = `${done} / ${total} completed`;
+      document.getElementById('progressPercent').textContent = `${percent}%`;
+      document.getElementById('progressFill').style.width = `${percent}%`;
+
+      document.querySelectorAll('.phase').forEach(phase => {
+        const phaseBoxes = Array.from(phase.querySelectorAll('input[type="checkbox"]'));
+        const countEl = phase.querySelector('.phase-count');
+        if (!countEl || phaseBoxes.length === 0) return;
+        const phaseDone = phaseBoxes.filter(b => b.checked).length;
+        countEl.textContent = `${phaseDone} / ${phaseBoxes.length} done`;
+      });
+    }
+
+    function saveState() {
+      const data = {};
+      allInputs().forEach((el, index) => {
+        const key = el.id || `textarea-${index}`;
+        data[key] = el.type === 'checkbox' ? el.checked : el.value;
+      });
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+      updateProgress();
+      alert('Progress saved in this browser.');
+    }
+
+    function loadState() {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (!raw) return;
+        const data = JSON.parse(raw);
+        allInputs().forEach((el, index) => {
+          const key = el.id || `textarea-${index}`;
+          if (!(key in data)) return;
+          if (el.type === 'checkbox') el.checked = !!data[key];
+          else el.value = data[key];
+        });
+      } catch (err) {
+        console.warn('Could not load saved checklist state', err);
+      }
+      updateProgress();
+    }
+
+    function resetState() {
+      if (!confirm('Reset all checkboxes and proof notes?')) return;
+      localStorage.removeItem(STORAGE_KEY);
+      allInputs().forEach(el => {
+        if (el.type === 'checkbox') el.checked = false;
+        else el.value = '';
+      });
+      updateProgress();
+    }
+
+    function exportReport() {
+      const boxes = checkboxInputs();
+      const completed = boxes.filter(b => b.checked).map(b => b.id);
+      const incomplete = boxes.filter(b => !b.checked).map(b => b.id);
+      const proofBlocks = [];
+
+      document.querySelectorAll('.task').forEach(task => {
+        const checkbox = task.querySelector('input[type="checkbox"]');
+        const title = task.querySelector('.task-title')?.textContent?.trim() || 'Untitled task';
+        const proof = task.querySelector('textarea')?.value?.trim() || '';
+        proofBlocks.push(`- [${checkbox.checked ? 'x' : ' '}] ${checkbox.id}: ${title}\n  Proof: ${proof || 'No proof written.'}`);
+      });
+
+      const report = `# Hello / GlassChat Fix Roadmap Export\n\nProgress: ${completed.length}/${boxes.length}\n\n## Completed\n${completed.map(id => `- ${id}`).join('\n') || '- None'}\n\n## Incomplete\n${incomplete.map(id => `- ${id}`).join('\n') || '- None'}\n\n## Task Proofs\n${proofBlocks.join('\n\n')}\n\n## Final Report Fields\n\n### Completed Task IDs\n${document.getElementById('completedReport').value || ''}\n\n### Not Completed + Reason\n${document.getElementById('incompleteReport').value || ''}\n\n### Files Changed\n${document.getElementById('filesReport').value || ''}\n\n### Security Fix Summary\n${document.getElementById('securityReport').value || ''}\n\n### Test Results\n${document.getElementById('testsReport').value || ''}\n\n### Final Verdict\n${document.getElementById('verdictReport').value || ''}\n`;
+
+      const blob = new Blob([report], { type: 'text/markdown' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'hello_glasschat_fix_roadmap_report.md';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    }
+
+    document.addEventListener('input', () => {
+      updateProgress();
+      const data = {};
+      allInputs().forEach((el, index) => {
+        const key = el.id || `textarea-${index}`;
+        data[key] = el.type === 'checkbox' ? el.checked : el.value;
+      });
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    });
+
+    loadState();
+    updateProgress();
+  </script>
+</body>
+</html>
