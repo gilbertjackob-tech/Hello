@@ -122,7 +122,7 @@ class ChatViewModel : ViewModel() {
         viewModelScope.launch {
             val result = repository.fetchMessages(chatId, limit = MESSAGE_PAGE_SIZE, offset = 0)
             if (result.isSuccess) {
-                val messages = result.getOrNull() ?: emptyList()
+                val messages = (result.getOrNull() ?: emptyList()).sortedBy { it.timestamp }.distinctBy { it.id }
                 _messagesState.value = ResultState.Success(messages)
                 _hasMoreOlderMessages.value = messages.size >= MESSAGE_PAGE_SIZE
                 _messagesPaginationOffset.value = messages.size
@@ -147,15 +147,17 @@ class ChatViewModel : ViewModel() {
                 offset = _messagesPaginationOffset.value
             )
             if (result.isSuccess) {
-                val newMessages = result.getOrNull() ?: emptyList()
+                val newMessages = (result.getOrNull() ?: emptyList()).sortedBy { it.timestamp }.distinctBy { it.id }
                 val current = _messagesState.value
+                val currentMessages = if (current is ResultState.Success) current.data else emptyList()
+                val unseenMessages = newMessages.filter { incoming -> currentMessages.none { it.id == incoming.id } }
                 val allMessages = if (current is ResultState.Success) {
-                    (newMessages + current.data).distinctBy { it.id }.sortedBy { it.timestamp }
+                    (unseenMessages + current.data).distinctBy { it.id }.sortedBy { it.timestamp }
                 } else {
-                    newMessages
+                    unseenMessages
                 }
                 _messagesState.value = ResultState.Success(allMessages)
-                _hasMoreOlderMessages.value = newMessages.size >= MESSAGE_PAGE_SIZE
+                _hasMoreOlderMessages.value = unseenMessages.isNotEmpty() && newMessages.size >= MESSAGE_PAGE_SIZE
                 _messagesPaginationOffset.value += newMessages.size
             }
             _isLoadingOlderMessages.value = false
@@ -310,7 +312,8 @@ class ChatViewModel : ViewModel() {
         attachmentType: String? = null,
         attachmentName: String? = null,
         attachmentSize: Long? = null,
-        replyTo: ChatModels.ReplyTo? = null
+        replyTo: ChatModels.ReplyTo? = null,
+        optimisticTempId: String? = null
     ) {
         _sendMessageState.value = ResultState.Loading
         viewModelScope.launch {
@@ -329,10 +332,13 @@ class ChatViewModel : ViewModel() {
             _sendMessageState.value = when {
                 result.isSuccess -> {
                     val message = result.getOrNull()!!
-                    upsertMessage(message)
+                    upsertMessage(message, optimisticTempId)
                     ResultState.Success(message)
                 }
-                result.isFailure -> ResultState.Error(result.exceptionOrNull()?.message ?: "Failed to send message")
+                result.isFailure -> {
+                    optimisticTempId?.let { markMessageFailed(it) }
+                    ResultState.Error(result.exceptionOrNull()?.message ?: "Failed to send message")
+                }
                 else -> ResultState.Error("Unknown error")
             }
         }
@@ -347,12 +353,14 @@ class ChatViewModel : ViewModel() {
         senderName: String,
         senderAvatar: String? = null,
         caption: String = "",
-        replyTo: ChatModels.ReplyTo? = null
+        replyTo: ChatModels.ReplyTo? = null,
+        optimisticTempId: String? = null
     ) {
         _uploadState.value = ResultState.Loading
         viewModelScope.launch {
             val upload = repository.uploadFile(fileName, mimeType, bytes, senderId)
             if (upload.isFailure) {
+                optimisticTempId?.let { markMessageFailed(it) }
                 _uploadState.value = ResultState.Error(upload.exceptionOrNull()?.message ?: "Failed to upload file")
                 return@launch
             }
@@ -368,7 +376,8 @@ class ChatViewModel : ViewModel() {
                 attachmentType = classifyAttachment(file.mimeType),
                 attachmentName = file.originalName,
                 attachmentSize = file.size,
-                replyTo = replyTo
+                replyTo = replyTo,
+                optimisticTempId = optimisticTempId
             )
         }
     }
@@ -388,13 +397,26 @@ class ChatViewModel : ViewModel() {
         upsertMessage(message)
     }
 
-    private fun upsertMessage(message: Message) {
+    private fun upsertMessage(message: Message, replaceTempId: String? = null) {
         val current = _messagesState.value
         val messages = if (current is ResultState.Success) current.data else emptyList()
-        val next = if (messages.any { it.id == message.id }) {
-            messages.map { if (it.id == message.id) message else it }
-        } else {
-            messages + message
+        val tempReplacementId = replaceTempId ?: findMatchingOptimisticMessageId(messages, message)
+        val next = when {
+            messages.any { it.id == message.id } -> {
+                messages.map { if (it.id == message.id) message else it }
+            }
+            tempReplacementId != null -> {
+                messages.map { candidate ->
+                    if (candidate.id == tempReplacementId) {
+                        message.copy(status = message.status ?: "sent")
+                    } else {
+                        candidate
+                    }
+                }
+            }
+            else -> {
+                messages + message
+            }
         }.sortedBy { it.timestamp }
         _messagesState.value = ResultState.Success(next)
     }
@@ -454,6 +476,24 @@ class ChatViewModel : ViewModel() {
                 attachmentName = null
             )
         }
+    }
+
+    private fun markMessageFailed(tempId: String) {
+        mutateMessages { message ->
+            if (message.id == tempId) message.copy(status = "failed") else message
+        }
+    }
+
+    private fun findMatchingOptimisticMessageId(messages: List<Message>, incoming: Message): String? {
+        return messages.firstOrNull { candidate ->
+            OptimisticMessageManager.isTempId(candidate.id) &&
+                candidate.chatId == incoming.chatId &&
+                candidate.senderId == incoming.senderId &&
+                candidate.replyTo == incoming.replyTo &&
+                candidate.text.trim() == incoming.text.trim() &&
+                candidate.attachmentName == incoming.attachmentName &&
+                kotlin.math.abs(candidate.timestamp - incoming.timestamp) <= 120_000
+        }?.id
     }
 
     fun resetSendMessageState() {

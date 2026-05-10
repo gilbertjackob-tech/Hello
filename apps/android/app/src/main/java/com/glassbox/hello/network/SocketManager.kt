@@ -10,6 +10,7 @@ import io.socket.client.Socket
 import android.util.Log
 import org.json.JSONObject
 import java.util.UUID
+import java.util.concurrent.CopyOnWriteArraySet
 
 class SocketManager private constructor() : CallSocket {
     private val gson = Gson()
@@ -18,11 +19,15 @@ class SocketManager private constructor() : CallSocket {
     private var currentUser: User? = null
     private var currentChatId: String? = null
     private var isConnecting = false
+    private val messageListeners = CopyOnWriteArraySet<(ChatModels.Message) -> Unit>()
+    private val messageUpdateListeners = CopyOnWriteArraySet<(ChatModels.Message) -> Unit>()
+    private val typingListeners = CopyOnWriteArraySet<(JSONObject) -> Unit>()
 
     var onMessageReceived: ((ChatModels.Message) -> Unit)? = null
     var onMessageUpdated: ((ChatModels.Message) -> Unit)? = null
     var onChatUpdated: ((ChatModels.Chat) -> Unit)? = null
     var onPresenceUpdated: ((JSONObject) -> Unit)? = null
+    var onTyping: ((JSONObject) -> Unit)? = null
     override var onCallEvent: ((String, JSONObject) -> Unit)? = null
     override var onConnectedChanged: ((Boolean) -> Unit)? = null
 
@@ -92,10 +97,16 @@ class SocketManager private constructor() : CallSocket {
                 onConnectedChanged?.invoke(false)
             }
             s.on("receive_message") { args ->
-                parse<ChatModels.Message>(args.firstOrNull())?.let { onMessageReceived?.invoke(it) }
+                parse<ChatModels.Message>(args.firstOrNull())?.let { message ->
+                    onMessageReceived?.invoke(message)
+                    messageListeners.forEach { listener -> listener(message) }
+                }
             }
             s.on("message_updated") { args ->
-                parse<ChatModels.Message>(args.firstOrNull())?.let { onMessageUpdated?.invoke(it) }
+                parse<ChatModels.Message>(args.firstOrNull())?.let {
+                    onMessageUpdated?.invoke(it)
+                    messageUpdateListeners.forEach { listener -> listener(it) }
+                }
             }
             s.on("chat_updated") { args ->
                 parse<ChatModels.Chat>(args.firstOrNull())?.let { onChatUpdated?.invoke(it) }
@@ -105,6 +116,12 @@ class SocketManager private constructor() : CallSocket {
             }
             s.on("presence_updated") { args ->
                 (args.firstOrNull() as? JSONObject)?.let { onPresenceUpdated?.invoke(it) }
+            }
+            s.on("user_typing") { args ->
+                parseJsonObject(args.firstOrNull())?.let {
+                    onTyping?.invoke(it)
+                    typingListeners.forEach { listener -> listener(it) }
+                }
             }
             listOf(
                 "call:start",
@@ -164,8 +181,47 @@ class SocketManager private constructor() : CallSocket {
         socket?.emit("leave_chat", chatId)
     }
 
-    fun typing(chatId: String, userId: String, userName: String) {
-        socket?.emit("typing", JSONObject(mapOf("chatId" to chatId, "userId" to userId, "userName" to userName)))
+    fun typing(chatId: String, userId: String, userName: String, isTyping: Boolean = true) {
+        socket?.emit(
+            "typing",
+            JSONObject(
+                mapOf(
+                    "chatId" to chatId,
+                    "userId" to userId,
+                    "senderName" to userName,
+                    "userName" to userName,
+                    "isTyping" to isTyping
+                )
+            )
+        )
+    }
+
+    fun markMessagesRead(chatId: String, readerId: String) {
+        socket?.emit("mark_messages_read", JSONObject(mapOf("chatId" to chatId, "readerId" to readerId)))
+    }
+
+    fun addMessageListener(listener: (ChatModels.Message) -> Unit) {
+        messageListeners.add(listener)
+    }
+
+    fun removeMessageListener(listener: (ChatModels.Message) -> Unit) {
+        messageListeners.remove(listener)
+    }
+
+    fun addMessageUpdateListener(listener: (ChatModels.Message) -> Unit) {
+        messageUpdateListeners.add(listener)
+    }
+
+    fun removeMessageUpdateListener(listener: (ChatModels.Message) -> Unit) {
+        messageUpdateListeners.remove(listener)
+    }
+
+    fun addTypingListener(listener: (JSONObject) -> Unit) {
+        typingListeners.add(listener)
+    }
+
+    fun removeTypingListener(listener: (JSONObject) -> Unit) {
+        typingListeners.remove(listener)
     }
 
     override fun startCall(payload: JSONObject) {

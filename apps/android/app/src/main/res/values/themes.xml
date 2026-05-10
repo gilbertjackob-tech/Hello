@@ -2,4 +2,10 @@
 <resources>
 
     <style name="Theme.Hello" parent="android:Theme.Material.Light.NoActionBar" />
+
+    <style name="Theme.Hello.Splash" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">#00BF63</item>
+        <item name="android:statusBarColor">#00BF63</item>
+        <item name="android:navigationBarColor">#00BF63</item>
+    </style>
 </resources>

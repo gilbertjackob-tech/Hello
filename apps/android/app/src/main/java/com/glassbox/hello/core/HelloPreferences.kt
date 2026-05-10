@@ -12,7 +12,8 @@ data class HelloSettingsState(
     val themeMode: String = "system",
     val enterSends: Boolean = true,
     val wallpaper: String = "default",
-    val wallpaperOpacity: Int = 100
+    val wallpaperOpacity: Int = 100,
+    val chatSounds: Boolean = true
 )
 
 object HelloPreferences {
@@ -21,6 +22,7 @@ object HelloPreferences {
     const val KEY_ENTER_SENDS = "enter_sends"
     const val KEY_WALLPAPER = "wallpaper"
     const val KEY_WALLPAPER_OPACITY = "wallpaper_opacity"
+    const val KEY_CHAT_SOUNDS = "chat_sounds"
 
     fun prefs(context: Context): SharedPreferences =
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -31,7 +33,8 @@ object HelloPreferences {
             themeMode = prefs.getString(KEY_THEME, "system") ?: "system",
             enterSends = prefs.getBoolean(KEY_ENTER_SENDS, true),
             wallpaper = prefs.getString(KEY_WALLPAPER, "default") ?: "default",
-            wallpaperOpacity = prefs.getInt(KEY_WALLPAPER_OPACITY, 100)
+            wallpaperOpacity = prefs.getInt(KEY_WALLPAPER_OPACITY, 100),
+            chatSounds = prefs.getBoolean(KEY_CHAT_SOUNDS, true)
         )
     }
 
@@ -49,6 +52,10 @@ object HelloPreferences {
 
     fun setWallpaperOpacity(context: Context, opacity: Int) {
         prefs(context).edit().putInt(KEY_WALLPAPER_OPACITY, opacity.coerceIn(0, 100)).apply()
+    }
+
+    fun setChatSounds(context: Context, enabled: Boolean) {
+        prefs(context).edit().putBoolean(KEY_CHAT_SOUNDS, enabled).apply()
     }
 }
 

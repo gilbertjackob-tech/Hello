@@ -1,65 +1,28 @@
 package com.glassbox.hello.chat
 
+import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.AudioManager
+import android.media.ToneGenerator
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import android.provider.OpenableColumns
 import android.provider.Settings
-import android.Manifest
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateContentSize
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.material.icons.filled.AttachFile
-import androidx.compose.material.icons.filled.Call
-import androidx.compose.material.icons.filled.CameraAlt
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Description
-import androidx.compose.material.icons.filled.EmojiEmotions
-import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.Image
-import androidx.compose.material.icons.filled.InsertDriveFile
-import androidx.compose.material.icons.filled.Link
-import androidx.compose.material.icons.filled.LocationOn
-import androidx.compose.material.icons.filled.Mic
-import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.PushPin
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Star
-import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -69,43 +32,54 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import coil.compose.SubcomposeAsyncImage
-import coil.decode.SvgDecoder
-import coil.request.ImageRequest
 import com.glassbox.hello.calls.ActiveCallScreen
 import com.glassbox.hello.calls.CallUiStatus
 import com.glassbox.hello.calls.CallViewModel
+import com.glassbox.hello.calls.GroupActiveCallScreen
 import com.glassbox.hello.calls.IncomingCallScreen
 import com.glassbox.hello.calls.OutgoingCallScreen
 import com.glassbox.hello.chat.ChatModels.Chat
 import com.glassbox.hello.chat.ChatModels.Message
+import com.glassbox.hello.chat.components.ActionMessageState
+import com.glassbox.hello.chat.components.AttachmentBottomSheet
+import com.glassbox.hello.chat.components.AttachmentDraft
+import com.glassbox.hello.chat.components.AttachmentPreviewBar
+import com.glassbox.hello.chat.components.ChatActionSheet
+import com.glassbox.hello.chat.components.ChatComposer
+import com.glassbox.hello.chat.components.ChatHeader
+import com.glassbox.hello.chat.components.ChatMessageList
+import com.glassbox.hello.chat.components.ContactShareDialog
+import com.glassbox.hello.chat.components.MediaViewer
+import com.glassbox.hello.chat.components.MediaViewerState
+import com.glassbox.hello.chat.components.MessageActionSheet
+import com.glassbox.hello.chat.components.ReplyComposerBar
+import com.glassbox.hello.chat.components.openExternalTarget
+import com.glassbox.hello.chat.components.rememberNearBottom
+import com.glassbox.hello.chat.components.visibleForUser
 import com.glassbox.hello.core.ResultState
-import com.glassbox.hello.core.UrlResolver
-import com.glassbox.hello.core.rememberHelloSettingsState
 import com.glassbox.hello.core.User
+import com.glassbox.hello.core.rememberHelloSettingsState
 import com.glassbox.hello.network.SocketManager
 import com.glassbox.hello.ui.components.ErrorView
-import com.glassbox.hello.ui.components.HelloAvatar
-import com.glassbox.hello.ui.components.HelloIconButton
-import com.glassbox.hello.ui.components.HelloPanel
 import com.glassbox.hello.ui.components.HelloSearchBar
 import com.glassbox.hello.ui.components.LoadingView
+import com.glassbox.hello.ui.theme.ChatWallpaperBackground
 import com.glassbox.hello.ui.theme.HelloColors
 import com.glassbox.hello.ui.theme.HelloShapes
 import com.glassbox.hello.ui.theme.HelloSpacing
-import com.glassbox.hello.ui.theme.ChatWallpaperBackground
-import com.glassbox.hello.ui.theme.HelloAnimations
 import com.glassbox.hello.ui.utils.AnimationUtils
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import org.json.JSONObject
 import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -128,9 +102,20 @@ fun ChatRoomScreen(
     val sendMessageState by viewModel.sendMessageState.collectAsState()
     val uploadState by viewModel.uploadState.collectAsState()
     val usersState by viewModel.usersState.collectAsState()
+    val isLoadingOlderMessages by viewModel.isLoadingOlderMessages.collectAsState()
+    val hasMoreOlderMessages by viewModel.hasMoreOlderMessages.collectAsState()
     val callState by callViewModel.state.collectAsState()
 
-    var messageText by remember { mutableStateOf("") }
+    val context = LocalContext.current
+    val clipboardManager = LocalClipboardManager.current
+    val scope = rememberCoroutineScope()
+    val socketManager = remember { SocketManager.getInstance() }
+    val voiceRecorder = remember(context) { VoiceNoteRecorder(context) }
+    val settingsState = rememberHelloSettingsState(context).value
+    val listState = rememberLazyListState()
+    val isNearBottom = rememberNearBottom(listState)
+
+    var messageText by remember(chat.id) { mutableStateOf("") }
     var showAttachmentMenu by remember { mutableStateOf(false) }
     var showChatActions by remember { mutableStateOf(false) }
     var showEmojiRow by remember { mutableStateOf(false) }
@@ -138,36 +123,51 @@ fun ChatRoomScreen(
     var manualLocationText by remember { mutableStateOf("") }
     var showContactShare by remember { mutableStateOf(false) }
     var contactQuery by remember { mutableStateOf("") }
-    var selectedMessageId by remember { mutableStateOf<String?>(null) }
-    var showMessageMenu by remember { mutableStateOf(false) }
+    var selectedMessage by remember { mutableStateOf<ActionMessageState?>(null) }
+    var deleteMode by remember { mutableStateOf("message") }
     var pendingCallIsVideo by remember { mutableStateOf(false) }
     var pendingIncomingAccept by remember { mutableStateOf(false) }
     var permissionDialog by remember { mutableStateOf(false) }
     var fileSizeError by remember { mutableStateOf<String?>(null) }
-    var pendingAttachment by remember { mutableStateOf<PickedFile?>(null) }
+    var pendingAttachment by remember { mutableStateOf<AttachmentDraft?>(null) }
     var replyTo by remember { mutableStateOf<Message?>(null) }
-    var showReactionPicker by remember { mutableStateOf(false) }
     var showDeleteConfirm by remember { mutableStateOf(false) }
     var showClearChatConfirm by remember { mutableStateOf(false) }
     var showDeleteChatConfirm by remember { mutableStateOf(false) }
     var cameraCapture by remember { mutableStateOf<CameraCapture?>(null) }
     var voiceState by remember { mutableStateOf(VoiceRecordingState()) }
-    val listState = rememberLazyListState()
-    val context = LocalContext.current
-    val voiceRecorder = remember(context) { VoiceNoteRecorder(context) }
-    val settingsState = rememberHelloSettingsState(context).value
+    var recordingElapsedSeconds by remember { mutableStateOf(0L) }
+    var typingNames by remember(chat.id) { mutableStateOf<List<String>>(emptyList()) }
+    var hasAutoScrolledInitial by remember(chat.id) { mutableStateOf(false) }
+    var lastVisibleMessageCount by remember(chat.id) { mutableStateOf(0) }
+    var mediaViewerState by remember { mutableStateOf<MediaViewerState?>(null) }
+
+    val visibleMessages = when (messagesState) {
+        is ResultState.Success -> (messagesState as ResultState.Success<List<Message>>).data.visibleForUser(currentUserId)
+        else -> emptyList()
+    }
+
     val title = chat.displayName(currentUserId)
     val other = chat.otherParticipant(currentUserId)
-    val wallpaperOpacity = (settingsState.wallpaperOpacity.coerceIn(0, 100) / 100f)
+    val wallpaperOpacity = settingsState.wallpaperOpacity.coerceIn(0, 100) / 100f
     val subtitle = when {
         chat.isGroup -> "${chat.members?.size ?: chat.participants?.size ?: 0} participants"
         other?.online == true -> "Online"
         other != null -> "Hello user"
         else -> "Private family chat"
     }
+    val visibleSubtitle = if (typingNames.isNotEmpty()) {
+        typingNames.joinToString(limit = 2, truncated = "others") + if (typingNames.size == 1) " is typing" else " are typing"
+    } else {
+        subtitle
+    }
 
     LaunchedEffect(chat.id) {
         viewModel.loadMessages(chat.id)
+    }
+
+    LaunchedEffect(currentUserId, currentUserName, currentUserAvatar) {
+        callViewModel.connect(User(id = currentUserId, name = currentUserName, avatar = currentUserAvatar))
     }
 
     LaunchedEffect(showContactShare, contactQuery) {
@@ -176,14 +176,57 @@ fun ChatRoomScreen(
         }
     }
 
-    LaunchedEffect(currentUserId, currentUserName, currentUserAvatar) {
-        callViewModel.connect(User(id = currentUserId, name = currentUserName, avatar = currentUserAvatar))
+    LaunchedEffect(voiceState.active, voiceState.startedAt) {
+        while (voiceState.active) {
+            recordingElapsedSeconds = ((System.currentTimeMillis() - voiceState.startedAt).coerceAtLeast(0L) / 1000L)
+            delay(500)
+        }
+        recordingElapsedSeconds = 0L
+    }
+
+    LaunchedEffect(messageText, chat.id, currentUserId, currentUserName) {
+        if (messageText.isBlank()) {
+            socketManager.typing(chat.id, currentUserId, currentUserName, isTyping = false)
+            return@LaunchedEffect
+        }
+        socketManager.typing(chat.id, currentUserId, currentUserName, isTyping = true)
+        delay(1500)
+        socketManager.typing(chat.id, currentUserId, currentUserName, isTyping = false)
+    }
+
+    LaunchedEffect(listState.firstVisibleItemIndex, hasMoreOlderMessages, hasAutoScrolledInitial, isLoadingOlderMessages) {
+        if (hasAutoScrolledInitial && hasMoreOlderMessages && !isLoadingOlderMessages && listState.firstVisibleItemIndex <= 1) {
+            viewModel.loadOlderMessages(chat.id)
+        }
+    }
+
+    LaunchedEffect(visibleMessages.size, isNearBottom) {
+        if (visibleMessages.isNotEmpty()) {
+            socketManager.markMessagesRead(chat.id, currentUserId)
+            val shouldScroll = !hasAutoScrolledInitial ||
+                isNearBottom ||
+                (visibleMessages.size > lastVisibleMessageCount && visibleMessages.lastOrNull()?.senderId == currentUserId)
+            if (shouldScroll) {
+                if (!hasAutoScrolledInitial) {
+                    listState.scrollToItem(visibleMessages.lastIndex)
+                    hasAutoScrolledInitial = true
+                } else {
+                    listState.animateScrollToItem(visibleMessages.lastIndex)
+                }
+            }
+            lastVisibleMessageCount = visibleMessages.size
+        }
+    }
+
+    LaunchedEffect(sendMessageState) {
+        if (sendMessageState is ResultState.Success) {
+            viewModel.resetSendMessageState()
+        }
     }
 
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) {
             readPickedFile(context, uri)?.let { selected ->
-                // Validate file size - max 100MB
                 if (selected.bytes.size > 100 * 1024 * 1024) {
                     fileSizeError = "Maximum file size is 100 MB"
                     return@let
@@ -196,7 +239,7 @@ fun ChatRoomScreen(
     val cameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { saved ->
         val capture = cameraCapture
         if (saved && capture != null && capture.file.exists()) {
-            pendingAttachment = PickedFile(
+            pendingAttachment = AttachmentDraft(
                 uri = capture.uri,
                 name = capture.file.name,
                 mimeType = "image/jpeg",
@@ -215,19 +258,10 @@ fun ChatRoomScreen(
         }
     }
 
-    val locationPermissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions()
-    ) {
+    val locationPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         val location = getLastKnownHelloLocation(context)
         if (location != null) {
-            viewModel.shareLocation(
-                chatId = chat.id,
-                senderId = currentUserId,
-                senderName = currentUserName,
-                senderAvatar = currentUserAvatar,
-                lat = location.latitude,
-                lng = location.longitude
-            )
+            viewModel.shareLocation(chat.id, currentUserId, currentUserName, currentUserAvatar, location.latitude, location.longitude)
         } else {
             showLocationDialog = true
         }
@@ -246,14 +280,10 @@ fun ChatRoomScreen(
         }
     }
 
-    val permissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions()
-    ) { grants ->
+    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
         val needsCamera = pendingCallIsVideo
-        val hasAudio = grants[Manifest.permission.RECORD_AUDIO] == true ||
-            context.checkSelfPermissionCompat(Manifest.permission.RECORD_AUDIO)
-        val hasCamera = !needsCamera || grants[Manifest.permission.CAMERA] == true ||
-            context.checkSelfPermissionCompat(Manifest.permission.CAMERA)
+        val hasAudio = grants[Manifest.permission.RECORD_AUDIO] == true || context.checkSelfPermissionCompat(Manifest.permission.RECORD_AUDIO)
+        val hasCamera = !needsCamera || grants[Manifest.permission.CAMERA] == true || context.checkSelfPermissionCompat(Manifest.permission.CAMERA)
         if (hasAudio && hasCamera) {
             if (pendingIncomingAccept) {
                 pendingIncomingAccept = false
@@ -279,8 +309,7 @@ fun ChatRoomScreen(
         } else {
             arrayOf(Manifest.permission.RECORD_AUDIO)
         }
-        val granted = permissions.all { context.checkSelfPermissionCompat(it) }
-        if (granted) {
+        if (permissions.all { context.checkSelfPermissionCompat(it) }) {
             callViewModel.startCall(
                 context = context,
                 chat = chat,
@@ -294,14 +323,13 @@ fun ChatRoomScreen(
 
     fun acceptIncomingCall() {
         pendingIncomingAccept = true
-        pendingCallIsVideo = callState.signal?.isVideo == true
+        pendingCallIsVideo = callState.signal?.isVideo == true || callState.activeRoom?.type == "video"
         val permissions = if (pendingCallIsVideo) {
             arrayOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.CAMERA)
         } else {
             arrayOf(Manifest.permission.RECORD_AUDIO)
         }
-        val granted = permissions.all { context.checkSelfPermissionCompat(it) }
-        if (granted) {
+        if (permissions.all { context.checkSelfPermissionCompat(it) }) {
             pendingIncomingAccept = false
             callViewModel.acceptIncoming(context)
         } else {
@@ -337,9 +365,7 @@ fun ChatRoomScreen(
                     locationPermissionLauncher.launch(permissions)
                 }
             }
-            AttachmentAction.Contact -> {
-                showContactShare = true
-            }
+            AttachmentAction.Contact -> showContactShare = true
         }
     }
 
@@ -361,6 +387,19 @@ fun ChatRoomScreen(
         val file = voiceRecorder.stop(delete = !send)
         voiceState = VoiceRecordingState()
         if (send && file != null) {
+            val optimistic = OptimisticMessageManager.createOptimisticMessage(
+                chatId = chat.id,
+                text = "",
+                senderId = currentUserId,
+                senderName = currentUserName,
+                senderAvatar = currentUserAvatar,
+                attachmentUrl = Uri.fromFile(file).toString(),
+                attachmentType = "audio",
+                attachmentName = file.name,
+                attachmentSize = file.length()
+            )
+            viewModel.addOptimisticMessage(optimistic.message)
+            ChatFeedback.playSent(settingsState.chatSounds)
             viewModel.uploadAndSendAttachment(
                 chatId = chat.id,
                 fileName = file.name,
@@ -369,43 +408,9 @@ fun ChatRoomScreen(
                 senderId = currentUserId,
                 senderName = currentUserName,
                 senderAvatar = currentUserAvatar,
-                caption = ""
+                caption = "",
+                optimisticTempId = optimistic.tempId
             )
-        }
-    }
-
-    DisposableEffect(chat.id, currentUserId) {
-        val socketManager = SocketManager.getInstance()
-        socketManager.onMessageReceived = { message ->
-            if (message.chatId == chat.id) viewModel.appendFromSocket(message)
-        }
-        socketManager.onMessageUpdated = { message ->
-            if (message.chatId == chat.id) viewModel.updateFromSocket(message)
-        }
-        socketManager.connect(User(id = currentUserId, name = currentUserName, avatar = currentUserAvatar))
-        socketManager.joinChat(chat.id)
-        onDispose {
-            socketManager.leaveChat(chat.id)
-            // Don't disconnect - let other screens keep using it
-        }
-    }
-
-    LaunchedEffect(messagesState) {
-        if (messagesState is ResultState.Success) {
-            val messages = (messagesState as ResultState.Success<List<Message>>).data
-            if (messages.isNotEmpty()) {
-                listState.animateScrollToItem(messages.size - 1)
-            }
-        }
-    }
-
-    LaunchedEffect(sendMessageState) {
-        if (sendMessageState is ResultState.Success) {
-            messageText = ""
-            pendingAttachment = null
-            replyTo = null
-            viewModel.resetSendMessageState()
-            viewModel.resetUploadState()
         }
     }
 
@@ -415,31 +420,33 @@ fun ChatRoomScreen(
         val replySnapshot = replyTo?.let {
             ChatModels.ReplyTo(
                 id = it.id,
-                text = it.text,
+                text = it.text.ifBlank { "Attachment" },
                 senderName = it.senderName,
                 senderId = it.senderId
             )
         }
-        
+        if (trimmed.isBlank() && attachment == null) return
+
         if (attachment != null) {
-            // Create optimistic message for attachment
-            val optimisticMsg = OptimisticMessageManager.createOptimisticMessage(
+            val optimistic = OptimisticMessageManager.createOptimisticMessage(
                 chatId = chat.id,
                 text = trimmed,
                 senderId = currentUserId,
                 senderName = currentUserName,
                 senderAvatar = currentUserAvatar,
+                attachmentUrl = attachment.previewUrl,
+                attachmentType = classifyAttachment(attachment.mimeType),
+                attachmentName = attachment.name,
+                attachmentSize = attachment.sizeBytes,
                 replyTo = replySnapshot
             )
-            // Add optimistic immediately
-            viewModel.addOptimisticMessage(optimisticMsg.message)
-            
-            // Clear UI immediately
+            viewModel.addOptimisticMessage(optimistic.message)
             messageText = ""
+            pendingAttachment = null
             replyTo = null
-            
-            // Send async - will patch on server response
             AnimationUtils.Haptics.sendMessage(context)
+            ChatFeedback.playSent(settingsState.chatSounds)
+            socketManager.typing(chat.id, currentUserId, currentUserName, isTyping = false)
             viewModel.uploadAndSendAttachment(
                 chatId = chat.id,
                 fileName = attachment.name,
@@ -449,38 +456,86 @@ fun ChatRoomScreen(
                 senderName = currentUserName,
                 senderAvatar = currentUserAvatar,
                 caption = trimmed,
-                replyTo = replySnapshot
+                replyTo = replySnapshot,
+                optimisticTempId = optimistic.tempId
             )
-        } else if (trimmed.isNotEmpty()) {
-            // Create optimistic message
-            val optimisticMsg = OptimisticMessageManager.createOptimisticMessage(
-                chatId = chat.id,
-                text = trimmed,
-                senderId = currentUserId,
-                senderName = currentUserName,
-                senderAvatar = currentUserAvatar,
-                replyTo = replySnapshot
-            )
-            
-            // Add optimistic message immediately to UI
-            viewModel.addOptimisticMessage(optimisticMsg.message)
-            
-            // Clear input immediately
-            messageText = ""
-            replyTo = null
-            
-            // Send haptic feedback
-            AnimationUtils.Haptics.sendMessage(context)
-            
-            // Send message asynchronously - will patch on server response
-            viewModel.sendMessage(
-                chatId = chat.id,
-                text = trimmed,
-                senderId = currentUserId,
-                senderName = currentUserName,
-                senderAvatar = currentUserAvatar,
-                replyTo = replySnapshot
-            )
+            return
+        }
+
+        val optimistic = OptimisticMessageManager.createOptimisticMessage(
+            chatId = chat.id,
+            text = trimmed,
+            senderId = currentUserId,
+            senderName = currentUserName,
+            senderAvatar = currentUserAvatar,
+            replyTo = replySnapshot
+        )
+        viewModel.addOptimisticMessage(optimistic.message)
+        messageText = ""
+        replyTo = null
+        AnimationUtils.Haptics.sendMessage(context)
+        ChatFeedback.playSent(settingsState.chatSounds)
+        socketManager.typing(chat.id, currentUserId, currentUserName, isTyping = false)
+        viewModel.sendMessage(
+            chatId = chat.id,
+            text = trimmed,
+            senderId = currentUserId,
+            senderName = currentUserName,
+            senderAvatar = currentUserAvatar,
+            replyTo = replySnapshot,
+            optimisticTempId = optimistic.tempId
+        )
+    }
+
+    DisposableEffect(chat.id, currentUserId, currentUserName, settingsState.chatSounds) {
+        val messageListener: (Message) -> Unit = { message ->
+            if (message.chatId == chat.id) {
+                scope.launch {
+                    viewModel.appendFromSocket(message)
+                    if (message.senderId != currentUserId) {
+                        socketManager.markMessagesRead(chat.id, currentUserId)
+                        ChatFeedback.playReceived(settingsState.chatSounds)
+                    }
+                }
+            }
+        }
+        val updateListener: (Message) -> Unit = { message ->
+            if (message.chatId == chat.id) {
+                scope.launch { viewModel.updateFromSocket(message) }
+            }
+        }
+        val typingListener: (JSONObject) -> Unit = { payload ->
+            if (payload.optString("chatId") == chat.id) {
+                val userId = payload.optString("userId")
+                val name = payload.optString("senderName", payload.optString("userName", "Someone")).ifBlank { "Someone" }
+                if (userId != currentUserId && name != currentUserName) {
+                    scope.launch {
+                        typingNames = if (payload.optBoolean("isTyping", true)) {
+                            (typingNames + name).distinct().takeLast(3)
+                        } else {
+                            typingNames.filterNot { it == name }
+                        }
+                        if (payload.optBoolean("isTyping", true)) {
+                            delay(3200)
+                            typingNames = typingNames.filterNot { it == name }
+                        }
+                    }
+                }
+            }
+        }
+
+        socketManager.addMessageListener(messageListener)
+        socketManager.addMessageUpdateListener(updateListener)
+        socketManager.addTypingListener(typingListener)
+        socketManager.connect(User(id = currentUserId, name = currentUserName, avatar = currentUserAvatar))
+        socketManager.joinChat(chat.id)
+        socketManager.markMessagesRead(chat.id, currentUserId)
+        onDispose {
+            socketManager.typing(chat.id, currentUserId, currentUserName, isTyping = false)
+            socketManager.leaveChat(chat.id)
+            socketManager.removeMessageListener(messageListener)
+            socketManager.removeMessageUpdateListener(updateListener)
+            socketManager.removeTypingListener(typingListener)
         }
     }
 
@@ -490,11 +545,10 @@ fun ChatRoomScreen(
                 .fillMaxSize()
                 .safeDrawingPadding()
                 .background(HelloColors.DarkBg)
-                .imePadding()
         ) {
-            ChatRoomHeader(
+            ChatHeader(
                 title = title,
-                subtitle = subtitle,
+                subtitle = visibleSubtitle,
                 avatarUrl = other?.avatar ?: chat.avatar,
                 onBack = onBack,
                 onOpenContactInfo = onOpenContactInfo,
@@ -528,71 +582,33 @@ fun ChatRoomScreen(
                             onRetry = { viewModel.loadMessages(chat.id) }
                         )
                         is ResultState.Success -> {
-                            val messages = (messagesState as ResultState.Success<List<Message>>).data
-                            if (messages.isEmpty()) {
+                            if (visibleMessages.isEmpty()) {
                                 EmptyRoom()
                             } else {
-                                LazyColumn(
-                                    state = listState,
-                                    modifier = Modifier.fillMaxSize(),
-                                    contentPadding = PaddingValues(horizontal = 0.dp, vertical = HelloSpacing.Lg),
-                                    verticalArrangement = Arrangement.spacedBy(HelloSpacing.Xs)
-                                ) {
-                                    item {
-                                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
-                                            Text(
-                                                text = "TODAY",
-                                                color = HelloColors.DarkTextMuted,
-                                                style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
-                                                modifier = Modifier
-                                                    .background(HelloColors.DarkPanelMuted, HelloShapes.Sm)
-                                                    .padding(horizontal = 12.dp, vertical = 5.dp)
-                            )
-                                        }
-                                    }
-                                    items(messages.size, key = { messages[it].id }) { idx ->
-                                        val message = messages[idx]
-                                        val isOwn = message.senderId == currentUserId
-                                        val prevMessage = if (idx > 0) messages[idx - 1] else null
-                                        
-                                        // Show sender name for group chats (only other messages, only first in group)
-                                        if (chat.isGroup && !isOwn && prevMessage?.senderId != message.senderId) {
-                                            Row(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .padding(horizontal = HelloSpacing.Lg, vertical = HelloSpacing.Xs)
-                                            ) {
-                                                Text(
-                                                    text = message.senderName,
-                                                    style = MaterialTheme.typography.labelSmall,
-                                                    color = HelloColors.DarkAccent,
-                                                    fontWeight = FontWeight.Bold,
-                                                    modifier = Modifier.padding(horizontal = HelloSpacing.Md)
-                                                )
+                                ChatMessageList(
+                                    messages = visibleMessages,
+                                    currentUserId = currentUserId,
+                                    chatIsGroup = chat.isGroup,
+                                    unreadCount = chat.unreadCount ?: 0,
+                                    typingNames = typingNames,
+                                    context = context,
+                                    listState = listState,
+                                    hasMoreOlderMessages = hasMoreOlderMessages,
+                                    isLoadingOlderMessages = isLoadingOlderMessages,
+                                    onReply = { replyTo = it },
+                                    onOpenMessageMenu = { message ->
+                                        selectedMessage = ActionMessageState(message = message, isOwn = message.senderId == currentUserId)
+                                    },
+                                    onOpenAttachment = { url -> openExternalTarget(context, url) },
+                                    onOpenImage = { url, label -> mediaViewerState = MediaViewerState(url, label) },
+                                    onJumpToLatest = {
+                                        scope.launch {
+                                            if (visibleMessages.isNotEmpty()) {
+                                                listState.animateScrollToItem(visibleMessages.lastIndex)
                                             }
                                         }
-                                        
-                                        // Add extra spacing if sender changed
-                                        if (prevMessage != null && prevMessage.senderId != message.senderId) {
-                                            Spacer(modifier = Modifier.height(HelloSpacing.Md))
-                                        }
-                                        
-                                        AnimatedMessageBubble(
-                                            message = message,
-                                            isOwn = isOwn,
-                                            index = idx,
-                                            currentUserId = currentUserId,
-                                            context = context,
-                                            onReply = { replyMsg ->
-                                                replyTo = replyMsg
-                                            },
-                                            onLongPress = {
-                                                selectedMessageId = message.id
-                                                showMessageMenu = true
-                                            }
-                                        )
                                     }
-                                }
+                                )
                             }
                         }
                     }
@@ -606,7 +622,6 @@ fun ChatRoomScreen(
                     modifier = Modifier.padding(horizontal = HelloSpacing.Lg, vertical = HelloSpacing.Xs)
                 )
             }
-
             if (uploadState is ResultState.Loading) {
                 Text(
                     text = "Uploading attachment...",
@@ -614,7 +629,6 @@ fun ChatRoomScreen(
                     modifier = Modifier.padding(horizontal = HelloSpacing.Lg, vertical = HelloSpacing.Xs)
                 )
             }
-
             if (uploadState is ResultState.Error) {
                 Text(
                     text = (uploadState as ResultState.Error).message,
@@ -622,10 +636,9 @@ fun ChatRoomScreen(
                     modifier = Modifier.padding(horizontal = HelloSpacing.Lg, vertical = HelloSpacing.Xs)
                 )
             }
-
-            if (pendingAttachment != null) {
+            pendingAttachment?.let {
                 AttachmentPreviewBar(
-                    file = pendingAttachment!!,
+                    file = it,
                     onRemove = {
                         pendingAttachment = null
                         viewModel.resetUploadState()
@@ -633,265 +646,121 @@ fun ChatRoomScreen(
                     modifier = Modifier.padding(horizontal = HelloSpacing.Lg, vertical = HelloSpacing.Xs)
                 )
             }
-
-            // Reply preview
-            if (replyTo != null) {
-                HelloPanel(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = HelloSpacing.Lg, vertical = HelloSpacing.Xs),
-                    strong = true,
-                    shape = HelloShapes.Sm
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(HelloSpacing.Md),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "Replying to ${replyTo!!.senderName}",
-                                color = HelloColors.DarkAccent,
-                                style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Text(
-                                text = replyTo!!.text.take(80) + if (replyTo!!.text.length > 80) "..." else "",
-                                color = HelloColors.DarkText,
-                                style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
-                                maxLines = 2
-                            )
-                        }
-                        HelloIconButton(onClick = { replyTo = null }) {
-                            Icon(Icons.Default.Close, contentDescription = "Clear reply", tint = HelloColors.DarkTextMuted)
-                        }
-                    }
-                }
-            }
-
-            HelloPanel(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = HelloSpacing.Md, vertical = HelloSpacing.Xs),
-                strong = true,
-                shape = HelloShapes.Lg
-            ) {
-                Column(
-                    modifier = Modifier
-                        .padding(horizontal = HelloSpacing.Sm, vertical = HelloSpacing.Xs)
-                        .animateContentSize()
-                ) {
-                    AnimatedVisibility(visible = showEmojiRow) {
-                        LazyRow(
-                            horizontalArrangement = Arrangement.spacedBy(HelloSpacing.Sm),
-                            modifier = Modifier.padding(horizontal = HelloSpacing.Sm, vertical = HelloSpacing.Xs)
-                        ) {
-                            items(listOf("👍", "❤️", "😂", "😮", "😢", "👏", "🔥", "🙏")) { emoji ->
-                                Text(
-                                    text = emoji,
-                                    style = MaterialTheme.typography.titleLarge,
-                                    modifier = Modifier
-                                        .background(HelloColors.DarkPanelMuted, HelloShapes.Pill)
-                                        .clickable {
-                                            messageText += emoji
-                                            showEmojiRow = false
-                                        }
-                                        .padding(horizontal = 12.dp, vertical = 6.dp)
-                                )
-                            }
-                        }
-                    }
-                    if (voiceState.active) {
-                        Text(
-                            text = "Recording voice note... tap mic to send",
-                            color = HelloColors.DarkAccent,
-                            style = MaterialTheme.typography.labelMedium,
-                            modifier = Modifier.padding(horizontal = HelloSpacing.Md, vertical = HelloSpacing.Xs)
-                        )
-                    }
-                    voiceState.error?.let {
-                        Text(
-                            text = it,
-                            color = HelloColors.DarkDanger,
-                            style = MaterialTheme.typography.labelSmall,
-                            modifier = Modifier.padding(horizontal = HelloSpacing.Md, vertical = HelloSpacing.Xs)
-                        )
-                    }
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(HelloSpacing.Xs)
-                    ) {
-                        HelloIconButton(onClick = { showEmojiRow = !showEmojiRow }) {
-                            Icon(Icons.Default.EmojiEmotions, contentDescription = "Emoji", tint = HelloColors.DarkTextMuted)
-                        }
-                        HelloIconButton(onClick = { showAttachmentMenu = true }) {
-                            Icon(Icons.Default.AttachFile, contentDescription = "Attach", tint = HelloColors.DarkTextMuted)
-                        }
-                        HelloSearchBar(
-                            value = messageText,
-                            onValueChange = { messageText = it },
-                            placeholder = if (pendingAttachment == null) "Write a message" else "Add a caption",
-                            keyboardOptions = if (settingsState.enterSends) {
-                                KeyboardOptions(imeAction = ImeAction.Send)
-                            } else {
-                                KeyboardOptions.Default
-                            },
-                            keyboardActions = if (settingsState.enterSends) {
-                                KeyboardActions(onSend = { sendCurrentMessage() })
-                            } else {
-                                KeyboardActions.Default
-                            },
-                            modifier = Modifier.weight(1f)
-                        )
-                        HelloIconButton(
-                            onClick = {
-                                if (messageText.trim().isNotEmpty() || pendingAttachment != null) {
-                                    sendCurrentMessage()
-                                } else if (voiceState.active) {
-                                    finishVoiceNote(send = true)
-                                } else {
-                                    startVoiceNote()
-                                }
-                            },
-                            active = messageText.trim().isNotEmpty() || pendingAttachment != null || voiceState.active
-                        ) {
-                            Icon(
-                                if (messageText.trim().isNotEmpty() || pendingAttachment != null) Icons.AutoMirrored.Filled.Send else Icons.Default.Mic,
-                                contentDescription = if (messageText.trim().isNotEmpty() || pendingAttachment != null) "Send message" else "Voice note",
-                                tint = if (messageText.trim().isNotEmpty() || pendingAttachment != null || voiceState.active) HelloColors.DarkAccent else HelloColors.DarkTextMuted
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
-        // Message context menu
-        if (showMessageMenu && selectedMessageId != null) {
-            val selectedMessage = messagesState.let { state ->
-                if (state is ResultState.Success) state.data.firstOrNull { it.id == selectedMessageId } else null
-            }
-            if (selectedMessage != null) {
-                ModalBottomSheet(
-                    onDismissRequest = { showMessageMenu = false },
-                    containerColor = HelloColors.DarkPanelStrong
-                ) {
-                    MessageActionSheet(
-                        message = selectedMessage,
-                        isOwn = selectedMessage.senderId == currentUserId,
-                        onReply = {
-                            replyTo = selectedMessage
-                            showMessageMenu = false
-                        },
-                        onStar = {
-                            viewModel.starMessage(chat.id, selectedMessage.id, currentUserId)
-                            showMessageMenu = false
-                        },
-                        onReact = {
-                            showReactionPicker = true
-                            showMessageMenu = false
-                        },
-                        onPin = {
-                            viewModel.pinMessage(chat.id, selectedMessage.id)
-                            showMessageMenu = false
-                        },
-                        onOpen = {
-                            openMessageAttachment(context, selectedMessage)
-                            showMessageMenu = false
-                        },
-                        onDelete = {
-                            showDeleteConfirm = true
-                            showMessageMenu = false
-                        }
-                    )
-                }
-            }
-        }
-
-        if (showReactionPicker && selectedMessageId != null) {
-            val selectedMessage = messagesState.let { state ->
-                if (state is ResultState.Success) state.data.firstOrNull { it.id == selectedMessageId } else null
-            }
-            if (selectedMessage != null) {
-                AlertDialog(
-                    onDismissRequest = { showReactionPicker = false },
-                    containerColor = HelloColors.DarkPanelStrong,
-                    title = { Text("Choose reaction", color = HelloColors.DarkText, fontWeight = FontWeight.Bold) },
-                    text = {
-                        Column(verticalArrangement = Arrangement.spacedBy(HelloSpacing.Sm)) {
-                            listOf("👍", "❤️", "😂", "😮", "😢", "👏").forEach { emoji ->
-                                TextButton(onClick = {
-                                    viewModel.reactToMessage(chat.id, selectedMessage.id, emoji, currentUserId)
-                                    showReactionPicker = false
-                                }) {
-                                    Text(emoji, color = HelloColors.DarkAccent)
-                                }
-                            }
-                        }
-                    },
-                    confirmButton = {},
-                    dismissButton = {
-                        TextButton(onClick = { showReactionPicker = false }) {
-                            Text("Cancel", color = HelloColors.DarkTextMuted)
-                        }
-                    }
+            replyTo?.let {
+                ReplyComposerBar(
+                    message = it,
+                    onClear = { replyTo = null },
+                    modifier = Modifier.padding(horizontal = HelloSpacing.Lg, vertical = HelloSpacing.Xs)
                 )
             }
-        }
 
-        if (showDeleteConfirm && selectedMessageId != null) {
-            val selectedMessage = messagesState.let { state ->
-                if (state is ResultState.Success) state.data.firstOrNull { it.id == selectedMessageId } else null
-            }
-            if (selectedMessage != null) {
-                AlertDialog(
-                    onDismissRequest = { showDeleteConfirm = false },
-                    containerColor = HelloColors.DarkPanelStrong,
-                    title = { Text("Delete message?", color = HelloColors.DarkText, fontWeight = FontWeight.Bold) },
-                    text = { Text("This will remove the message from the chat.", color = HelloColors.DarkTextMuted) },
-                    confirmButton = {
-                        TextButton(onClick = {
-                            viewModel.deleteMessage(chat.id, selectedMessage.id, currentUserId)
-                            showDeleteConfirm = false
-                        }) {
-                            Text("Delete", color = HelloColors.DarkDanger)
-                        }
-                    },
-                    dismissButton = {
-                        TextButton(onClick = { showDeleteConfirm = false }) {
-                            Text("Cancel", color = HelloColors.DarkTextMuted)
-                        }
-                    }
-                )
-            }
-        }
-
-        if (permissionDialog) {
-            PermissionRequiredDialog(
-                onOpenSettings = {
-                    permissionDialog = false
-                    context.startActivity(
-                        Intent(
-                            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                            Uri.parse("package:${context.packageName}")
-                        )
-                    )
+            ChatComposer(
+                text = messageText,
+                onTextChange = { messageText = it },
+                showEmojiRow = showEmojiRow,
+                onToggleEmoji = { showEmojiRow = !showEmojiRow },
+                onEmoji = { emoji ->
+                    messageText += emoji
+                    showEmojiRow = false
                 },
-                onCancel = { permissionDialog = false }
+                onAttach = { showAttachmentMenu = true },
+                onSendOrRecord = {
+                    if (messageText.trim().isNotEmpty() || pendingAttachment != null) {
+                        sendCurrentMessage()
+                    } else if (voiceState.active) {
+                        finishVoiceNote(send = true)
+                    } else {
+                        startVoiceNote()
+                    }
+                },
+                voiceState = voiceState,
+                recordingElapsedSeconds = recordingElapsedSeconds,
+                onCancelVoice = { finishVoiceNote(send = false) },
+                hasPayload = messageText.trim().isNotEmpty() || pendingAttachment != null,
+                placeholder = if (pendingAttachment == null) "Message Hello" else "Add a caption",
+                enterSends = settingsState.enterSends,
+                onKeyboardSend = { sendCurrentMessage() }
             )
         }
 
-        if (fileSizeError != null) {
+        selectedMessage?.let { selected ->
+            ModalBottomSheet(
+                onDismissRequest = { selectedMessage = null },
+                containerColor = HelloColors.DarkPanelStrong
+            ) {
+                MessageActionSheet(
+                    message = selected.message,
+                    currentUserId = currentUserId,
+                    isOwn = selected.isOwn,
+                    onReply = {
+                        replyTo = selected.message
+                        selectedMessage = null
+                    },
+                    onStar = {
+                        viewModel.starMessage(chat.id, selected.message.id, currentUserId)
+                        selectedMessage = null
+                    },
+                    onReact = { emoji ->
+                        viewModel.reactToMessage(chat.id, selected.message.id, emoji, currentUserId)
+                        ChatFeedback.playReaction(settingsState.chatSounds)
+                        selectedMessage = null
+                    },
+                    onPin = {
+                        if ((selected.message.pinnedUntil ?: 0L) > System.currentTimeMillis()) {
+                            viewModel.pinMessage(chat.id, selected.message.id, durationDays = 0)
+                        } else {
+                            viewModel.pinMessage(chat.id, selected.message.id)
+                        }
+                        selectedMessage = null
+                    },
+                    onOpen = {
+                        selected.message.attachmentUrl?.let { openExternalTarget(context, it) }
+                        selectedMessage = null
+                    },
+                    onCopy = {
+                        clipboardManager.setText(AnnotatedString(selected.message.text.ifBlank { selected.message.attachmentName ?: "Attachment" }))
+                        selectedMessage = null
+                    },
+                    onDeleteForMe = {
+                        deleteMode = "message"
+                        showDeleteConfirm = true
+                        selectedMessage = selected
+                    },
+                    onDeleteForEveryone = {
+                        deleteMode = "for_everyone"
+                        showDeleteConfirm = true
+                        selectedMessage = selected
+                    }
+                )
+            }
+        }
+
+        if (showDeleteConfirm && selectedMessage != null) {
             AlertDialog(
-                onDismissRequest = { fileSizeError = null },
+                onDismissRequest = { showDeleteConfirm = false },
                 containerColor = HelloColors.DarkPanelStrong,
-                title = { Text("File too large", color = HelloColors.DarkText, fontWeight = FontWeight.Bold) },
-                text = { Text(fileSizeError ?: "", color = HelloColors.DarkText) },
+                title = { Text(if (deleteMode == "for_everyone") "Delete for everyone?" else "Delete for me?", color = HelloColors.DarkText) },
+                text = {
+                    Text(
+                        if (deleteMode == "for_everyone") "This removes the message for everyone in the chat." else "This removes the message from your copy of the chat.",
+                        color = HelloColors.DarkTextMuted
+                    )
+                },
                 confirmButton = {
-                    TextButton(onClick = { fileSizeError = null }) {
-                        Text("OK", color = HelloColors.DarkAccent)
+                    TextButton(onClick = {
+                        viewModel.deleteMessage(chat.id, selectedMessage!!.message.id, currentUserId, deleteMode)
+                        showDeleteConfirm = false
+                        selectedMessage = null
+                    }) {
+                        Text("Delete", color = HelloColors.DarkDanger)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = {
+                        showDeleteConfirm = false
+                        selectedMessage = null
+                    }) {
+                        Text("Cancel", color = HelloColors.DarkTextMuted)
                     }
                 }
             )
@@ -944,7 +813,7 @@ fun ChatRoomScreen(
             AlertDialog(
                 onDismissRequest = { showLocationDialog = false },
                 containerColor = HelloColors.DarkPanelStrong,
-                title = { Text("Share location", color = HelloColors.DarkText, fontWeight = FontWeight.Bold) },
+                title = { Text("Share location", color = HelloColors.DarkText) },
                 text = {
                     HelloSearchBar(
                         value = manualLocationText,
@@ -953,15 +822,13 @@ fun ChatRoomScreen(
                     )
                 },
                 confirmButton = {
-                    TextButton(
-                        onClick = {
-                            if (manualLocationText.isNotBlank()) {
-                                viewModel.shareLocation(chat.id, currentUserId, currentUserName, currentUserAvatar, 0.0, 0.0, manualLocationText.trim())
-                                manualLocationText = ""
-                                showLocationDialog = false
-                            }
+                    TextButton(onClick = {
+                        if (manualLocationText.isNotBlank()) {
+                            viewModel.shareLocation(chat.id, currentUserId, currentUserName, currentUserAvatar, 0.0, 0.0, manualLocationText.trim())
+                            manualLocationText = ""
+                            showLocationDialog = false
                         }
-                    ) { Text("Send", color = HelloColors.DarkAccent) }
+                    }) { Text("Send", color = HelloColors.DarkAccent) }
                 },
                 dismissButton = {
                     TextButton(onClick = { showLocationDialog = false }) {
@@ -1012,11 +879,154 @@ fun ChatRoomScreen(
                 }
             )
         }
+
+        if (permissionDialog) {
+            PermissionRequiredDialog(
+                onOpenSettings = {
+                    permissionDialog = false
+                    context.startActivity(
+                        Intent(
+                            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                            Uri.parse("package:${context.packageName}")
+                        )
+                    )
+                },
+                onCancel = { permissionDialog = false }
+            )
+        }
+
+        if (fileSizeError != null) {
+            AlertDialog(
+                onDismissRequest = { fileSizeError = null },
+                containerColor = HelloColors.DarkPanelStrong,
+                title = { Text("File too large", color = HelloColors.DarkText) },
+                text = { Text(fileSizeError.orEmpty(), color = HelloColors.DarkText) },
+                confirmButton = {
+                    TextButton(onClick = { fileSizeError = null }) {
+                        Text("OK", color = HelloColors.DarkAccent)
+                    }
+                }
+            )
+        }
+
+        mediaViewerState?.let { state ->
+            MediaViewer(state = state, onDismiss = { mediaViewerState = null })
+        }
+
+        when (callState.status) {
+            CallUiStatus.Incoming -> IncomingCallScreen(
+                name = callState.peerName,
+                video = callState.signal?.isVideo == true || callState.activeRoom?.type == "video",
+                message = callState.message.orEmpty(),
+                onAccept = { acceptIncomingCall() },
+                onDecline = { callViewModel.declineCall() },
+                modifier = Modifier.fillMaxSize()
+            )
+            CallUiStatus.Outgoing, CallUiStatus.Connecting -> OutgoingCallScreen(
+                name = callState.peerName,
+                video = callState.signal?.isVideo == true,
+                message = callState.message ?: "Calling...",
+                onCancel = { callViewModel.endCall("ended_by_caller") },
+                modifier = Modifier.fillMaxSize()
+            )
+            CallUiStatus.Active -> {
+                val room = callState.activeRoom
+                if (room != null) {
+                    GroupActiveCallScreen(
+                        name = callState.peerName,
+                        video = room.type == "video",
+                        durationSeconds = callState.durationSeconds,
+                        participants = callState.roomParticipants,
+                        muted = callState.muted,
+                        speakerOn = callState.speakerOn,
+                        cameraOff = callState.cameraOff,
+                        onMute = { callViewModel.toggleMute() },
+                        onSpeaker = { callViewModel.toggleSpeaker(context) },
+                        onCamera = { callViewModel.toggleCamera() },
+                        onSwitchCamera = { callViewModel.switchCamera() },
+                        onEnd = { callViewModel.endCall("ended") },
+                        modifier = Modifier.fillMaxSize()
+                    )
+                } else {
+                    ActiveCallScreen(
+                        name = callState.peerName,
+                        video = callState.signal?.isVideo == true,
+                        durationSeconds = callState.durationSeconds,
+                        mediaPhase = callState.mediaPhase,
+                        muted = callState.muted,
+                        speakerOn = callState.speakerOn,
+                        cameraOff = callState.cameraOff,
+                        onMute = { callViewModel.toggleMute() },
+                        onSpeaker = { callViewModel.toggleSpeaker(context) },
+                        onCamera = { callViewModel.toggleCamera() },
+                        onSwitchCamera = { callViewModel.switchCamera() },
+                        onAttachLocalRenderer = { callViewModel.attachLocalRenderer(it) },
+                        onAttachRemoteRenderer = { callViewModel.attachRemoteRenderer(it) },
+                        onEnd = { callViewModel.endCall("ended") },
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+            }
+            CallUiStatus.Ended,
+            CallUiStatus.Declined,
+            CallUiStatus.Missed,
+            CallUiStatus.Busy,
+            CallUiStatus.Unavailable,
+            CallUiStatus.Failed -> CallResultDialog(
+                message = callState.message ?: "Call ended",
+                onDismiss = { callViewModel.dismissCallOverlay() }
+            )
+            CallUiStatus.PermissionDenied -> PermissionRequiredDialog(
+                onOpenSettings = {
+                    callViewModel.dismissCallOverlay()
+                    context.startActivity(
+                        Intent(
+                            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                            Uri.parse("package:${context.packageName}")
+                        )
+                    )
+                },
+                onCancel = { callViewModel.dismissCallOverlay() }
+            )
+            CallUiStatus.Idle -> Unit
+        }
     }
 }
 
 private fun Context.checkSelfPermissionCompat(permission: String): Boolean {
     return checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
+}
+
+private fun classifyAttachment(mimeType: String): String = when {
+    mimeType.startsWith("image/") -> "image"
+    mimeType.startsWith("audio/") -> "audio"
+    else -> "file"
+}
+
+private object ChatFeedback {
+    fun playSent(enabled: Boolean) = play(enabled, ToneGenerator.TONE_PROP_ACK, 70)
+    fun playReceived(enabled: Boolean) = play(enabled, ToneGenerator.TONE_PROP_BEEP2, 60)
+    fun playReaction(enabled: Boolean) = play(enabled, ToneGenerator.TONE_PROP_BEEP, 45)
+
+    private fun play(enabled: Boolean, tone: Int, durationMs: Int) {
+        if (!enabled) return
+        runCatching {
+            val generator = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 34)
+            generator.startTone(tone, durationMs)
+            Handler(Looper.getMainLooper()).postDelayed({ generator.release() }, (durationMs + 40).toLong())
+        }
+    }
+}
+
+private fun readPickedFile(context: Context, uri: Uri): AttachmentDraft? {
+    val resolver = context.contentResolver
+    val mimeType = resolver.getType(uri) ?: "application/octet-stream"
+    val name = resolver.query(uri, null, null, null, null)?.use { cursor ->
+        val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+        if (index >= 0 && cursor.moveToFirst()) cursor.getString(index) else null
+    } ?: "hello-attachment"
+    val bytes = resolver.openInputStream(uri)?.use { it.readBytes() } ?: return null
+    return AttachmentDraft(uri = uri, name = name, mimeType = mimeType, bytes = bytes)
 }
 
 @Composable
@@ -1027,7 +1037,7 @@ private fun PermissionRequiredDialog(
     AlertDialog(
         onDismissRequest = onCancel,
         containerColor = HelloColors.DarkPanelStrong,
-        title = { Text("Camera/microphone permission", color = HelloColors.DarkText, fontWeight = FontWeight.Bold) },
+        title = { Text("Camera/microphone permission", color = HelloColors.DarkText) },
         text = { Text("Camera/microphone permission is needed for calls.", color = HelloColors.DarkTextMuted) },
         confirmButton = {
             TextButton(onClick = onOpenSettings) {
@@ -1043,330 +1053,15 @@ private fun PermissionRequiredDialog(
 }
 
 @Composable
-private fun CallResultDialog(
-    message: String,
-    onDismiss: () -> Unit
-) {
+private fun CallResultDialog(message: String, onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = HelloColors.DarkPanelStrong,
-        title = { Text("Call status", color = HelloColors.DarkText, fontWeight = FontWeight.Bold) },
+        title = { Text("Call status", color = HelloColors.DarkText) },
         text = { Text(message, color = HelloColors.DarkTextMuted) },
         confirmButton = {
             TextButton(onClick = onDismiss) {
                 Text("OK", color = HelloColors.DarkAccent)
-            }
-        }
-    )
-}
-
-private data class PickedFile(val uri: Uri, val name: String, val mimeType: String, val bytes: ByteArray)
-
-private fun readPickedFile(context: Context, uri: Uri): PickedFile? {
-    val resolver = context.contentResolver
-    val mimeType = resolver.getType(uri) ?: "application/octet-stream"
-    val name = resolver.query(uri, null, null, null, null)?.use { cursor ->
-        val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-        if (index >= 0 && cursor.moveToFirst()) cursor.getString(index) else null
-    } ?: "hello-attachment"
-    val bytes = resolver.openInputStream(uri)?.use { it.readBytes() } ?: return null
-    return PickedFile(uri = uri, name = name, mimeType = mimeType, bytes = bytes)
-}
-
-@Composable
-private fun AttachmentPreviewBar(
-    file: PickedFile,
-    onRemove: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    HelloPanel(modifier = modifier.fillMaxWidth(), strong = true, shape = HelloShapes.Md) {
-        Row(
-            modifier = Modifier.padding(HelloSpacing.Md),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(HelloSpacing.Md)
-        ) {
-            if (file.mimeType.startsWith("image/")) {
-                SubcomposeAsyncImage(
-                    model = ImageRequest.Builder(LocalContext.current)
-                        .data(file.uri)
-                        .decoderFactory(SvgDecoder.Factory())
-                        .crossfade(true)
-                        .build(),
-                    contentDescription = file.name,
-                    modifier = Modifier
-                        .size(56.dp)
-                        .background(HelloColors.DarkPanelMuted, HelloShapes.Md),
-                    contentScale = ContentScale.Crop,
-                    loading = { AttachmentIcon() },
-                    error = { AttachmentIcon() }
-                )
-            } else {
-                AttachmentIcon()
-            }
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = file.name,
-                    color = HelloColors.DarkText,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    text = "${file.mimeType} - ${formatBytes(file.bytes.size.toLong())}",
-                    color = HelloColors.DarkTextMuted,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    text = "Caption will be sent with this attachment.",
-                    color = HelloColors.DarkAccent,
-                    style = androidx.compose.material3.MaterialTheme.typography.labelSmall
-                )
-            }
-            HelloIconButton(onClick = onRemove) {
-                Icon(Icons.Default.Close, contentDescription = "Remove attachment", tint = HelloColors.DarkTextMuted)
-            }
-        }
-    }
-}
-
-@Composable
-private fun AttachmentIcon() {
-    Box(
-        modifier = Modifier
-            .size(56.dp)
-            .background(HelloColors.DarkAccentSoft, HelloShapes.Md),
-        contentAlignment = Alignment.Center
-    ) {
-        Icon(Icons.Default.InsertDriveFile, contentDescription = null, tint = HelloColors.DarkAccent)
-    }
-}
-
-private fun formatBytes(bytes: Long): String {
-    val kb = bytes / 1024.0
-    val mb = kb / 1024.0
-    return if (mb >= 1) "%.1f MB".format(mb) else "%.0f KB".format(kb.coerceAtLeast(1.0))
-}
-
-@Composable
-private fun ChatRoomHeader(
-    title: String,
-    subtitle: String,
-    avatarUrl: String?,
-    onBack: () -> Unit,
-    onOpenContactInfo: () -> Unit,
-    onAudioCall: () -> Unit,
-    onVideoCall: () -> Unit,
-    onMore: () -> Unit
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(HelloColors.DarkBgStrong)
-            .padding(horizontal = HelloSpacing.Sm, vertical = HelloSpacing.Xs),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        HelloIconButton(onClick = onBack) {
-            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = HelloColors.DarkText)
-        }
-        Row(
-            modifier = Modifier
-                .weight(1f)
-                .clickable(onClick = onOpenContactInfo),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            HelloAvatar(name = title, online = subtitle == "Online", size = 42.dp, imageUrl = avatarUrl)
-            Spacer(modifier = Modifier.width(HelloSpacing.Sm))
-            Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = title,
-                color = HelloColors.DarkText,
-                fontWeight = FontWeight.Bold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            Text(
-                text = subtitle,
-                color = HelloColors.DarkTextMuted,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            }
-        }
-        HelloIconButton(onClick = onVideoCall) {
-            Icon(Icons.Default.Videocam, contentDescription = "Video call", tint = HelloColors.DarkTextMuted)
-        }
-        HelloIconButton(onClick = onAudioCall) {
-            Icon(Icons.Default.Call, contentDescription = "Audio call", tint = HelloColors.DarkTextMuted)
-        }
-        HelloIconButton(onClick = onMore) {
-            Icon(Icons.Default.MoreVert, contentDescription = "More", tint = HelloColors.DarkTextMuted)
-        }
-    }
-}
-
-@Composable
-private fun AttachmentBottomSheet(onAction: (AttachmentAction) -> Unit) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(HelloSpacing.Lg),
-        verticalArrangement = Arrangement.spacedBy(HelloSpacing.Md)
-    ) {
-        Text("Attach", color = HelloColors.DarkText, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-        val actions = listOf(
-            Triple(AttachmentAction.Gallery, "Gallery", Icons.Default.Image),
-            Triple(AttachmentAction.Camera, "Camera", Icons.Default.CameraAlt),
-            Triple(AttachmentAction.File, "Document", Icons.Default.Description),
-            Triple(AttachmentAction.Location, "Location", Icons.Default.LocationOn),
-            Triple(AttachmentAction.Contact, "Contact", Icons.Default.Person),
-            Triple(AttachmentAction.Audio, "Audio", Icons.Default.Mic)
-        )
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(HelloSpacing.Sm)) {
-            items(actions) { (action, label, icon) ->
-                HelloPanel(
-                    modifier = Modifier
-                        .size(96.dp)
-                        .clickable { onAction(action) },
-                    strong = true,
-                    shape = HelloShapes.Md
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(HelloSpacing.Sm),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center
-                    ) {
-                        Icon(icon, contentDescription = label, tint = HelloColors.DarkAccent)
-                        Spacer(modifier = Modifier.height(HelloSpacing.Xs))
-                        Text(label, color = HelloColors.DarkText, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
-                    }
-                }
-            }
-        }
-        Spacer(modifier = Modifier.height(HelloSpacing.Sm))
-    }
-}
-
-@Composable
-private fun ChatActionSheet(
-    onContactInfo: () -> Unit,
-    onMedia: () -> Unit,
-    onFiles: () -> Unit,
-    onLinks: () -> Unit,
-    onClearChat: () -> Unit,
-    onDeleteChat: () -> Unit
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(HelloSpacing.Lg),
-        verticalArrangement = Arrangement.spacedBy(HelloSpacing.Xs)
-    ) {
-        Text("Chat actions", color = HelloColors.DarkText, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-        SheetRow("Contact info", Icons.Default.Person, onContactInfo)
-        SheetRow("Shared media", Icons.Default.Image, onMedia)
-        SheetRow("Shared files", Icons.Default.Description, onFiles)
-        SheetRow("Shared links", Icons.Default.Link, onLinks)
-        SheetRow("Clear chat locally", Icons.Default.Delete, onClearChat, danger = true)
-        SheetRow("Delete chat locally", Icons.Default.Delete, onDeleteChat, danger = true)
-    }
-}
-
-@Composable
-private fun MessageActionSheet(
-    message: Message,
-    isOwn: Boolean,
-    onReply: () -> Unit,
-    onStar: () -> Unit,
-    onReact: () -> Unit,
-    onPin: () -> Unit,
-    onOpen: () -> Unit,
-    onDelete: () -> Unit
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(HelloSpacing.Lg),
-        verticalArrangement = Arrangement.spacedBy(HelloSpacing.Xs)
-    ) {
-        Text("Message options", color = HelloColors.DarkText, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-        SheetRow("Reply", Icons.AutoMirrored.Filled.ArrowBack, onReply)
-        SheetRow(if (message.starredBy?.isNotEmpty() == true) "Unstar" else "Star", Icons.Default.Star, onStar)
-        SheetRow("React", Icons.Default.EmojiEmotions, onReact)
-        SheetRow("Pin", Icons.Default.PushPin, onPin)
-        if (!message.attachmentUrl.isNullOrBlank()) {
-            SheetRow("Open attachment", Icons.Default.Folder, onOpen)
-        }
-        if (isOwn) {
-            SheetRow("Delete", Icons.Default.Delete, onDelete, danger = true)
-        }
-    }
-}
-
-@Composable
-private fun SheetRow(
-    label: String,
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    onClick: () -> Unit,
-    danger: Boolean = false
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(vertical = HelloSpacing.Md),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(HelloSpacing.Md)
-    ) {
-        Icon(icon, contentDescription = label, tint = if (danger) HelloColors.DarkDanger else HelloColors.DarkTextMuted)
-        Text(label, color = if (danger) HelloColors.DarkDanger else HelloColors.DarkText, fontWeight = FontWeight.Medium)
-    }
-}
-
-@Composable
-private fun ContactShareDialog(
-    query: String,
-    onQueryChange: (String) -> Unit,
-    usersState: ResultState<List<ChatModels.User>>,
-    onDismiss: () -> Unit,
-    onShare: (ChatModels.User) -> Unit
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        containerColor = HelloColors.DarkPanelStrong,
-        title = { Text("Share contact", color = HelloColors.DarkText, fontWeight = FontWeight.Bold) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(HelloSpacing.Sm)) {
-                HelloSearchBar(value = query, onValueChange = onQueryChange, placeholder = "Search contacts")
-                when (usersState) {
-                    is ResultState.Loading -> Text("Loading contacts...", color = HelloColors.DarkTextMuted)
-                    is ResultState.Error -> Text(usersState.message, color = HelloColors.DarkDanger)
-                    is ResultState.Success -> {
-                        LazyColumn(modifier = Modifier.height(280.dp), verticalArrangement = Arrangement.spacedBy(HelloSpacing.Sm)) {
-                            items(usersState.data, key = { it.id }) { user ->
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clickable { onShare(user) }
-                                        .padding(HelloSpacing.Sm),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(HelloSpacing.Md)
-                                ) {
-                                    HelloAvatar(name = user.name, online = user.online == true, size = 40.dp, imageUrl = user.avatar)
-                                    Text(user.name, color = HelloColors.DarkText, fontWeight = FontWeight.Bold)
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        confirmButton = {},
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel", color = HelloColors.DarkTextMuted)
             }
         }
     )
@@ -1377,7 +1072,7 @@ private fun ConfirmChatDialog(title: String, message: String, onDismiss: () -> U
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = HelloColors.DarkPanelStrong,
-        title = { Text(title, color = HelloColors.DarkText, fontWeight = FontWeight.Bold) },
+        title = { Text(title, color = HelloColors.DarkText) },
         text = { Text(message, color = HelloColors.DarkTextMuted) },
         confirmButton = {
             TextButton(onClick = onConfirm) {
@@ -1392,31 +1087,12 @@ private fun ConfirmChatDialog(title: String, message: String, onDismiss: () -> U
     )
 }
 
-private fun openMessageAttachment(context: Context, message: Message) {
-    val url = UrlResolver.resolve(message.attachmentUrl) ?: return
-    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
-        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-    }
-    runCatching { context.startActivity(intent) }
-}
-
 @Composable
 private fun EmptyRoom() {
-    Box(
-        modifier = Modifier.fillMaxSize(),
-        contentAlignment = Alignment.Center
-    ) {
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(
-                text = "No messages yet",
-                color = HelloColors.DarkText,
-                fontWeight = FontWeight.Bold
-            )
-            Spacer(modifier = Modifier.height(HelloSpacing.Xs))
-            Text(
-                text = "Send the first message.",
-                color = HelloColors.DarkTextMuted
-            )
+            Text(text = "No messages yet", color = HelloColors.DarkText)
+            Text(text = "Send the first message.", color = HelloColors.DarkTextMuted)
         }
     }
 }

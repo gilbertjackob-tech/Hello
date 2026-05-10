@@ -90,6 +90,13 @@ function initializeHelloRuntime(options: MountHelloOptions = {}) {
       PRIMARY KEY (chatId, userId)
     );
 
+    CREATE TABLE IF NOT EXISTS chat_read_state (
+      chatId TEXT,
+      userId TEXT,
+      lastReadAt INTEGER,
+      PRIMARY KEY (chatId, userId)
+    );
+
     CREATE TABLE IF NOT EXISTS messages (
       id TEXT PRIMARY KEY,
       chatId TEXT,
@@ -288,6 +295,44 @@ function loadChats() {
       .map((r: any) => r.userId);
   }
   return chats;
+}
+
+function readStateFor(chatId: string, userId: string) {
+  return db
+    .prepare("SELECT lastReadAt FROM chat_read_state WHERE chatId = ? AND userId = ?")
+    .get(chatId, userId) as { lastReadAt?: number } | undefined;
+}
+
+function upsertReadState(chatId: string, userId: string, lastReadAt: number) {
+  db.prepare(
+    `
+      INSERT INTO chat_read_state (chatId, userId, lastReadAt)
+      VALUES (?, ?, ?)
+      ON CONFLICT(chatId, userId)
+      DO UPDATE SET lastReadAt = MAX(COALESCE(chat_read_state.lastReadAt, 0), excluded.lastReadAt)
+    `,
+  ).run(chatId, userId, lastReadAt);
+}
+
+function withUnreadCount(chat: any, userId?: string | null) {
+  if (!chat || !userId) return chat;
+  const lastReadAt = Number(readStateFor(chat.id, userId)?.lastReadAt || 0);
+  const row = db
+    .prepare(
+      "SELECT COUNT(*) as total FROM messages WHERE chatId = ? AND senderId != ? AND timestamp > ? AND COALESCE(isDeleted, 0) = 0",
+    )
+    .get(chat.id, userId, lastReadAt) as { total?: number };
+  return {
+    ...chat,
+    unreadCount: Number(row?.total || 0),
+  };
+}
+
+function loadChatForUser(chatId: string, userId: string) {
+  return loadChats()
+    .filter((chat: any) => chat.members?.includes(userId))
+    .map((chat: any) => withUnreadCount(chat, userId))
+    .find((chat: any) => chat.id === chatId);
 }
 
 function loadUsers() {
@@ -1023,6 +1068,7 @@ export async function mountHello(
     socket.on(
       "mark_messages_read",
       (data: { chatId: string; readerId: string }) => {
+        upsertReadState(data.chatId, data.readerId, Date.now());
         const msgs = db
           .prepare(
             "SELECT * FROM messages WHERE chatId = ? AND senderId != ? AND status != 'read'",
@@ -1057,6 +1103,10 @@ export async function mountHello(
             io.to(data.chatId).emit("message_updated", m);
           });
         })();
+        const personalized = loadChatForUser(data.chatId, data.readerId);
+        if (personalized) {
+          io.to(data.readerId).emit("chat_updated", personalized);
+        }
       },
     );
 
@@ -1350,7 +1400,10 @@ export async function mountHello(
             c.isGroup ? 1 : 0,
           );
           if (c.members)
-            c.members.forEach((uid: string) => insertMember.run(c.id, uid));
+            c.members.forEach((uid: string) => {
+              insertMember.run(c.id, uid);
+              upsertReadState(c.id, uid, Number(c.lastMessageTime || 0));
+            });
         });
       }
 
@@ -1441,7 +1494,11 @@ export async function mountHello(
     const userId = req.query.userId as string;
     const allChats = loadChats();
     if (userId) {
-      return res.json(allChats.filter((c: any) => c.members?.includes(userId)));
+      return res.json(
+        allChats
+          .filter((c: any) => c.members?.includes(userId))
+          .map((c: any) => withUnreadCount(c, userId)),
+      );
     }
     res.json(allChats);
   });
@@ -1618,12 +1675,21 @@ export async function mountHello(
       "UPDATE chats SET lastMessage = ?, lastMessageTime = ? WHERE id = ?",
     ).run(text || (location ? "📍 Location" : ""), timestamp, chatId);
 
+    if (senderId) {
+      upsertReadState(chatId, senderId, timestamp);
+    }
+
     const fullMsg = loadMessages(chatId).find((m: any) => m.id === id);
     const updatedChat = loadChats().find((c) => c.id === chatId);
 
     io.to(chatId).emit("receive_message", fullMsg);
     if (updatedChat && updatedChat.members) {
-      updatedChat.members.forEach((uid: string) => io.to(uid).emit("chat_updated", updatedChat));
+      updatedChat.members.forEach((uid: string) => {
+        const personalized = loadChatForUser(chatId, uid);
+        if (personalized) {
+          io.to(uid).emit("chat_updated", personalized);
+        }
+      });
     }
 
     const members = updatedChat?.members || [];
@@ -1697,7 +1763,7 @@ export async function mountHello(
     if (existingChatRow) {
       const existingChat = loadChats().find(c => c.id === existingChatRow.id);
       if (existingChat) {
-        return res.json(existingChat);
+        return res.json(loadChatForUser(existingChat.id, currentUserId) || existingChat);
       }
     }
 
@@ -1720,17 +1786,24 @@ export async function mountHello(
       "INSERT INTO chat_members (chatId, userId) VALUES (?, ?)",
     );
     insertMember.run(id, currentUserId);
+    upsertReadState(id, currentUserId, Date.now());
     io.in(currentUserId).socketsJoin(id);
     if (currentUserId !== targetUserId) {
       insertMember.run(id, targetUserId);
+      upsertReadState(id, targetUserId, 0);
       io.in(targetUserId).socketsJoin(id);
     }
 
     const newChat = loadChats().find((c) => c.id === id);
     if (newChat && newChat.members) {
-      newChat.members.forEach((uid: string) => io.to(uid).emit("new_chat", newChat));
+      newChat.members.forEach((uid: string) => {
+        const personalized = loadChatForUser(id, uid);
+        if (personalized) {
+          io.to(uid).emit("new_chat", personalized);
+        }
+      });
     }
-    res.status(201).json(newChat);
+    res.status(201).json(loadChatForUser(id, currentUserId) || newChat);
   });
 
   app.post("/api/chats", (req, res) => {
@@ -1747,14 +1820,20 @@ export async function mountHello(
     );
     if (members) members.forEach((uid: string) => {
       insertMember.run(id, uid);
+      upsertReadState(id, uid, 0);
       io.in(uid).socketsJoin(id);
     });
 
     const newChat = loadChats().find((c) => c.id === id);
     if (newChat && newChat.members) {
-      newChat.members.forEach((uid: string) => io.to(uid).emit("new_chat", newChat));
+      newChat.members.forEach((uid: string) => {
+        const personalized = loadChatForUser(id, uid);
+        if (personalized) {
+          io.to(uid).emit("new_chat", personalized);
+        }
+      });
     }
-    res.status(201).json(newChat);
+    res.status(201).json(members?.[0] ? loadChatForUser(id, members[0]) || newChat : newChat);
   });
 
   app.post("/api/chats/:chatId/messages/:messageId/react", (req, res) => {
@@ -2070,6 +2149,7 @@ export async function mountHello(
 
   app.post("/api/dev/reset", (req, res) => {
     db.prepare("DELETE FROM messages").run();
+    db.prepare("DELETE FROM chat_read_state").run();
     db.prepare("DELETE FROM chat_members").run();
     db.prepare("DELETE FROM chats").run();
     
@@ -2086,6 +2166,7 @@ export async function mountHello(
     );
     for (const u of users) {
       insertMember.run(id, u.id);
+      upsertReadState(id, u.id, 0);
     }
     
     res.json({ message: "Database chats and messages reset successfully." });

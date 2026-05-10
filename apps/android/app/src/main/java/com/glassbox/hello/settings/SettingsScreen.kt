@@ -253,6 +253,7 @@ private fun AppearanceRows() {
     val prefs = LocalContext.current.getSharedPreferences("hello_settings", 0)
     var theme by remember { mutableStateOf(prefs.getString("theme", "system") ?: "system") }
     var enterSends by remember { mutableStateOf(prefs.getBoolean("enter_sends", true)) }
+    var chatSounds by remember { mutableStateOf(prefs.getBoolean("chat_sounds", true)) }
     var wallpaper by remember { mutableStateOf(prefs.getString("wallpaper", "default") ?: "default") }
     var opacity by remember { mutableFloatStateOf(prefs.getInt("wallpaper_opacity", 100).toFloat()) }
     var customImageDialog by remember { mutableStateOf(false) }
@@ -269,6 +270,10 @@ private fun AppearanceRows() {
     ToggleRow("Enter sends", enterSends) {
         enterSends = it
         prefs.edit().putBoolean("enter_sends", it).apply()
+    }
+    ToggleRow("Chat sounds", chatSounds) {
+        chatSounds = it
+        prefs.edit().putBoolean("chat_sounds", it).apply()
     }
     OptionRow("Wallpaper", wallpaper, HelloWallpapers.Options) {
         if (it == HelloWallpapers.CustomImage) {
