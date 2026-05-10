@@ -47,6 +47,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -72,6 +73,7 @@ fun ChatMessageBubble(
     onOpenImage: (String, String) -> Unit,
     onDownloadAttachment: (String, String?) -> Unit,
     outgoingBubbleColor: Color,
+    incomingBubbleColor: Color,
     modifier: Modifier = Modifier,
     showSenderName: Boolean = false,
     compactWithPrevious: Boolean = false,
@@ -95,8 +97,9 @@ fun ChatMessageBubble(
         isStickerMessage(message.text) -> Color.Transparent
         message.isDeleted == true -> Color(0xB31D2930)
         isOwn -> outgoingBubbleColor.copy(alpha = if (isSystemInDarkTheme()) 0.90f else 0.95f)
-        else -> if (isSystemInDarkTheme()) Color(0xFF111A21).copy(alpha = 0.82f) else Color(0xFFF2F4F7).copy(alpha = 0.94f)
+        else -> incomingBubbleColor.copy(alpha = if (isSystemInDarkTheme()) 0.88f else 0.96f)
     }
+    val contentColor = readableMessageTextColor(bubbleColor)
     val bubbleBorder = when {
         isOwn -> Color.White.copy(alpha = 0.18f)
         else -> Color.White.copy(alpha = 0.08f)
@@ -195,6 +198,7 @@ fun ChatMessageBubble(
                                 MessageBody(
                                     message = message,
                                     isOwn = isOwn,
+                                    textColor = contentColor,
                                     onOpenAttachment = onOpenAttachment,
                                     onOpenImage = onOpenImage,
                                     onDownloadAttachment = onDownloadAttachment
@@ -278,6 +282,7 @@ private fun ReplyPreview(message: ChatModels.Message, isOwn: Boolean) {
 private fun MessageBody(
     message: ChatModels.Message,
     isOwn: Boolean,
+    textColor: Color,
     onOpenAttachment: (String) -> Unit,
     onOpenImage: (String, String) -> Unit,
     onDownloadAttachment: (String, String?) -> Unit
@@ -326,11 +331,15 @@ private fun MessageBody(
         if (resolved != null) Spacer(modifier = Modifier.size(7.dp))
         Text(
             text = message.text,
-            color = HelloColors.DarkText,
+            color = textColor,
             style = MaterialTheme.typography.bodyLarge,
             lineHeight = MaterialTheme.typography.bodyLarge.lineHeight
         )
     }
+}
+
+private fun readableMessageTextColor(color: Color): Color {
+    return if (color.luminance() > 0.52f) Color(0xFF071219) else Color.White
 }
 
 @Composable

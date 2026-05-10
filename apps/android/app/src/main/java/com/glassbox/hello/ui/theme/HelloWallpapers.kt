@@ -47,10 +47,11 @@ fun ChatWallpaperBackground(
     wallpaper: String,
     opacity: Float,
     modifier: Modifier = Modifier,
+    darkOverride: Boolean? = null,
     content: @Composable BoxScope.() -> Unit
 ) {
     val alpha = opacity.coerceIn(0f, 1f)
-    val dark = HelloThemeRuntime.darkThemeActive
+    val dark = darkOverride ?: HelloThemeRuntime.darkThemeActive
     val normalized = wallpaper.lowercase()
     Box(
         modifier = modifier

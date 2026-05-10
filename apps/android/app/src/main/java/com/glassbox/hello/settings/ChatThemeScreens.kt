@@ -105,10 +105,20 @@ fun ChatThemeRoute(
             selected = draft,
             onBack = { page = ChatThemePage.Home },
             onColorSelected = { color ->
-                draft = draft.copy(colorId = color.id, themeId = "custom")
+                draft = draft.copy(
+                    colorId = color.id,
+                    incomingArgb = ChatThemeStore.companionIncomingArgb(color.id, draft.darkMode),
+                    themeId = "custom"
+                )
             },
             onPreview = {
-                val candidates = ChatThemeStore.Colors.map { draft.copy(colorId = it.id, themeId = "custom") }
+                val candidates = ChatThemeStore.Colors.map {
+                    draft.copy(
+                        colorId = it.id,
+                        incomingArgb = ChatThemeStore.companionIncomingArgb(it.id, draft.darkMode),
+                        themeId = "custom"
+                    )
+                }
                 openPreview(candidates, draft)
             },
             modifier = modifier
@@ -267,6 +277,8 @@ fun WallpaperScreen(
                 WallpaperThumbnail(
                     wallpaper = wallpaper,
                     selected = selected.wallpaper == wallpaper,
+                    opacity = selected.wallpaperOpacity / 100f,
+                    darkMode = selected.darkMode,
                     onClick = { onWallpaperClick(wallpaper) }
                 )
             }
@@ -284,7 +296,7 @@ fun ThemePreviewScreen(
 ) {
     var index by remember(items, initialIndex) { mutableIntStateOf(initialIndex.coerceIn(0, items.lastIndex.coerceAtLeast(0))) }
     var drag by remember { mutableFloatStateOf(0f) }
-    val selection = items.getOrElse(index) { ChatThemeSelection() }
+    var selection by remember(items, index) { mutableStateOf(items.getOrElse(index) { ChatThemeSelection() }) }
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -312,6 +324,26 @@ fun ThemePreviewScreen(
                 }
         ) {
             FullChatPreview(selection = selection, modifier = Modifier.fillMaxSize())
+            PreviewModeToggle(
+                darkMode = selection.darkMode,
+                onDarkModeChange = { dark ->
+                    selection = selection.copy(
+                        darkMode = dark,
+                        incomingArgb = ChatThemeStore.companionIncomingArgb(selection.colorId, dark),
+                        themeId = "custom"
+                    )
+                },
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(HelloSpacing.Lg)
+            )
+            OpacitySelector(
+                selected = selection.wallpaperOpacity,
+                onSelected = { opacity -> selection = selection.copy(wallpaperOpacity = opacity, themeId = "custom") },
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .padding(end = HelloSpacing.Md)
+            )
         }
         Row(
             modifier = Modifier
@@ -355,7 +387,12 @@ fun ThemeCard(
                 )
                 .clickable(onClick = onClick)
         ) {
-            ChatWallpaperBackground(wallpaper = selection.wallpaper, opacity = 1f, modifier = Modifier.fillMaxSize()) {
+            ChatWallpaperBackground(
+                wallpaper = selection.wallpaper,
+                opacity = selection.wallpaperOpacity / 100f,
+                darkOverride = selection.darkMode,
+                modifier = Modifier.fillMaxSize()
+            ) {
                 MiniMessagePreview(selection = selection, modifier = Modifier.align(Alignment.Center))
                 if (selected) {
                     Box(
@@ -403,6 +440,8 @@ fun ColorCircle(
 fun WallpaperThumbnail(
     wallpaper: String,
     selected: Boolean,
+    opacity: Float,
+    darkMode: Boolean,
     onClick: () -> Unit
 ) {
     Box(
@@ -413,7 +452,12 @@ fun WallpaperThumbnail(
             .border(if (selected) 2.dp else 1.dp, if (selected) Color.White else HelloColors.DarkBorder, RoundedCornerShape(18.dp))
             .clickable(onClick = onClick)
     ) {
-        ChatWallpaperBackground(wallpaper = wallpaper, opacity = 1f, modifier = Modifier.fillMaxSize()) {
+        ChatWallpaperBackground(
+            wallpaper = wallpaper,
+            opacity = opacity,
+            darkOverride = darkMode,
+            modifier = Modifier.fillMaxSize()
+        ) {
             if (selected) {
                 Box(
                     modifier = Modifier
@@ -520,7 +564,12 @@ private fun ThemePreviewPanel(selection: ChatThemeSelection, modifier: Modifier 
             .clip(RoundedCornerShape(24.dp))
             .border(1.dp, HelloColors.DarkBorder, RoundedCornerShape(24.dp))
     ) {
-        ChatWallpaperBackground(wallpaper = selection.wallpaper, opacity = 1f, modifier = Modifier.fillMaxSize()) {
+        ChatWallpaperBackground(
+            wallpaper = selection.wallpaper,
+            opacity = selection.wallpaperOpacity / 100f,
+            darkOverride = selection.darkMode,
+            modifier = Modifier.fillMaxSize()
+        ) {
             MiniMessagePreview(selection = selection, modifier = Modifier.align(Alignment.Center))
         }
     }
@@ -529,26 +578,31 @@ private fun ThemePreviewPanel(selection: ChatThemeSelection, modifier: Modifier 
 @Composable
 private fun MiniMessagePreview(selection: ChatThemeSelection, modifier: Modifier = Modifier) {
     Column(modifier = modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        PreviewBubble(text = "Hi, are we still on for dinner?", color = Color(0xFF111A21), alignEnd = false)
+        PreviewBubble(text = "Hi, are we still on for dinner?", color = selection.incomingColor, textColor = selection.incomingTextColor, alignEnd = false)
         PreviewBubble(text = "Yes. I booked the place.", color = selection.color, alignEnd = true)
-        PreviewBubble(text = "Perfect.", color = Color(0xFF111A21), alignEnd = false)
+        PreviewBubble(text = "Perfect.", color = selection.incomingColor, textColor = selection.incomingTextColor, alignEnd = false)
     }
 }
 
 @Composable
 private fun FullChatPreview(selection: ChatThemeSelection, modifier: Modifier = Modifier) {
-    ChatWallpaperBackground(wallpaper = selection.wallpaper, opacity = 1f, modifier = modifier) {
+    ChatWallpaperBackground(
+        wallpaper = selection.wallpaper,
+        opacity = selection.wallpaperOpacity / 100f,
+        darkOverride = selection.darkMode,
+        modifier = modifier
+    ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(horizontal = HelloSpacing.Lg, vertical = HelloSpacing.Xxl),
             verticalArrangement = Arrangement.Center
         ) {
-            PreviewBubble("This wallpaper feels clean.", Color(0xFF111A21), alignEnd = false)
+            PreviewBubble("This wallpaper feels clean.", selection.incomingColor, selection.incomingTextColor, alignEnd = false)
             Spacer(Modifier.height(10.dp))
-            PreviewBubble("The color also matches the chat.", selection.color, alignEnd = true)
+            PreviewBubble("The color also matches the chat.", selection.color, selection.outgoingTextColor, alignEnd = true)
             Spacer(Modifier.height(10.dp))
-            PreviewBubble("Apply it when you are ready.", Color(0xFF111A21), alignEnd = false)
+            PreviewBubble("Apply it when you are ready.", selection.incomingColor, selection.incomingTextColor, alignEnd = false)
         }
     }
 }
@@ -557,6 +611,7 @@ private fun FullChatPreview(selection: ChatThemeSelection, modifier: Modifier = 
 private fun PreviewBubble(
     text: String,
     color: Color,
+    textColor: Color = ChatThemeStore.readableTextOn(color),
     alignEnd: Boolean
 ) {
     Row(
@@ -565,7 +620,7 @@ private fun PreviewBubble(
     ) {
         Text(
             text = text,
-            color = Color.White,
+            color = textColor,
             style = MaterialTheme.typography.bodyMedium,
             modifier = Modifier
                 .fillMaxWidth(0.72f)
@@ -573,5 +628,73 @@ private fun PreviewBubble(
                 .background(color.copy(alpha = 0.94f))
                 .padding(horizontal = 14.dp, vertical = 10.dp)
         )
+    }
+}
+
+@Composable
+private fun PreviewModeToggle(
+    darkMode: Boolean,
+    onDarkModeChange: (Boolean) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier
+            .clip(HelloShapes.Pill)
+            .background(Color.Black.copy(alpha = 0.36f))
+            .border(1.dp, Color.White.copy(alpha = 0.14f), HelloShapes.Pill)
+            .padding(4.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        PreviewModeChip(label = "Dark", active = darkMode, onClick = { onDarkModeChange(true) })
+        PreviewModeChip(label = "White", active = !darkMode, onClick = { onDarkModeChange(false) })
+    }
+}
+
+@Composable
+private fun PreviewModeChip(label: String, active: Boolean, onClick: () -> Unit) {
+    Text(
+        text = label,
+        color = if (active) Color(0xFF071219) else Color.White,
+        style = MaterialTheme.typography.labelSmall,
+        fontWeight = FontWeight.Bold,
+        modifier = Modifier
+            .clip(HelloShapes.Pill)
+            .background(if (active) Color.White else Color.Transparent)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 11.dp, vertical = 7.dp)
+    )
+}
+
+@Composable
+private fun OpacitySelector(
+    selected: Int,
+    onSelected: (Int) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val options = listOf(100, 88, 76, 64, 52, 40)
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(999.dp))
+            .background(Color.Black.copy(alpha = 0.34f))
+            .border(1.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(999.dp))
+            .padding(horizontal = 6.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(7.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text("Opacity", color = Color.White, style = MaterialTheme.typography.labelSmall, maxLines = 1)
+        options.forEach { option ->
+            val active = selected == option
+            Text(
+                text = "$option",
+                color = if (active) Color(0xFF071219) else Color.White,
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier
+                    .clip(HelloShapes.Pill)
+                    .background(if (active) Color.White else Color.Transparent)
+                    .clickable { onSelected(option) }
+                    .padding(horizontal = 9.dp, vertical = 6.dp)
+            )
+        }
     }
 }

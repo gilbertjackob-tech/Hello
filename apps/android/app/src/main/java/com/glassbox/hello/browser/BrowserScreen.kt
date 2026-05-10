@@ -3,6 +3,7 @@ package com.glassbox.hello.browser
 import android.app.Activity
 import android.app.KeyguardManager
 import android.content.Context
+import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -417,7 +418,18 @@ fun BrowserScreen(
                         )
                         BrowserToolTab.Downloads -> DownloadsPanel(
                             downloads = uiState.downloads,
-                            activeProfileName = uiState.activeProfile?.name ?: "Default"
+                            activeProfileName = uiState.activeProfile?.name ?: "Default",
+                            onOpen = { url ->
+                                val activeTab = uiState.activeTab
+                                if (activeTab != null) {
+                                    runtime.loadUrl(activeTab.id, url)
+                                    viewModel.updateTabState(activeTab.id) { current -> current.copy(url = url) }
+                                } else {
+                                    viewModel.createTab(url = url)
+                                }
+                                toolsVisible = false
+                            },
+                            onClear = { viewModel.clearDownloads(uiState.activeProfileId) }
                         )
                         BrowserToolTab.Passwords -> PasswordsPanel(
                             passwords = uiState.passwords,
@@ -436,40 +448,31 @@ fun BrowserScreen(
                             },
                             onReveal = { record ->
                                 val keyguardManager = context.getSystemService(KeyguardManager::class.java)
-                                val intent = keyguardManager?.createConfirmDeviceCredentialIntent(
-                                    "Unlock passwords",
-                                    "Confirm your screen lock to reveal this password."
+                                val intent = keyguardManager?.passwordUnlockIntent(
+                                    title = "Unlock passwords",
+                                    description = "Confirm your screen lock to reveal this password."
                                 )
-                                if (intent == null) {
-                                    if (!revealedPasswordIds.contains(record.id)) {
-                                        revealedPasswordIds.add(record.id)
-                                    }
-                                    passwordOrigin = record.origin
-                                    passwordUsername = record.username
-                                    passwordValue = record.password
-                                    passwordVisible = true
-                                    viewModel.setStatusMessage("Password revealed")
-                                } else {
+                                if (intent != null) {
                                     pendingPasswordReveal = record
                                     credentialLauncher.launch(intent)
+                                } else {
+                                    viewModel.setStatusMessage("Set a device screen lock before viewing saved passwords")
                                 }
                             },
                             onAutofill = { record ->
                                 val keyguardManager = context.getSystemService(KeyguardManager::class.java)
-                                val intent = keyguardManager?.createConfirmDeviceCredentialIntent(
-                                    "Unlock passwords",
-                                    "Confirm your screen lock to use this password."
+                                val intent = keyguardManager?.passwordUnlockIntent(
+                                    title = "Unlock passwords",
+                                    description = "Confirm your screen lock to use this password."
                                 )
-                                if (intent == null) {
-                                    passwordOrigin = record.origin
-                                    passwordUsername = record.username
-                                    passwordValue = record.password
-                                    passwordVisible = true
-                                } else {
+                                if (intent != null) {
                                     pendingPasswordReveal = record
                                     credentialLauncher.launch(intent)
+                                } else {
+                                    viewModel.setStatusMessage("Set a device screen lock before using saved passwords")
                                 }
-                            }
+                            },
+                            onDelete = { record -> viewModel.deletePassword(uiState.activeProfileId, record.id) }
                         )
                         BrowserToolTab.Privacy -> PrivacyPanel(
                             activeProfileName = uiState.activeProfile?.name ?: "Default",
@@ -1615,23 +1618,41 @@ private fun HistoryPanel(
 @Composable
 private fun DownloadsPanel(
     downloads: List<BrowserDownloadRecord>,
-    activeProfileName: String
+    activeProfileName: String,
+    onOpen: (String) -> Unit,
+    onClear: () -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(HelloSpacing.Sm)) {
-        Text("Downloads", fontWeight = FontWeight.Bold, color = HelloColors.DarkText)
-        Text("Profile: $activeProfileName", color = HelloColors.DarkTextMuted)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column {
+                Text("Downloads", fontWeight = FontWeight.Bold, color = HelloColors.DarkText)
+                Text("Profile: $activeProfileName • ${downloads.size} items", color = HelloColors.DarkTextMuted)
+            }
+            TextButton(onClick = onClear, enabled = downloads.isNotEmpty()) {
+                Text("Clear")
+            }
+        }
         if (downloads.isEmpty()) {
-            Text("No downloads yet.", color = HelloColors.DarkTextMuted)
+            Text("No downloads for this profile yet.", color = HelloColors.DarkTextMuted)
         } else {
             downloads.take(24).forEach { item ->
                 HelloListItem(
                     title = item.fileName,
-                    subtitle = item.url,
+                    subtitle = listOfNotNull(
+                        item.status.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() },
+                        item.sizeBytes?.let { size -> formatBrowserBytes(size) },
+                        formatBrowserRelativeTime(item.createdAt)
+                    ).joinToString(" • "),
                     leading = {
-                        HelloIconButton(onClick = {}, active = true) {
+                        HelloIconButton(onClick = { onOpen(item.url) }, active = true) {
                             Icon(Icons.Default.Download, contentDescription = null, tint = HelloColors.DarkAccent)
                         }
-                    }
+                    },
+                    onClick = { onOpen(item.url) }
                 )
             }
         }
@@ -1652,7 +1673,8 @@ private fun PasswordsPanel(
     onPasswordVisibilityChange: (Boolean) -> Unit,
     onSave: () -> Unit,
     onReveal: (BrowserPasswordRecord) -> Unit,
-    onAutofill: (BrowserPasswordRecord) -> Unit
+    onAutofill: (BrowserPasswordRecord) -> Unit,
+    onDelete: (BrowserPasswordRecord) -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(HelloSpacing.Sm)) {
         Text("Passwords", fontWeight = FontWeight.Bold, color = HelloColors.DarkText)
@@ -1684,7 +1706,7 @@ private fun PasswordsPanel(
                 Text(if (passwordVisible) "Hide password" else "Show password")
             }
             TextButton(onClick = onSave) {
-                Text("Ask to store")
+                Text("Ask to save")
             }
         }
         if (passwords.isEmpty()) {
@@ -1704,8 +1726,13 @@ private fun PasswordsPanel(
                         }
                     },
                     trailing = {
-                        TextButton(onClick = { onAutofill(record) }) {
-                            Text("Use")
+                        Row(horizontalArrangement = Arrangement.spacedBy(HelloSpacing.Xs)) {
+                            TextButton(onClick = { onAutofill(record) }) {
+                                Text("Use")
+                            }
+                            TextButton(onClick = { onDelete(record) }) {
+                                Text("Delete")
+                            }
                         }
                     }
                 )
@@ -1921,3 +1948,34 @@ private fun FloatingHelloBubble(
 private const val BUBBLE_PREFERENCES = "browser_fab_position"
 private const val BUBBLE_KEY_X = "x"
 private const val BUBBLE_KEY_Y = "y"
+
+private fun formatBrowserBytes(bytes: Long): String {
+    if (bytes < 1024L) return "$bytes B"
+    val units = listOf("KB", "MB", "GB")
+    var value = bytes.toDouble() / 1024.0
+    var unitIndex = 0
+    while (value >= 1024.0 && unitIndex < units.lastIndex) {
+        value /= 1024.0
+        unitIndex += 1
+    }
+    return String.format(java.util.Locale.US, "%.1f %s", value, units[unitIndex])
+}
+
+private fun formatBrowserRelativeTime(timestamp: Long): String {
+    val elapsed = (System.currentTimeMillis() - timestamp).coerceAtLeast(0L)
+    val minute = 60_000L
+    val hour = 60L * minute
+    val day = 24L * hour
+    return when {
+        elapsed < minute -> "Just now"
+        elapsed < hour -> "${elapsed / minute}m ago"
+        elapsed < day -> "${elapsed / hour}h ago"
+        else -> "${elapsed / day}d ago"
+    }
+}
+
+@Suppress("DEPRECATION")
+private fun KeyguardManager.passwordUnlockIntent(title: String, description: String): Intent? {
+    if (!isDeviceSecure) return null
+    return createConfirmDeviceCredentialIntent(title, description)
+}

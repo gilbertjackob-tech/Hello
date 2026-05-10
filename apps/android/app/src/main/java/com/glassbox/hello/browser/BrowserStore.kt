@@ -1,13 +1,19 @@
 package com.glassbox.hello.browser
 
 import android.content.Context
+import android.content.SharedPreferences
+import android.util.Log
+import androidx.security.crypto.EncryptedSharedPreferences
+import androidx.security.crypto.MasterKey
 import com.google.gson.Gson
 import java.io.File
 
 class BrowserStore(context: Context) {
+    private val applicationContext = context.applicationContext
     private val gson = Gson()
-    private val stateFile = File(File(context.filesDir, "browser"), "browser_state.json")
+    private val stateFile = File(File(applicationContext.filesDir, "browser"), "browser_state.json")
     private val lock = Any()
+    private val passwordPreferences: SharedPreferences? by lazy { createPasswordPreferences() }
 
     init {
         stateFile.parentFile?.mkdirs()
@@ -27,7 +33,7 @@ class BrowserStore(context: Context) {
         }.getOrElse { null }
 
         val state = loaded ?: BrowserPersistedState()
-        state.ensureDefaults()
+        state.ensureDefaults().withRestoredPasswords()
     }
 
     fun save(state: BrowserPersistedState) = synchronized(lock) {
@@ -35,8 +41,9 @@ class BrowserStore(context: Context) {
     }
 
     private fun saveLocked(state: BrowserPersistedState) {
+        persistPasswordSecrets(state)
         stateFile.bufferedWriter().use { writer ->
-            gson.toJson(state.ensureDefaults(), writer)
+            gson.toJson(state.ensureDefaults().withoutPasswordSecrets(), writer)
         }
     }
 
@@ -100,6 +107,67 @@ class BrowserStore(context: Context) {
         )
     }
 
+    private fun BrowserPersistedState.withRestoredPasswords(): BrowserPersistedState {
+        val preferences = passwordPreferences ?: return this
+        val restored = passwordsByProfile.mapValues { (_, passwords) ->
+            passwords.map { record ->
+                val securePassword = preferences.getString(passwordKey(record.id), null)
+                when {
+                    !securePassword.isNullOrBlank() -> record.copy(password = securePassword)
+                    record.password.isNotBlank() -> {
+                        preferences.edit().putString(passwordKey(record.id), record.password).apply()
+                        record
+                    }
+                    else -> record
+                }
+            }
+        }
+        return copy(passwordsByProfile = restored)
+    }
+
+    private fun BrowserPersistedState.withoutPasswordSecrets(): BrowserPersistedState {
+        return copy(
+            passwordsByProfile = passwordsByProfile.mapValues { (_, passwords) ->
+                passwords.map { record -> record.copy(password = "") }
+            }
+        )
+    }
+
+    private fun persistPasswordSecrets(state: BrowserPersistedState) {
+        val preferences = passwordPreferences ?: return
+        val passwordIds = state.passwordsByProfile.values.flatten().map { record -> record.id }.toSet()
+        val editor = preferences.edit()
+        state.passwordsByProfile.values.flatten().forEach { record ->
+            if (record.password.isNotBlank()) {
+                editor.putString(passwordKey(record.id), record.password)
+            }
+        }
+        preferences.all.keys
+            .filter { key -> key.startsWith(PASSWORD_KEY_PREFIX) && key.removePrefix(PASSWORD_KEY_PREFIX) !in passwordIds }
+            .forEach { key -> editor.remove(key) }
+        editor.apply()
+    }
+
+    private fun createPasswordPreferences(): SharedPreferences? {
+        return try {
+            val masterKey = MasterKey.Builder(applicationContext, MASTER_KEY_ALIAS)
+                .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+                .build()
+            EncryptedSharedPreferences.create(
+                applicationContext,
+                PASSWORD_PREFS_NAME,
+                masterKey,
+                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+            )
+        } catch (error: Exception) {
+            Log.e(TAG, "Encrypted password store is unavailable.", error)
+            null
+        }
+    }
+
+    private fun passwordKey(id: String): String = "$PASSWORD_KEY_PREFIX$id"
+
     private fun defaultSignInProfile(): BrowserProfileRecord {
         return BrowserProfileRecord(
             id = DEFAULT_BROWSER_PROFILE_ID,
@@ -107,6 +175,13 @@ class BrowserStore(context: Context) {
             authProvider = BROWSER_PROVIDER_GOOGLE,
             pendingSignIn = true
         )
+    }
+
+    private companion object {
+        private const val TAG: String = "BrowserStore"
+        private const val PASSWORD_PREFS_NAME: String = "browser_passwords_secure"
+        private const val MASTER_KEY_ALIAS: String = "browser_password_master_key"
+        private const val PASSWORD_KEY_PREFIX: String = "password_"
     }
 }
 

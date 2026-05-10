@@ -223,16 +223,27 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
             }
             current.copy(
                 storageByProfile = current.storageByProfile + (profileId to retainedStorage),
-                statusMessage = "Cleared cookies and site data: ${range.label}"
+                statusMessage = "Cleared ${range.label.lowercase()} cookies and site data for ${profileLabel(current, profileId)}"
             )
         }
     }
 
     fun addDownload(record: BrowserDownloadRecord) {
+        if (record.profileId.isBlank()) return
         updateState { current ->
             val downloads = current.downloadsByProfile[record.profileId].orEmpty().toMutableList()
-            downloads.add(0, record)
+            downloads.removeAll { download -> download.id == record.id || download.url == record.url && download.fileName == record.fileName }
+            downloads.add(0, record.copy(createdAt = record.createdAt.takeIf { it > 0L } ?: System.currentTimeMillis()))
             current.copy(downloadsByProfile = current.downloadsByProfile + (record.profileId to downloads.take(500)))
+        }
+    }
+
+    fun clearDownloads(profileId: String) {
+        updateState { current ->
+            current.copy(
+                downloadsByProfile = current.downloadsByProfile + (profileId to emptyList()),
+                statusMessage = "Cleared downloads for ${profileLabel(current, profileId)}"
+            )
         }
     }
 
@@ -253,6 +264,15 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
             val existing = current.passwordsByProfile[profileId].orEmpty()
                 .firstOrNull { it.origin == cleanOrigin && it.username == cleanUser }
             if (existing?.password == cleanPassword) return@updateState current
+            val pending = current.pendingPasswordPrompt
+            if (
+                pending?.profileId == profileId &&
+                pending.origin == cleanOrigin &&
+                pending.username == cleanUser &&
+                pending.password == cleanPassword
+            ) {
+                return@updateState current
+            }
             current.copy(
                 pendingPasswordPrompt = BrowserPasswordPrompt(
                     profileId = profileId,
@@ -282,6 +302,17 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
 
     fun dismissPendingPasswordSave() {
         updateState { current -> current.copy(pendingPasswordPrompt = null) }
+    }
+
+    fun deletePassword(profileId: String, passwordId: String) {
+        updateState { current ->
+            val updated = current.passwordsByProfile[profileId].orEmpty()
+                .filterNot { record -> record.id == passwordId }
+            current.copy(
+                passwordsByProfile = current.passwordsByProfile + (profileId to updated),
+                statusMessage = "Deleted saved password"
+            )
+        }
     }
 
     fun updateStorage(profileId: String, origin: String, cookies: String?, localStorage: Map<String, String>, sessionStorage: Map<String, String>) {
@@ -448,6 +479,10 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
             passwords.add(0, record)
         }
         return current.copy(passwordsByProfile = current.passwordsByProfile + (profileId to passwords))
+    }
+
+    private fun profileLabel(current: BrowserUiState, profileId: String): String {
+        return current.profiles.firstOrNull { profile -> profile.id == profileId }?.name ?: "this profile"
     }
 
     private fun extractOrigin(url: String): String? {

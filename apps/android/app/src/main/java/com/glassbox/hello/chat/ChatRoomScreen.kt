@@ -159,7 +159,7 @@ fun ChatRoomScreen(
 
     val title = chat.displayName(currentUserId)
     val other = chat.otherParticipant(currentUserId)
-    val wallpaperOpacity = 1f
+    val wallpaperOpacity = chatTheme.wallpaperOpacity.coerceIn(35, 100) / 100f
     val subtitle = when {
         chat.isGroup -> "${chat.members?.size ?: chat.participants?.size ?: 0} participants"
         other?.online == true -> "Online"
@@ -604,6 +604,7 @@ fun ChatRoomScreen(
             ChatWallpaperBackground(
                 wallpaper = chatTheme.wallpaper,
                 opacity = wallpaperOpacity,
+                darkOverride = chatTheme.darkMode,
                 modifier = Modifier.weight(1f)
             ) {
                 Box(modifier = Modifier.fillMaxSize()) {
@@ -647,6 +648,7 @@ fun ChatRoomScreen(
                                     onOpenImage = { url, label -> mediaViewerState = MediaViewerState(url, label) },
                                     onDownloadAttachment = { url, fileName -> downloadAttachment(context, url, fileName) },
                                     outgoingBubbleColor = chatTheme.color,
+                                    incomingBubbleColor = chatTheme.incomingColor,
                                     onJumpToLatest = {
                                         scope.launch {
                                             if (visibleMessages.isNotEmpty()) {

@@ -501,26 +501,67 @@ private fun BrowserDataRows() {
     val browserState by browserViewModel.state.collectAsState()
     val activeProfileId = browserState.activeProfileId
     val activeProfileName = browserState.activeProfile?.name ?: "Default"
+    var pendingClearRange by remember { mutableStateOf<BrowserClearRange?>(null) }
 
     Text(
         "Active browser profile: $activeProfileName",
         color = HelloColors.DarkTextMuted,
         modifier = Modifier.padding(horizontal = HelloSpacing.Lg, vertical = HelloSpacing.Xs)
     )
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = HelloSpacing.Lg, vertical = HelloSpacing.Xs),
-        horizontalArrangement = Arrangement.spacedBy(HelloSpacing.Sm)
+    HelloSettingsRow(
+        title = "Cookies and site data",
+        subtitle = "Choose a Chrome-style time range for this profile only.",
+        leading = { RowIcon(Icons.Default.Public) }
+    )
+    Column(
+        modifier = Modifier.padding(horizontal = HelloSpacing.Lg, vertical = HelloSpacing.Xs),
+        verticalArrangement = Arrangement.spacedBy(HelloSpacing.Xs)
     ) {
         BrowserClearRange.entries.forEach { range ->
-            TextButton(onClick = { browserViewModel.clearCookies(activeProfileId, range) }) {
-                Text(range.label, color = HelloColors.DarkAccent)
-            }
+            HelloSettingsRow(
+                title = range.label,
+                subtitle = "Clear cookies and site storage for $activeProfileName",
+                onClick = { pendingClearRange = range }
+            )
         }
     }
+    browserState.statusMessage?.let { message ->
+        Text(
+            message,
+            color = HelloColors.DarkAccent,
+            modifier = Modifier.padding(horizontal = HelloSpacing.Lg, vertical = HelloSpacing.Xs)
+        )
+    }
+    pendingClearRange?.let { range ->
+        AlertDialog(
+            onDismissRequest = { pendingClearRange = null },
+            containerColor = HelloColors.DarkPanelStrong,
+            title = { Text("Clear ${range.label.lowercase()}?", color = HelloColors.DarkText, fontWeight = FontWeight.Bold) },
+            text = {
+                Text(
+                    "This clears cookies and site data for $activeProfileName only. Other browser profiles keep their data.",
+                    color = HelloColors.DarkTextMuted
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        browserViewModel.clearCookies(activeProfileId, range)
+                        pendingClearRange = null
+                    }
+                ) {
+                    Text("Clear", color = HelloColors.DarkAccent)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingClearRange = null }) {
+                    Text("Cancel", color = HelloColors.DarkTextMuted)
+                }
+            }
+        )
+    }
     Text(
-        "Cookies and site data are cleared for this profile only.",
+        "History, downloads, passwords, cookies, and site data are partitioned by browser profile.",
         color = HelloColors.DarkTextMuted,
         modifier = Modifier.padding(horizontal = HelloSpacing.Lg, vertical = HelloSpacing.Xs)
     )

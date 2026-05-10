@@ -66,6 +66,7 @@ fun ChatMessageList(
     onOpenImage: (String, String) -> Unit,
     onDownloadAttachment: (String, String?) -> Unit,
     outgoingBubbleColor: Color,
+    incomingBubbleColor: Color,
     onJumpToLatest: () -> Unit
 ) {
     val isNearBottom = rememberNearBottom(listState)
@@ -100,6 +101,7 @@ fun ChatMessageList(
                     onOpenImage = onOpenImage,
                     onDownloadAttachment = onDownloadAttachment,
                     outgoingBubbleColor = outgoingBubbleColor,
+                    incomingBubbleColor = incomingBubbleColor,
                     showSenderName = grouping.showSenderName,
                     compactWithPrevious = grouping.compactWithPrevious,
                     compactWithNext = grouping.compactWithNext

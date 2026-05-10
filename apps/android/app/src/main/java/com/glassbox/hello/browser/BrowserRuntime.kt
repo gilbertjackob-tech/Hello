@@ -350,7 +350,7 @@ class BrowserRuntime(
     private fun createSession(tab: BrowserTabRecord): BrowserTabSession {
         val webView = WebView(context)
         configureWebView(webView)
-        webView.addJavascriptInterface(ProfileCaptureBridge(viewModel), PROFILE_BRIDGE_NAME)
+        webView.addJavascriptInterface(ProfileCaptureBridge(viewModel, tab.profileId), PROFILE_BRIDGE_NAME)
         val session = BrowserTabSession(tabId = tab.id, profileId = tab.profileId, webView = webView)
         webView.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView?, request: android.webkit.WebResourceRequest?): Boolean {
@@ -388,6 +388,7 @@ class BrowserRuntime(
                     scope.launch { applyStoredOriginData(tab.id, actualUrl) }
                     captureAndStoreSession(tab.id)
                     injectProfileCaptureBridge(webView)
+                    injectPasswordCaptureBridge(webView)
                 }
             }
 
@@ -706,6 +707,66 @@ class BrowserRuntime(
         webView.evaluateJavascript(script, null)
     }
 
+    private fun injectPasswordCaptureBridge(webView: WebView) {
+        val script = """
+            (function() {
+              if (window.__glassboxPasswordBridgeReady) return;
+              window.__glassboxPasswordBridgeReady = true;
+              const bridge = window.$PROFILE_BRIDGE_NAME;
+              if (!bridge || typeof bridge.capturePassword !== 'function') return;
+              const visible = function(el) {
+                if (!el) return false;
+                const rect = el.getBoundingClientRect();
+                const style = window.getComputedStyle(el);
+                return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+              };
+              const clean = function(value) {
+                return String(value || '').trim();
+              };
+              const usernameFor = function(passwordInput) {
+                const form = passwordInput.form || passwordInput.closest('form') || document;
+                const candidates = Array.prototype.slice.call(form.querySelectorAll('input')).filter(function(input) {
+                  const type = String(input.type || 'text').toLowerCase();
+                  return input !== passwordInput &&
+                    visible(input) &&
+                    ['email', 'text', 'tel', 'url'].indexOf(type) >= 0 &&
+                    clean(input.value).length > 0;
+                });
+                const emailCandidate = candidates.find(function(input) {
+                  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clean(input.value).toLowerCase());
+                });
+                return clean((emailCandidate || candidates[candidates.length - 1] || {}).value);
+              };
+              const capture = function(passwordInput) {
+                const password = clean(passwordInput && passwordInput.value);
+                if (password.length < 4) return;
+                const username = usernameFor(passwordInput);
+                if (!username) return;
+                bridge.capturePassword(String(location.origin || location.href), username, password);
+              };
+              const watch = function(root) {
+                Array.prototype.slice.call(root.querySelectorAll('input[type="password"]')).forEach(function(input) {
+                  if (input.__glassboxPasswordWatched) return;
+                  input.__glassboxPasswordWatched = true;
+                  input.addEventListener('change', function() { capture(input); }, true);
+                  input.addEventListener('blur', function() { capture(input); }, true);
+                  const form = input.form || input.closest('form');
+                  if (form && !form.__glassboxPasswordWatched) {
+                    form.__glassboxPasswordWatched = true;
+                    form.addEventListener('submit', function() { capture(input); }, true);
+                  }
+                });
+              };
+              watch(document);
+              new MutationObserver(function() { watch(document); }).observe(document.documentElement, {
+                childList: true,
+                subtree: true
+              });
+            })();
+        """.trimIndent()
+        webView.evaluateJavascript(script, null)
+    }
+
     private fun extractOrigin(url: String): String? {
         return runCatching {
             val uri = Uri.parse(url)
@@ -717,7 +778,8 @@ class BrowserRuntime(
 }
 
 private class ProfileCaptureBridge(
-    private val viewModel: BrowserViewModel
+    private val viewModel: BrowserViewModel,
+    private val profileId: String
 ) {
     @JavascriptInterface
     fun captureEmail(email: String?) {
@@ -733,6 +795,16 @@ private class ProfileCaptureBridge(
         if (isEmailAddress(value)) {
             viewModel.bindDetectedProfileToActiveProfile(value, avatarUrl)
         }
+    }
+
+    @JavascriptInterface
+    fun capturePassword(origin: String?, username: String?, password: String?) {
+        viewModel.offerDetectedPassword(
+            profileId = profileId,
+            origin = origin?.trim().orEmpty(),
+            username = username?.trim().orEmpty(),
+            password = password.orEmpty()
+        )
     }
 }
 
