@@ -71,6 +71,7 @@ fun ChatMessageBubble(
     onOpenAttachment: (String) -> Unit,
     onOpenImage: (String, String) -> Unit,
     onDownloadAttachment: (String, String?) -> Unit,
+    outgoingBubbleColor: Color,
     modifier: Modifier = Modifier,
     showSenderName: Boolean = false,
     compactWithPrevious: Boolean = false,
@@ -93,11 +94,11 @@ fun ChatMessageBubble(
     val bubbleColor = when {
         isStickerMessage(message.text) -> Color.Transparent
         message.isDeleted == true -> Color(0xB31D2930)
-        isOwn -> if (isSystemInDarkTheme()) Color(0xFF143B23).copy(alpha = 0.90f) else Color(0xFF2E7D32).copy(alpha = 0.95f)
+        isOwn -> outgoingBubbleColor.copy(alpha = if (isSystemInDarkTheme()) 0.90f else 0.95f)
         else -> if (isSystemInDarkTheme()) Color(0xFF111A21).copy(alpha = 0.82f) else Color(0xFFF2F4F7).copy(alpha = 0.94f)
     }
     val bubbleBorder = when {
-        isOwn -> if (isSystemInDarkTheme()) Color(0xFF4EB97A).copy(alpha = 0.50f) else Color(0xFF60A97F).copy(alpha = 0.50f)
+        isOwn -> Color.White.copy(alpha = 0.18f)
         else -> Color.White.copy(alpha = 0.08f)
     }
     val bubbleShape = messageBubbleShape(isOwn, compactWithPrevious, compactWithNext)
@@ -311,6 +312,7 @@ private fun MessageBody(
         when (message.attachmentType) {
             "image" -> ImageCard(message, resolved, onOpenImage, onDownloadAttachment)
             "audio" -> AudioCard(message, resolved, onDownloadAttachment)
+            "video" -> VideoCard(message, resolved, onOpenAttachment, onDownloadAttachment)
             else -> FileCard(message, resolved, onOpenAttachment, onDownloadAttachment)
         }
     }

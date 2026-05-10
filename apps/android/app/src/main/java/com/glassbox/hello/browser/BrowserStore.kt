@@ -41,9 +41,22 @@ class BrowserStore(context: Context) {
     }
 
     private fun BrowserPersistedState.ensureDefaults(): BrowserPersistedState {
-        val profiles = if (profiles.isEmpty()) listOf(BrowserProfileRecord("default", "Default")) else profiles
+        val profiles = profiles
+            .filter { profile -> isEmailAddress(profile.email.orEmpty()) || (profile.pendingSignIn && profile.id == activeProfileId) }
+            .ifEmpty { listOf(defaultSignInProfile()) }
+            .map { profile ->
+                if (profile.email.isNullOrBlank()) {
+                    profile.copy(name = "Sign in", pendingSignIn = true)
+                } else {
+                    profile.copy(email = profile.email.orEmpty().trim().lowercase(), pendingSignIn = false)
+                }
+            }
+            .distinctBy { profile -> profile.email?.lowercase() ?: profile.id }
+        val profileIds = profiles.map { it.id }.toSet()
         val activeProfileId = if (profiles.any { it.id == this.activeProfileId }) this.activeProfileId else profiles.first().id
-        val tabsByProfile = tabsByProfile.mapValues { (_, tabs) ->
+        val tabsByProfile = tabsByProfile
+            .filterKeys { it in profileIds }
+            .mapValues { (_, tabs) ->
             tabs.map { tab ->
                 if (tab.url == "about:blank") {
                     tab.copy(url = DEFAULT_BROWSER_HOME_URL, title = if (tab.title == "New tab") "Google" else tab.title)
@@ -52,11 +65,11 @@ class BrowserStore(context: Context) {
                 }
             }
         }.toMutableMap()
-        val selectedTabByProfile = selectedTabByProfile.toMutableMap()
-        val historyByProfile = historyByProfile.toMutableMap()
-        val downloadsByProfile = downloadsByProfile.toMutableMap()
-        val passwordsByProfile = passwordsByProfile.toMutableMap()
-        val storageByProfile = storageByProfile.toMutableMap()
+        val selectedTabByProfile = selectedTabByProfile.filterKeys { it in profileIds }.toMutableMap()
+        val historyByProfile = historyByProfile.filterKeys { it in profileIds }.toMutableMap()
+        val downloadsByProfile = downloadsByProfile.filterKeys { it in profileIds }.toMutableMap()
+        val passwordsByProfile = passwordsByProfile.filterKeys { it in profileIds }.toMutableMap()
+        val storageByProfile = storageByProfile.filterKeys { it in profileIds }.toMutableMap()
 
         profiles.forEach { profile ->
             val tabs = tabsByProfile[profile.id].orEmpty().ifEmpty {
@@ -84,6 +97,15 @@ class BrowserStore(context: Context) {
             downloadsByProfile = downloadsByProfile,
             passwordsByProfile = passwordsByProfile,
             storageByProfile = storageByProfile
+        )
+    }
+
+    private fun defaultSignInProfile(): BrowserProfileRecord {
+        return BrowserProfileRecord(
+            id = DEFAULT_BROWSER_PROFILE_ID,
+            name = "Sign in",
+            authProvider = BROWSER_PROVIDER_GOOGLE,
+            pendingSignIn = true
         )
     }
 }

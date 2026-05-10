@@ -30,16 +30,14 @@ import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.VideoCall
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -51,7 +49,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.glassbox.hello.chat.ChatModels
+import com.glassbox.hello.browser.BrowserClearRange
+import com.glassbox.hello.browser.BrowserViewModel
 import com.glassbox.hello.core.AppConfig
 import com.glassbox.hello.core.ResultState
 import com.glassbox.hello.core.SessionManager
@@ -72,12 +73,11 @@ import com.glassbox.hello.ui.components.LoadingView
 import com.glassbox.hello.ui.theme.HelloColors
 import com.glassbox.hello.ui.theme.HelloShapes
 import com.glassbox.hello.ui.theme.HelloSpacing
-import com.glassbox.hello.ui.theme.HelloWallpapers
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 
 private enum class SettingsPage {
-    Home, Profile, Appearance, Notifications, FamilyNetwork, Privacy, StorageBackup, About, Diagnostics, People
+    Home, Profile, Appearance, ChatTheme, Notifications, FamilyNetwork, Privacy, StorageBackup, About, Diagnostics, People
 }
 
 @Composable
@@ -100,7 +100,14 @@ fun SettingsScreen(
             ProfilePage(sessionManager = sessionManager, onLogout = onLogout)
         }
         SettingsPage.Appearance -> SettingsSubpage("Appearance", onBack = { page = SettingsPage.Home }, modifier = modifier) {
-            AppearancePage()
+            AppearancePage(userId = currentUser?.id.orEmpty(), onOpenChatTheme = { page = SettingsPage.ChatTheme })
+        }
+        SettingsPage.ChatTheme -> {
+            ChatThemeRoute(
+                userId = currentUser?.id.orEmpty(),
+                onBack = { page = SettingsPage.Appearance },
+                modifier = modifier
+            )
         }
         SettingsPage.Notifications -> SettingsSubpage("Calls and notifications", onBack = { page = SettingsPage.Home }, modifier = modifier) {
             currentUser?.let { CallsNotificationsPage(userId = it.id) }
@@ -169,7 +176,11 @@ private fun SettingsHome(
                 }
             }
         }
-        item { SettingsSectionCard("Appearance", "Theme, chat wallpaper, and typing ergonomics.", Icons.Default.Palette) { AppearanceRows() } }
+        item {
+            SettingsSectionCard("Appearance", "Theme, chat wallpaper, and typing ergonomics.", Icons.Default.Palette) {
+                AppearanceRows(onOpenChatTheme = { onNavigate(SettingsPage.ChatTheme) })
+            }
+        }
         item { SettingsSectionCard("Calls and notifications", "Permissions, ring readiness, and desktop alerts.", Icons.Default.Notifications) { CallsNotificationRows(userId = user?.id) } }
         item { SettingsSectionCard("Storage and backup", "Encrypted export/import and local persistence.", Icons.Default.Storage) { StorageRows(sessionManager) } }
         item {
@@ -249,15 +260,18 @@ private fun SettingsSectionCard(
 }
 
 @Composable
-private fun AppearanceRows() {
+private fun AppearanceRows(onOpenChatTheme: () -> Unit) {
     val prefs = LocalContext.current.getSharedPreferences("hello_settings", 0)
     var theme by remember { mutableStateOf(prefs.getString("theme", "system") ?: "system") }
     var enterSends by remember { mutableStateOf(prefs.getBoolean("enter_sends", true)) }
     var chatSounds by remember { mutableStateOf(prefs.getBoolean("chat_sounds", true)) }
-    var wallpaper by remember { mutableStateOf(prefs.getString("wallpaper", "default") ?: "default") }
-    var opacity by remember { mutableFloatStateOf(prefs.getInt("wallpaper_opacity", 100).toFloat()) }
-    var customImageDialog by remember { mutableStateOf(false) }
 
+    HelloSettingsRow(
+        title = "Chat theme",
+        subtitle = "Color, wallpaper, and preview",
+        onClick = onOpenChatTheme,
+        leading = { RowIcon(Icons.Default.Palette) }
+    )
     OptionRow("Theme", theme, listOf("system", "light", "dark")) {
         theme = it
         prefs.edit().putString("theme", it).apply()
@@ -274,40 +288,6 @@ private fun AppearanceRows() {
     ToggleRow("Chat sounds", chatSounds) {
         chatSounds = it
         prefs.edit().putBoolean("chat_sounds", it).apply()
-    }
-    OptionRow("Wallpaper", wallpaper, HelloWallpapers.Options) {
-        if (it == HelloWallpapers.CustomImage) {
-            customImageDialog = true
-        } else {
-            wallpaper = it
-            prefs.edit().putString("wallpaper", it).apply()
-        }
-    }
-    Column(modifier = Modifier.padding(horizontal = HelloSpacing.Lg, vertical = HelloSpacing.Sm)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Wallpaper opacity", color = HelloColors.DarkText, modifier = Modifier.weight(1f))
-            Text("${opacity.toInt()}%", color = HelloColors.DarkTextMuted)
-        }
-        Slider(
-            value = opacity,
-            onValueChange = {
-                opacity = it
-                prefs.edit().putInt("wallpaper_opacity", it.toInt()).apply()
-            },
-            valueRange = 0f..100f,
-            colors = SliderDefaults.colors(
-                thumbColor = HelloColors.DarkAccent,
-                activeTrackColor = HelloColors.DarkAccent,
-                inactiveTrackColor = HelloColors.DarkBorderStrong
-            )
-        )
-    }
-    if (customImageDialog) {
-        InfoDialog(
-            title = "Custom image",
-            message = "Built-in premium wallpapers are ready now. Custom image wallpaper still needs a proper crop pipeline.",
-            onDismiss = { customImageDialog = false }
-        )
     }
 }
 
@@ -427,9 +407,20 @@ private fun ProfileCard(user: ChatModels.User) {
 }
 
 @Composable
-private fun AppearancePage() {
+private fun AppearancePage(userId: String, onOpenChatTheme: () -> Unit) {
     LazyColumn(modifier = Modifier.padding(horizontal = HelloSpacing.Lg), verticalArrangement = Arrangement.spacedBy(HelloSpacing.Md)) {
-        item { SettingsSectionCard("Appearance", "Theme, chat wallpaper, and typing ergonomics.", Icons.Default.Palette) { AppearanceRows() } }
+        item {
+            SettingsSectionCard("Appearance", "Theme, chat wallpaper, and typing ergonomics.", Icons.Default.Palette) {
+                AppearanceRows(onOpenChatTheme = onOpenChatTheme)
+            }
+        }
+        item {
+            Text(
+                text = "Chat themes are saved locally for ${userId.ifBlank { "this user" }}.",
+                color = HelloColors.DarkTextMuted,
+                modifier = Modifier.padding(horizontal = HelloSpacing.Lg)
+            )
+        }
     }
 }
 
@@ -444,6 +435,7 @@ private fun CallsNotificationsPage(userId: String) {
 private fun PrivacyPage(userId: String) {
     LazyColumn(modifier = Modifier.padding(horizontal = HelloSpacing.Lg), verticalArrangement = Arrangement.spacedBy(HelloSpacing.Md)) {
         item { SettingsSectionCard("Privacy", "Last active privacy.", Icons.Default.Lock) { PrivacyInlineRow(userId) } }
+        item { SettingsSectionCard("Browser data", "Clear cookies and site data for the active browser profile.", Icons.Default.Public) { BrowserDataRows() } }
     }
 }
 
@@ -501,6 +493,37 @@ private fun PrivacyInlineRow(userId: String) {
         }
     }
     Text(helper, color = HelloColors.DarkTextMuted, modifier = Modifier.padding(horizontal = HelloSpacing.Lg, vertical = HelloSpacing.Xs))
+}
+
+@Composable
+private fun BrowserDataRows() {
+    val browserViewModel: BrowserViewModel = viewModel()
+    val browserState by browserViewModel.state.collectAsState()
+    val activeProfileId = browserState.activeProfileId
+    val activeProfileName = browserState.activeProfile?.name ?: "Default"
+
+    Text(
+        "Active browser profile: $activeProfileName",
+        color = HelloColors.DarkTextMuted,
+        modifier = Modifier.padding(horizontal = HelloSpacing.Lg, vertical = HelloSpacing.Xs)
+    )
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = HelloSpacing.Lg, vertical = HelloSpacing.Xs),
+        horizontalArrangement = Arrangement.spacedBy(HelloSpacing.Sm)
+    ) {
+        BrowserClearRange.entries.forEach { range ->
+            TextButton(onClick = { browserViewModel.clearCookies(activeProfileId, range) }) {
+                Text(range.label, color = HelloColors.DarkAccent)
+            }
+        }
+    }
+    Text(
+        "Cookies and site data are cleared for this profile only.",
+        color = HelloColors.DarkTextMuted,
+        modifier = Modifier.padding(horizontal = HelloSpacing.Lg, vertical = HelloSpacing.Xs)
+    )
 }
 
 @Composable

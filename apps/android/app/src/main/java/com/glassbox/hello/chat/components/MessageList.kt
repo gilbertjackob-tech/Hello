@@ -29,6 +29,7 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.glassbox.hello.chat.ChatModels
@@ -64,6 +65,7 @@ fun ChatMessageList(
     onOpenAttachment: (String) -> Unit,
     onOpenImage: (String, String) -> Unit,
     onDownloadAttachment: (String, String?) -> Unit,
+    outgoingBubbleColor: Color,
     onJumpToLatest: () -> Unit
 ) {
     val isNearBottom = rememberNearBottom(listState)
@@ -97,6 +99,7 @@ fun ChatMessageList(
                     onOpenAttachment = onOpenAttachment,
                     onOpenImage = onOpenImage,
                     onDownloadAttachment = onDownloadAttachment,
+                    outgoingBubbleColor = outgoingBubbleColor,
                     showSenderName = grouping.showSenderName,
                     compactWithPrevious = grouping.compactWithPrevious,
                     compactWithNext = grouping.compactWithNext

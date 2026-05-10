@@ -651,11 +651,26 @@ class BrowserRuntime(
               window.__glassboxProfileBridgeReady = true;
               const bridge = window.$PROFILE_BRIDGE_NAME;
               if (!bridge || typeof bridge.captureEmail !== 'function') return;
+              const avatar = function() {
+                const images = Array.prototype.slice.call(document.querySelectorAll('img'));
+                const match = images.find(function(img) {
+                  const src = String(img.currentSrc || img.src || '');
+                  const alt = String(img.alt || img.getAttribute('aria-label') || '').toLowerCase();
+                  return src.indexOf('googleusercontent.com') >= 0 ||
+                    alt.indexOf('profile') >= 0 ||
+                    alt.indexOf('account') >= 0;
+                });
+                return match ? String(match.currentSrc || match.src || '') : '';
+              };
               const send = function(value) {
                 if (typeof value !== 'string') return;
                 const normalized = value.trim().toLowerCase();
                 if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) {
-                  bridge.captureEmail(normalized);
+                  if (typeof bridge.captureProfile === 'function') {
+                    bridge.captureProfile(normalized, avatar());
+                  } else {
+                    bridge.captureEmail(normalized);
+                  }
                 }
               };
               const track = function(root) {
@@ -666,8 +681,26 @@ class BrowserRuntime(
                   input.addEventListener('blur', function() { send(input.value || ''); }, true);
                 });
               };
+              const scan = function(root) {
+                root.querySelectorAll('[aria-label],[data-email],[title]').forEach(function(node) {
+                  send(node.getAttribute('data-email') || '');
+                  send(node.getAttribute('aria-label') || '');
+                  send(node.getAttribute('title') || '');
+                });
+                const text = (document.body && document.body.innerText) ? document.body.innerText : '';
+                const match = text.match(/[^\s@]+@[^\s@]+\.[^\s@]+/);
+                if (match) send(match[0]);
+              };
               track(document);
-              document.addEventListener('submit', function() { track(document); }, true);
+              scan(document);
+              document.addEventListener('submit', function() { track(document); scan(document); }, true);
+              setTimeout(function() { scan(document); }, 1000);
+              new MutationObserver(function() { scan(document); }).observe(document.documentElement, {
+                childList: true,
+                subtree: true,
+                attributes: true,
+                attributeFilter: ['aria-label', 'data-email', 'title', 'src']
+              });
             })();
         """.trimIndent()
         webView.evaluateJavascript(script, null)
@@ -691,6 +724,14 @@ private class ProfileCaptureBridge(
         val value = email?.trim().orEmpty()
         if (isEmailAddress(value)) {
             viewModel.bindDetectedEmailToActiveProfile(value)
+        }
+    }
+
+    @JavascriptInterface
+    fun captureProfile(email: String?, avatarUrl: String?) {
+        val value = email?.trim().orEmpty()
+        if (isEmailAddress(value)) {
+            viewModel.bindDetectedProfileToActiveProfile(value, avatarUrl)
         }
     }
 }

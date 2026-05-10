@@ -83,15 +83,10 @@ root npm run dev
   -> apps/browser/src/main/apiServer.ts starts Express on 127.0.0.1:3000
   -> apps/hello/server.ts is mounted into that Express server at /hello
 
-cd P:\Hasnat\mirror_browser\apps\android
-.\gradlew.bat assembleRelease --no-daemon --stacktrace --info
-adb devices 
-adb install -r .\app\build\outputs\apk\release\app-release.apk 
 
-cd P:\Hasnat\mirror_browser\apps\android       
-.\gradlew.bat :app:assembleDebug      
-.\gradlew.bat installDebug       
-adb shell monkey -p com.glassbox.hello -c android.intent.category.LAUNCHER 1
+
+.\gradlew.bat clean assembleRelease --no-daemon; if ($LASTEXITCODE -eq 0) { adb install -r app\build\outputs\apk\release\app-release.apk }
+
 ```
 
 The app has two main surfaces:

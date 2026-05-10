@@ -7,13 +7,16 @@ import android.net.Uri
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -61,30 +64,47 @@ fun ImageCard(
     onOpenImage: (String, String) -> Unit,
     onDownload: (String, String?) -> Unit
 ) {
-    Box {
-        SubcomposeAsyncImage(
-            model = ImageRequest.Builder(androidx.compose.ui.platform.LocalContext.current)
-                .data(resolvedUrl)
-                .decoderFactory(SvgDecoder.Factory())
-                .crossfade(true)
-                .build(),
-            contentDescription = message.attachmentName ?: "Image attachment",
-            contentScale = ContentScale.Crop,
+    var aspectRatio by remember(resolvedUrl) { mutableStateOf(4f / 3f) }
+    BoxWithConstraints {
+        val ratio = aspectRatio.coerceIn(0.62f, 1.9f)
+        Box(
             modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(max = 180.dp)
-                .clip(RoundedCornerShape(16.dp))
-                .background(Color(0xFF071219))
-                .combinedClickable(onClick = { onOpenImage(resolvedUrl, message.attachmentName ?: "Image") }),
-            loading = { AttachmentPlaceholder("Loading image") },
-            error = { AttachmentPlaceholder("Image unavailable") }
-        )
-        DownloadChip(
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(10.dp),
-            onClick = { onDownload(resolvedUrl, message.attachmentName) }
-        )
+                .widthIn(min = 156.dp, max = maxWidth)
+                .heightIn(max = 360.dp)
+                .aspectRatio(ratio)
+        ) {
+            SubcomposeAsyncImage(
+                model = ImageRequest.Builder(androidx.compose.ui.platform.LocalContext.current)
+                    .data(resolvedUrl)
+                    .decoderFactory(SvgDecoder.Factory())
+                    .crossfade(true)
+                    .build(),
+                contentDescription = message.attachmentName ?: "Image attachment",
+                contentScale = ContentScale.Fit,
+                onSuccess = { state ->
+                    val drawable = state.result.drawable
+                    val width = drawable.intrinsicWidth
+                    val height = drawable.intrinsicHeight
+                    if (width > 0 && height > 0) {
+                        aspectRatio = width.toFloat() / height.toFloat()
+                    }
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 120.dp, max = 360.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(Color(0xFF071219))
+                    .combinedClickable(onClick = { onOpenImage(resolvedUrl, message.attachmentName ?: "Image") }),
+                loading = { AttachmentPlaceholder("Loading image", ratio) },
+                error = { AttachmentPlaceholder("Image unavailable", ratio) }
+            )
+            DownloadChip(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(10.dp),
+                onClick = { onDownload(resolvedUrl, message.attachmentName) }
+            )
+        }
     }
 }
 
@@ -167,26 +187,31 @@ fun FileCard(
     onOpen: (String) -> Unit,
     onDownload: (String, String?) -> Unit
 ) {
+    val meta = remember(message.attachmentName, message.attachmentType) { attachmentMeta(message) }
+    val failed = message.status == "failed"
+    val sending = message.status == "sending"
     Row(
         modifier = Modifier
             .widthIn(max = 340.dp)
-            .clip(RoundedCornerShape(16.dp))
-            .background(Color.Black.copy(alpha = 0.18f))
+            .clip(RoundedCornerShape(18.dp))
+            .background(Color.Black.copy(alpha = 0.22f))
+            .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(18.dp))
             .combinedClickable(onClick = { onOpen(resolvedUrl) })
-            .padding(11.dp),
+            .padding(12.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp)
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Box(
             modifier = Modifier
-                .size(42.dp)
-                .clip(RoundedCornerShape(13.dp))
-                .background(HelloColors.DarkAccentSoft),
+                .size(48.dp)
+                .clip(RoundedCornerShape(15.dp))
+                .background(meta.color.copy(alpha = 0.18f))
+                .border(1.dp, meta.color.copy(alpha = 0.35f), RoundedCornerShape(15.dp)),
             contentAlignment = Alignment.Center
         ) {
             Text(
-                text = attachmentTypeLabel(message),
-                color = HelloColors.DarkAccentStrong,
+                text = meta.badge,
+                color = meta.color,
                 style = MaterialTheme.typography.labelSmall,
                 fontWeight = FontWeight.Bold
             )
@@ -201,14 +226,62 @@ fun FileCard(
             )
             Text(
                 text = buildString {
-                    append(attachmentTypeLabel(message))
+                    append(meta.label)
                     message.attachmentSize?.let { append(" - ").append(formatBytes(it)) }
+                    if (sending) append(" - Uploading")
+                    if (failed) append(" - Failed")
                 },
-                color = HelloColors.DarkTextMuted,
+                color = if (failed) HelloColors.DarkDanger else HelloColors.DarkTextMuted,
                 style = MaterialTheme.typography.labelSmall
             )
         }
         DownloadChip(onClick = { onDownload(resolvedUrl, message.attachmentName) })
+    }
+}
+
+@Composable
+fun VideoCard(
+    message: ChatModels.Message,
+    resolvedUrl: String,
+    onOpen: (String) -> Unit,
+    onDownload: (String, String?) -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .widthIn(min = 180.dp, max = 340.dp)
+            .aspectRatio(16f / 9f)
+            .clip(RoundedCornerShape(18.dp))
+            .background(Color.Black.copy(alpha = 0.32f))
+            .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(18.dp))
+            .combinedClickable(onClick = { onOpen(resolvedUrl) })
+    ) {
+        SubcomposeAsyncImage(
+            model = ImageRequest.Builder(androidx.compose.ui.platform.LocalContext.current)
+                .data(resolvedUrl)
+                .crossfade(true)
+                .build(),
+            contentDescription = message.attachmentName ?: "Video attachment",
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.fillMaxSize(),
+            loading = { AttachmentPlaceholder("Video", 16f / 9f) },
+            error = { AttachmentPlaceholder("Video", 16f / 9f) }
+        )
+        Box(
+            modifier = Modifier
+                .align(Alignment.Center)
+                .size(54.dp)
+                .clip(CircleShape)
+                .background(Color.Black.copy(alpha = 0.54f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(Icons.Default.PlayArrow, contentDescription = "Play video", tint = Color.White, modifier = Modifier.size(34.dp))
+        }
+        DownloadChip(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(10.dp),
+            onClick = { onDownload(resolvedUrl, message.attachmentName) }
+        )
     }
 }
 
@@ -337,16 +410,43 @@ private fun VoiceWaveform(isPlaying: Boolean) {
 }
 
 @Composable
-private fun AttachmentPlaceholder(label: String) {
+private fun AttachmentPlaceholder(label: String, aspectRatio: Float = 4f / 3f) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(max = 180.dp)
+            .aspectRatio(aspectRatio.coerceIn(0.62f, 1.9f))
+            .heightIn(min = 120.dp, max = 360.dp)
             .clip(RoundedCornerShape(16.dp))
             .background(Color(0xFF071219)),
         contentAlignment = Alignment.Center
     ) {
         Text(label, color = HelloColors.DarkTextMuted, style = MaterialTheme.typography.labelMedium)
+    }
+}
+
+private data class AttachmentMeta(
+    val label: String,
+    val badge: String,
+    val color: Color
+)
+
+private fun attachmentMeta(message: ChatModels.Message): AttachmentMeta {
+    val extension = message.attachmentName
+        ?.substringAfterLast('.', "")
+        ?.lowercase()
+        .orEmpty()
+    val type = message.attachmentType.orEmpty().lowercase()
+    return when {
+        extension == "pdf" -> AttachmentMeta("PDF document", "PDF", Color(0xFFEF4444))
+        extension in setOf("doc", "docx") -> AttachmentMeta("Word document", "DOC", Color(0xFF2563EB))
+        extension in setOf("xls", "xlsx", "csv") -> AttachmentMeta("Spreadsheet", "XLS", Color(0xFF16A34A))
+        extension in setOf("ppt", "pptx") -> AttachmentMeta("Presentation", "PPT", Color(0xFFF97316))
+        extension in setOf("zip", "rar", "7z") -> AttachmentMeta("Archive", "ZIP", Color(0xFFEAB308))
+        extension == "apk" -> AttachmentMeta("Android package", "APK", Color(0xFF22C55E))
+        type == "audio" || extension in setOf("mp3", "m4a", "aac", "wav", "ogg") -> AttachmentMeta("Audio", "AUD", Color(0xFF8B5CF6))
+        type == "video" || extension in setOf("mp4", "mov", "mkv", "webm") -> AttachmentMeta("Video", "VID", Color(0xFF06B6D4))
+        extension.isNotBlank() -> AttachmentMeta(extension.uppercase(), extension.take(3).uppercase(), HelloColors.DarkAccent)
+        else -> AttachmentMeta("File", "FILE", HelloColors.DarkAccent)
     }
 }
 

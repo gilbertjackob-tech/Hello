@@ -28,13 +28,22 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
 
     fun createProfile(name: String, email: String? = null) {
         val cleanName = name.trim().ifBlank { "Profile" }
-        val cleanEmail = email?.trim()?.takeIf { it.isNotBlank() }
-        val id = slugify(cleanName).ifBlank { "profile-${UUID.randomUUID().toString().take(8)}" }
+        val cleanEmail = email?.trim()?.lowercase()?.takeIf { isEmailAddress(it) }
+        if (cleanEmail == null) {
+            updateState { current -> current.copy(statusMessage = "Sign in with Google or Outlook to create a browser profile") }
+            return
+        }
+        val id = "mail-${slugify(cleanEmail).ifBlank { UUID.randomUUID().toString().take(8) }}"
         updateState { current ->
-            if (current.profiles.any { it.id == id }) {
+            if (current.profiles.any { it.email.equals(cleanEmail, ignoreCase = true) }) {
                 current.copy(statusMessage = "Profile already exists")
             } else {
-                val profile = BrowserProfileRecord(id = id, name = cleanName, email = cleanEmail)
+                val profile = BrowserProfileRecord(
+                    id = id,
+                    name = cleanName,
+                    email = cleanEmail,
+                    authProvider = providerFromEmail(cleanEmail)
+                )
                 val tabs = current.tabsByProfile[id].orEmpty().ifEmpty {
                     listOf(BrowserTabRecord(id = "tab-$id", profileId = id))
                 }
@@ -51,6 +60,43 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
                 )
             }
         }
+    }
+
+    fun startGoogleSignInProfile(): String {
+        return startConnectedSignInProfile(BROWSER_PROVIDER_GOOGLE, GOOGLE_SIGN_IN_URL)
+    }
+
+    fun startOutlookSignInProfile(): String {
+        return startConnectedSignInProfile(BROWSER_PROVIDER_OUTLOOK, OUTLOOK_SIGN_IN_URL)
+    }
+
+    private fun startConnectedSignInProfile(provider: String, signInUrl: String): String {
+        val id = "${provider}-${UUID.randomUUID().toString().take(8)}"
+        val tab = BrowserTabRecord(
+            id = "tab-$id",
+            profileId = id,
+            url = signInUrl,
+            title = if (provider == BROWSER_PROVIDER_OUTLOOK) "Outlook sign-in" else "Google sign-in"
+        )
+        updateState { current ->
+            current.copy(
+                profiles = current.profiles + BrowserProfileRecord(
+                    id = id,
+                    name = if (provider == BROWSER_PROVIDER_OUTLOOK) "Outlook Account" else "Google Account",
+                    authProvider = provider,
+                    pendingSignIn = true
+                ),
+                activeProfileId = id,
+                tabsByProfile = current.tabsByProfile + (id to listOf(tab)),
+                selectedTabByProfile = current.selectedTabByProfile + (id to tab.id),
+                historyByProfile = current.historyByProfile + (id to emptyList()),
+                downloadsByProfile = current.downloadsByProfile + (id to emptyList()),
+                passwordsByProfile = current.passwordsByProfile + (id to emptyList()),
+                storageByProfile = current.storageByProfile + (id to emptyMap()),
+                statusMessage = if (provider == BROWSER_PROVIDER_OUTLOOK) "Sign in with Outlook" else "Sign in with Google"
+            )
+        }
+        return id
     }
 
     fun updateProfile(profileId: String, name: String, email: String?) {
@@ -162,6 +208,26 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         updateState { current -> current.copy(historyByProfile = current.historyByProfile + (profileId to emptyList())) }
     }
 
+    fun clearCookies(profileId: String, range: BrowserClearRange) {
+        val now = System.currentTimeMillis()
+        val cutoff = range.durationMillis?.let { now - it }
+        updateState { current ->
+            val currentStorage = current.storageByProfile[profileId].orEmpty()
+            val retainedStorage = if (cutoff == null) {
+                emptyMap()
+            } else {
+                currentStorage.filterValues { stored ->
+                    val updatedAt = stored.updatedAt.takeIf { it > 0L } ?: now
+                    updatedAt < cutoff
+                }
+            }
+            current.copy(
+                storageByProfile = current.storageByProfile + (profileId to retainedStorage),
+                statusMessage = "Cleared cookies and site data: ${range.label}"
+            )
+        }
+    }
+
     fun addDownload(record: BrowserDownloadRecord) {
         updateState { current ->
             val downloads = current.downloadsByProfile[record.profileId].orEmpty().toMutableList()
@@ -172,26 +238,50 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
 
     fun addPassword(profileId: String, origin: String, username: String, password: String) {
         val cleanOrigin = origin.trim().ifBlank { return }
-        val cleanUser = username.trim().ifBlank { return }
+        val cleanUser = username.trim().ifBlank { "Account" }
+        val cleanPassword = password.ifBlank { return }
         updateState { current ->
-            val passwords = current.passwordsByProfile[profileId].orEmpty().toMutableList()
-            val existingIndex = passwords.indexOfFirst { it.origin == cleanOrigin && it.username == cleanUser }
-            val record = BrowserPasswordRecord(
-                id = passwords.getOrNull(existingIndex)?.id ?: UUID.randomUUID().toString(),
-                profileId = profileId,
-                origin = cleanOrigin,
-                username = cleanUser,
-                password = password,
-                createdAt = passwords.getOrNull(existingIndex)?.createdAt ?: System.currentTimeMillis(),
-                updatedAt = System.currentTimeMillis()
-            )
-            if (existingIndex >= 0) {
-                passwords[existingIndex] = record
-            } else {
-                passwords.add(0, record)
-            }
-            current.copy(passwordsByProfile = current.passwordsByProfile + (profileId to passwords))
+            upsertPassword(current, profileId, cleanOrigin, cleanUser, cleanPassword)
         }
+    }
+
+    fun offerDetectedPassword(profileId: String, origin: String, username: String, password: String) {
+        val cleanOrigin = origin.trim().ifBlank { return }
+        val cleanUser = username.trim().ifBlank { "Account" }
+        val cleanPassword = password.ifBlank { return }
+        updateState { current ->
+            val existing = current.passwordsByProfile[profileId].orEmpty()
+                .firstOrNull { it.origin == cleanOrigin && it.username == cleanUser }
+            if (existing?.password == cleanPassword) return@updateState current
+            current.copy(
+                pendingPasswordPrompt = BrowserPasswordPrompt(
+                    profileId = profileId,
+                    origin = cleanOrigin,
+                    username = cleanUser,
+                    password = cleanPassword
+                )
+            )
+        }
+    }
+
+    fun confirmPendingPasswordSave() {
+        updateState { current ->
+            val prompt = current.pendingPasswordPrompt ?: return@updateState current
+            upsertPassword(
+                current = current,
+                profileId = prompt.profileId,
+                origin = prompt.origin,
+                username = prompt.username,
+                password = prompt.password
+            ).copy(
+                pendingPasswordPrompt = null,
+                statusMessage = "Saved password for ${prompt.origin}"
+            )
+        }
+    }
+
+    fun dismissPendingPasswordSave() {
+        updateState { current -> current.copy(pendingPasswordPrompt = null) }
     }
 
     fun updateStorage(profileId: String, origin: String, cookies: String?, localStorage: Map<String, String>, sessionStorage: Map<String, String>) {
@@ -201,7 +291,8 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
             profileStorage[cleanOrigin] = BrowserStoredOriginData(
                 cookies = cookies,
                 localStorage = localStorage,
-                sessionStorage = sessionStorage
+                sessionStorage = sessionStorage,
+                updatedAt = System.currentTimeMillis()
             )
             current.copy(storageByProfile = current.storageByProfile + (profileId to profileStorage))
         }
@@ -259,17 +350,32 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun bindDetectedEmailToActiveProfile(email: String) {
+        bindDetectedProfileToActiveProfile(email = email, avatarUrl = null)
+    }
+
+    fun bindDetectedProfileToActiveProfile(email: String, avatarUrl: String?) {
         val normalizedEmail = email.trim().lowercase()
         if (!isEmailAddress(normalizedEmail)) return
+        val cleanAvatarUrl = avatarUrl?.trim()?.takeIf { isSupportedAvatarUrl(it) }
         updateState { current ->
             val activeProfile = current.activeProfile ?: return@updateState current
-            if (activeProfile.email.equals(normalizedEmail, ignoreCase = true)) return@updateState current
-            if (!activeProfile.email.isNullOrBlank()) return@updateState current
+            if (!activeProfile.email.isNullOrBlank() && !activeProfile.email.equals(normalizedEmail, ignoreCase = true)) {
+                return@updateState current
+            }
             val displayName = deriveProfileLabelFromEmail(normalizedEmail)
+            val connectedProfile = activeProfile.copy(
+                name = if (activeProfile.name.isBlank() || activeProfile.pendingSignIn) displayName else activeProfile.name,
+                email = normalizedEmail,
+                avatarUrl = cleanAvatarUrl ?: activeProfile.avatarUrl,
+                authProvider = providerFromEmail(normalizedEmail, activeProfile.authProvider),
+                pendingSignIn = false
+            )
             current.copy(
-                profiles = current.profiles.map { profile ->
+                profiles = current.profiles.mapNotNull { profile ->
                     if (profile.id == activeProfile.id) {
-                        profile.copy(name = displayName, email = normalizedEmail)
+                        connectedProfile
+                    } else if (profile.email.equals(normalizedEmail, ignoreCase = true)) {
+                        null
                     } else {
                         profile
                     }
@@ -317,6 +423,33 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         )
     }
 
+    private fun upsertPassword(
+        current: BrowserUiState,
+        profileId: String,
+        origin: String,
+        username: String,
+        password: String
+    ): BrowserUiState {
+        val passwords = current.passwordsByProfile[profileId].orEmpty().toMutableList()
+        val existingIndex = passwords.indexOfFirst { it.origin == origin && it.username == username }
+        val existing = passwords.getOrNull(existingIndex)
+        val record = BrowserPasswordRecord(
+            id = existing?.id ?: UUID.randomUUID().toString(),
+            profileId = profileId,
+            origin = origin,
+            username = username,
+            password = password,
+            createdAt = existing?.createdAt ?: System.currentTimeMillis(),
+            updatedAt = System.currentTimeMillis()
+        )
+        if (existingIndex >= 0) {
+            passwords[existingIndex] = record
+        } else {
+            passwords.add(0, record)
+        }
+        return current.copy(passwordsByProfile = current.passwordsByProfile + (profileId to passwords))
+    }
+
     private fun extractOrigin(url: String): String? {
         return runCatching {
             val uri = Uri.parse(url)
@@ -329,5 +462,21 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         return value.lowercase()
             .replace(Regex("[^a-z0-9]+"), "-")
             .trim('-')
+    }
+
+    private fun providerFromEmail(email: String, fallback: String = BROWSER_PROVIDER_LOCAL): String {
+        val domain = email.substringAfter('@', "").lowercase()
+        return when {
+            domain == "gmail.com" || domain == "googlemail.com" -> BROWSER_PROVIDER_GOOGLE
+            domain == "outlook.com" || domain == "hotmail.com" || domain == "live.com" -> BROWSER_PROVIDER_OUTLOOK
+            fallback != BROWSER_PROVIDER_LOCAL -> fallback
+            else -> BROWSER_PROVIDER_LOCAL
+        }
+    }
+
+    private fun isSupportedAvatarUrl(value: String): Boolean {
+        return value.startsWith("https://", ignoreCase = true) ||
+            value.startsWith("http://", ignoreCase = true) ||
+            value.startsWith("data:image/", ignoreCase = true)
     }
 }

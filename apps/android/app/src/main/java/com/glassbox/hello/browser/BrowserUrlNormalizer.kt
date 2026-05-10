@@ -16,6 +16,12 @@ private val directAliases = mapOf(
 )
 
 const val DEFAULT_BROWSER_HOME_URL: String = "https://www.google.com/"
+const val DEFAULT_BROWSER_PROFILE_ID: String = "signin-google"
+const val BROWSER_PROVIDER_LOCAL: String = "local"
+const val BROWSER_PROVIDER_GOOGLE: String = "google"
+const val BROWSER_PROVIDER_OUTLOOK: String = "outlook"
+const val GOOGLE_SIGN_IN_URL: String = "https://accounts.google.com/signin/v2/identifier?continue=https%3A%2F%2Fwww.google.com%2F"
+const val OUTLOOK_SIGN_IN_URL: String = "https://login.live.com/"
 
 fun normalizeBrowserUrl(raw: String): String {
     val value = raw.trim()

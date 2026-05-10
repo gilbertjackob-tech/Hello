@@ -1,5 +1,7 @@
 package com.glassbox.hello.browser
 
+import android.app.Activity
+import android.app.KeyguardManager
 import android.content.Context
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -31,6 +33,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -69,6 +73,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -85,13 +90,17 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.viewmodel.compose.viewModel
+import coil.compose.AsyncImage
 import com.glassbox.hello.R
 import com.glassbox.hello.core.HelloPreferences
 import com.glassbox.hello.core.rememberHelloSettingsState
@@ -110,6 +119,7 @@ private enum class BrowserToolTab(val label: String) {
     History("History"),
     Downloads("Downloads"),
     Passwords("Passwords"),
+    Privacy("Privacy"),
     Inspect("Inspect"),
     Request("Request")
 }
@@ -133,9 +143,6 @@ fun BrowserScreen(
     var selectedToolTab by rememberSaveable { mutableStateOf(BrowserToolTab.Profiles) }
     var addressInput by rememberSaveable(stateSaver = TextFieldValue.Saver) { mutableStateOf(TextFieldValue(DEFAULT_BROWSER_HOME_URL)) }
     var addressBarFocused by remember { mutableStateOf(false) }
-    var newProfileOpen by rememberSaveable { mutableStateOf(false) }
-    var newProfileName by rememberSaveable { mutableStateOf("") }
-    var newProfileEmail by rememberSaveable { mutableStateOf("") }
     var toolsVisible by rememberSaveable { mutableStateOf(false) }
     var querySelector by rememberSaveable { mutableStateOf("button") }
     var requestMethod by rememberSaveable { mutableStateOf("GET") }
@@ -145,14 +152,35 @@ fun BrowserScreen(
     var passwordOrigin by rememberSaveable { mutableStateOf("") }
     var passwordUsername by rememberSaveable { mutableStateOf("") }
     var passwordValue by rememberSaveable { mutableStateOf("") }
+    var passwordVisible by rememberSaveable { mutableStateOf(false) }
     var activeSession by remember { mutableStateOf<BrowserTabSession?>(null) }
     var pendingFileChooser by remember { mutableStateOf<((Array<Uri>?) -> Unit)?>(null) }
+    var pendingPasswordReveal by remember { mutableStateOf<BrowserPasswordRecord?>(null) }
     var launchHandled by rememberSaveable { mutableStateOf(false) }
     var tabsVisible by rememberSaveable { mutableStateOf(false) }
+    var profileSwitcherVisible by rememberSaveable { mutableStateOf(false) }
+    val revealedPasswordIds = remember { mutableStateListOf<String>() }
 
     val fileChooserLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         pendingFileChooser?.invoke(uris?.toTypedArray())
         pendingFileChooser = null
+    }
+
+    val credentialLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val record = pendingPasswordReveal ?: return@rememberLauncherForActivityResult
+        pendingPasswordReveal = null
+        if (result.resultCode == Activity.RESULT_OK) {
+            if (!revealedPasswordIds.contains(record.id)) {
+                revealedPasswordIds.add(record.id)
+            }
+            passwordOrigin = record.origin
+            passwordUsername = record.username
+            passwordValue = record.password
+            passwordVisible = true
+            viewModel.setStatusMessage("Password revealed")
+        } else {
+            viewModel.setStatusMessage("Password unlock canceled")
+        }
     }
 
     val runtime = remember(context, viewModel, scope) {
@@ -232,6 +260,24 @@ fun BrowserScreen(
         toolsVisible = true
     }
 
+    fun openProfileSwitcher() {
+        profileSwitcherVisible = true
+    }
+
+    fun startGoogleSignIn() {
+        viewModel.startGoogleSignInProfile()
+        addressInput = TextFieldValue(GOOGLE_SIGN_IN_URL)
+        profileSwitcherVisible = false
+        toolsVisible = false
+    }
+
+    fun startOutlookSignIn() {
+        viewModel.startOutlookSignInProfile()
+        addressInput = TextFieldValue(OUTLOOK_SIGN_IN_URL)
+        profileSwitcherVisible = false
+        toolsVisible = false
+    }
+
     val isHomeTab = uiState.activeTab?.url == DEFAULT_BROWSER_HOME_URL
 
     Box(
@@ -267,7 +313,7 @@ fun BrowserScreen(
                         onForward = { uiState.activeTab?.let { runtime.goForward(it.id) } },
                         onReload = { uiState.activeTab?.let { runtime.reload(it.id) } },
                         onStop = { uiState.activeTab?.let { runtime.stop(it.id) } },
-                        onOpenProfile = { openTool(BrowserToolTab.Profiles) },
+                        onOpenProfile = { openProfileSwitcher() },
                         onOpenTools = { toolsVisible = true }
                     )
 
@@ -300,7 +346,7 @@ fun BrowserScreen(
                     addressBarFocused = focused
                 },
                 onNavigate = { navigateActiveTab(it) },
-                onOpenProfile = { openTool(BrowserToolTab.Profiles) },
+                onOpenProfile = { openProfileSwitcher() },
                 onOpenTool = { openTool(it) },
                 modifier = Modifier
                     .weight(1f)
@@ -341,21 +387,19 @@ fun BrowserScreen(
                 themeMode = settingsState.themeMode,
                 onCreateProfile = {
                     toolsVisible = false
-                    newProfileOpen = true
+                    startGoogleSignIn()
                 },
                 onSetThemeMode = { mode -> HelloPreferences.setThemeMode(context, mode) },
                 content = {
                     when (selectedToolTab) {
                         BrowserToolTab.Profiles -> ProfilesPanel(
-                            profiles = uiState.profiles,
+                            profiles = uiState.connectedProfiles,
                             activeProfileId = uiState.activeProfileId,
                             onProfileClick = { profileId ->
                                 viewModel.selectProfileAndTab(profileId)
                             },
-                            onNewProfileClick = {
-                                toolsVisible = false
-                                newProfileOpen = true
-                            }
+                            onAddGoogleAccount = { startGoogleSignIn() },
+                            onAddOutlookAccount = { startOutlookSignIn() }
                         )
                         BrowserToolTab.History -> HistoryPanel(
                             history = uiState.history,
@@ -371,25 +415,65 @@ fun BrowserScreen(
                             },
                             onClear = { viewModel.clearHistory(uiState.activeProfileId) }
                         )
-                        BrowserToolTab.Downloads -> DownloadsPanel(downloads = uiState.downloads)
+                        BrowserToolTab.Downloads -> DownloadsPanel(
+                            downloads = uiState.downloads,
+                            activeProfileName = uiState.activeProfile?.name ?: "Default"
+                        )
                         BrowserToolTab.Passwords -> PasswordsPanel(
                             passwords = uiState.passwords,
                             origin = passwordOrigin,
                             username = passwordUsername,
                             password = passwordValue,
+                            passwordVisible = passwordVisible,
+                            revealedPasswordIds = revealedPasswordIds.toSet(),
                             onOriginChange = { passwordOrigin = it },
                             onUsernameChange = { passwordUsername = it },
                             onPasswordChange = { passwordValue = it },
+                            onPasswordVisibilityChange = { passwordVisible = it },
                             onSave = {
                                 val origin = passwordOrigin.ifBlank { viewModel.resolveActiveOrigin().orEmpty() }.trim()
-                                viewModel.addPassword(uiState.activeProfileId, origin, passwordUsername, passwordValue)
-                                viewModel.setStatusMessage("Saved password")
+                                viewModel.offerDetectedPassword(uiState.activeProfileId, origin, passwordUsername, passwordValue)
+                            },
+                            onReveal = { record ->
+                                val keyguardManager = context.getSystemService(KeyguardManager::class.java)
+                                val intent = keyguardManager?.createConfirmDeviceCredentialIntent(
+                                    "Unlock passwords",
+                                    "Confirm your screen lock to reveal this password."
+                                )
+                                if (intent == null) {
+                                    if (!revealedPasswordIds.contains(record.id)) {
+                                        revealedPasswordIds.add(record.id)
+                                    }
+                                    passwordOrigin = record.origin
+                                    passwordUsername = record.username
+                                    passwordValue = record.password
+                                    passwordVisible = true
+                                    viewModel.setStatusMessage("Password revealed")
+                                } else {
+                                    pendingPasswordReveal = record
+                                    credentialLauncher.launch(intent)
+                                }
                             },
                             onAutofill = { record ->
-                                passwordOrigin = record.origin
-                                passwordUsername = record.username
-                                passwordValue = record.password
+                                val keyguardManager = context.getSystemService(KeyguardManager::class.java)
+                                val intent = keyguardManager?.createConfirmDeviceCredentialIntent(
+                                    "Unlock passwords",
+                                    "Confirm your screen lock to use this password."
+                                )
+                                if (intent == null) {
+                                    passwordOrigin = record.origin
+                                    passwordUsername = record.username
+                                    passwordValue = record.password
+                                    passwordVisible = true
+                                } else {
+                                    pendingPasswordReveal = record
+                                    credentialLauncher.launch(intent)
+                                }
                             }
+                        )
+                        BrowserToolTab.Privacy -> PrivacyPanel(
+                            activeProfileName = uiState.activeProfile?.name ?: "Default",
+                            onClearCookies = { range -> viewModel.clearCookies(uiState.activeProfileId, range) }
                         )
                         BrowserToolTab.Inspect -> InspectPanel(
                             querySelector = querySelector,
@@ -448,44 +532,50 @@ fun BrowserScreen(
         }
     }
 
-    if (newProfileOpen) {
+    uiState.pendingPasswordPrompt?.let { prompt ->
         AlertDialog(
-            onDismissRequest = { newProfileOpen = false },
-            title = { Text("Create profile") },
+            onDismissRequest = { viewModel.dismissPendingPasswordSave() },
+            title = { Text("Save password") },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(HelloSpacing.Md)) {
-                    OutlinedTextField(
-                        value = newProfileName,
-                        onValueChange = { newProfileName = it },
-                        label = { Text("Name") },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                        value = newProfileEmail,
-                        onValueChange = { newProfileEmail = it },
-                        label = { Text("Email") },
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                Column(verticalArrangement = Arrangement.spacedBy(HelloSpacing.Sm)) {
+                    Text("Store this password for the active profile?")
+                    Text(prompt.origin, color = HelloColors.DarkTextMuted)
+                    Text(prompt.username, color = HelloColors.DarkTextMuted)
                 }
             },
             confirmButton = {
-                Button(
-                    onClick = {
-                        viewModel.createProfile(newProfileName, newProfileEmail)
-                        newProfileName = ""
-                        newProfileEmail = ""
-                        newProfileOpen = false
-                    }
-                ) {
-                    Text("Create")
+                TextButton(onClick = { viewModel.confirmPendingPasswordSave() }) {
+                    Text("Save")
                 }
             },
             dismissButton = {
-                TextButton(onClick = { newProfileOpen = false }) {
-                    Text("Cancel")
+                TextButton(onClick = { viewModel.dismissPendingPasswordSave() }) {
+                    Text("No thanks")
                 }
             }
         )
+    }
+
+    if (profileSwitcherVisible) {
+        ModalBottomSheet(
+            onDismissRequest = { profileSwitcherVisible = false },
+            containerColor = HelloColors.DarkBgStrong,
+            contentColor = HelloColors.DarkText,
+            dragHandle = null
+        ) {
+            ProfileSwitcherSheet(
+                profiles = uiState.profiles,
+                activeProfileId = uiState.activeProfileId,
+                activeProfile = uiState.activeProfile,
+                onClose = { profileSwitcherVisible = false },
+                onSwitchProfile = { profileId ->
+                    viewModel.selectProfileAndTab(profileId)
+                    profileSwitcherVisible = false
+                },
+                onAddGoogleAccount = { startGoogleSignIn() },
+                onAddOutlookAccount = { startOutlookSignIn() }
+            )
+        }
     }
 
     if (tabsVisible) {
@@ -740,17 +830,78 @@ private fun GlassBoxHomePage(
     onOpenTool: (BrowserToolTab) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    Column(
+    Box(
         modifier = modifier
             .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 20.dp, vertical = 18.dp),
-        verticalArrangement = Arrangement.spacedBy(HelloSpacing.Xl)
+            .padding(horizontal = 20.dp, vertical = 18.dp)
     ) {
+        Column(verticalArrangement = Arrangement.spacedBy(HelloSpacing.Xl)) {
+            Spacer(modifier = Modifier.height(4.dp))
+
+            GoogleWordmark(modifier = Modifier.align(Alignment.CenterHorizontally))
+
+            OutlinedTextField(
+                value = addressInput,
+                onValueChange = onAddressInputChange,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(64.dp)
+                    .onFocusChanged { state ->
+                        onAddressFocusChanged(state.isFocused)
+                    },
+                singleLine = true,
+                shape = RoundedCornerShape(32.dp),
+                leadingIcon = {
+                    GoogleGMark()
+                },
+                trailingIcon = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Search, contentDescription = "Search", tint = HelloColors.DarkTextMuted)
+                        Spacer(modifier = Modifier.width(8.dp))
+                    }
+                },
+                placeholder = { Text("Search Google or type URL") },
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                keyboardActions = KeyboardActions(onSearch = { onNavigate(addressInput.text) }, onGo = { onNavigate(addressInput.text) })
+            )
+
+            Row(horizontalArrangement = Arrangement.spacedBy(HelloSpacing.Md), modifier = Modifier.fillMaxWidth()) {
+                HomePill(label = "Google", modifier = Modifier.weight(1f), onClick = { onNavigate("google") })
+                HomePill(label = "Incognito", modifier = Modifier.weight(1f), onClick = { onOpenTool(BrowserToolTab.Profiles) })
+            }
+
+            HomeSection(title = "Common sites") {
+                Row(
+                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(HelloSpacing.Md)
+                ) {
+                    SiteShortcut(label = "Google", symbol = "G", onClick = { onNavigate("google") })
+                    SiteShortcut(label = "YouTube", symbol = "Y", onClick = { onNavigate("youtube") })
+                    SiteShortcut(label = "Gmail", symbol = "M", onClick = { onNavigate("mail") })
+                    SiteShortcut(label = "Facebook", symbol = "F", onClick = { onNavigate("facebook") })
+                    SiteShortcut(label = "WhatsApp", symbol = "W", onClick = { onNavigate("whatsapp") })
+                    SiteShortcut(label = "Add", symbol = "+", onClick = { onOpenTool(BrowserToolTab.History) })
+                }
+            }
+
+            HomeSection(title = "Shortcuts") {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    HomeAction(label = "Profiles", icon = Icons.Default.Person, onClick = onOpenProfile)
+                    HomeAction(label = "History", icon = Icons.Default.History, onClick = { onOpenTool(BrowserToolTab.History) })
+                    HomeAction(label = "Downloads", icon = Icons.Default.Download, onClick = { onOpenTool(BrowserToolTab.Downloads) })
+                    HomeAction(label = "Settings", icon = Icons.Default.Settings, onClick = { onOpenTool(BrowserToolTab.Profiles) })
+                }
+            }
+        }
+
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+            verticalAlignment = Alignment.Top
         ) {
             Surface(
                 onClick = { onOpenTool(BrowserToolTab.Request) },
@@ -765,67 +916,55 @@ private fun GlassBoxHomePage(
                     modifier = Modifier.padding(14.dp).size(22.dp)
                 )
             }
-            ProfileAvatar(
+            ActiveProfilePicker(
                 profile = activeProfile,
                 onClick = onOpenProfile
             )
         }
+    }
+}
 
-        GoogleWordmark(modifier = Modifier.align(Alignment.CenterHorizontally))
-
-        OutlinedTextField(
-            value = addressInput,
-            onValueChange = onAddressInputChange,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(64.dp)
-                .onFocusChanged { state ->
-                    onAddressFocusChanged(state.isFocused)
-                },
-            singleLine = true,
-            shape = RoundedCornerShape(32.dp),
-            leadingIcon = {
-                GoogleGMark()
-            },
-            trailingIcon = {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.Search, contentDescription = "Search", tint = HelloColors.DarkTextMuted)
-                    Spacer(modifier = Modifier.width(8.dp))
-                }
-            },
-            placeholder = { Text("Search Google or type URL") },
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-            keyboardActions = KeyboardActions(onSearch = { onNavigate(addressInput.text) }, onGo = { onNavigate(addressInput.text) })
+@Composable
+private fun ActiveProfilePicker(
+    profile: BrowserProfileRecord?,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val connected = profile?.isConnectedAccount == true
+    Surface(
+        onClick = onClick,
+        modifier = modifier.height(46.dp),
+        shape = RoundedCornerShape(23.dp),
+        color = if (connected) HelloColors.DarkPanelStrong.copy(alpha = 0.86f) else HelloColors.DarkAccentSoft,
+        border = androidx.compose.foundation.BorderStroke(
+            1.dp,
+            if (connected) Color.White.copy(alpha = 0.14f) else HelloColors.DarkAccent
         )
-
-        Row(horizontalArrangement = Arrangement.spacedBy(HelloSpacing.Md), modifier = Modifier.fillMaxWidth()) {
-            HomePill(label = "Google", modifier = Modifier.weight(1f), onClick = { onNavigate("google") })
-            HomePill(label = "Incognito", modifier = Modifier.weight(1f), onClick = { onOpenTool(BrowserToolTab.Profiles) })
-        }
-
-        HomeSection(title = "Common sites") {
-            Row(
-                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(HelloSpacing.Md)
-            ) {
-                SiteShortcut(label = "Google", symbol = "G", onClick = { onNavigate("google") })
-                SiteShortcut(label = "YouTube", symbol = "Y", onClick = { onNavigate("youtube") })
-                SiteShortcut(label = "Gmail", symbol = "M", onClick = { onNavigate("mail") })
-                SiteShortcut(label = "Facebook", symbol = "F", onClick = { onNavigate("facebook") })
-                SiteShortcut(label = "WhatsApp", symbol = "W", onClick = { onNavigate("whatsapp") })
-                SiteShortcut(label = "Add", symbol = "+", onClick = { onOpenTool(BrowserToolTab.History) })
-            }
-        }
-
-        HomeSection(title = "Shortcuts") {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                HomeAction(label = "Profiles", icon = Icons.Default.Person, onClick = onOpenProfile)
-                HomeAction(label = "History", icon = Icons.Default.History, onClick = { onOpenTool(BrowserToolTab.History) })
-                HomeAction(label = "Downloads", icon = Icons.Default.Download, onClick = { onOpenTool(BrowserToolTab.Downloads) })
-                HomeAction(label = "Settings", icon = Icons.Default.Settings, onClick = { onOpenTool(BrowserToolTab.Profiles) })
+    ) {
+        Row(
+            modifier = Modifier.padding(start = 6.dp, end = if (connected) 12.dp else 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(HelloSpacing.Xs)
+        ) {
+            ProfileAvatar(profile = profile, onClick = onClick, modifier = Modifier.size(34.dp))
+            if (connected) {
+                Column(modifier = Modifier.width(74.dp)) {
+                    Text(
+                        text = profile?.name.orEmpty(),
+                        color = HelloColors.DarkText,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = profile?.email.orEmpty(),
+                        color = HelloColors.DarkTextMuted,
+                        fontSize = 10.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
         }
     }
@@ -946,22 +1085,48 @@ private fun HomeAction(
 @Composable
 private fun ProfileAvatar(
     profile: BrowserProfileRecord?,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier.size(46.dp)
 ) {
     val initial = profile?.email?.firstOrNull()?.uppercaseChar()?.toString()
         ?: profile?.name?.firstOrNull()?.uppercaseChar()?.toString()
         ?: "G"
     Surface(
         onClick = onClick,
-        modifier = Modifier.size(46.dp),
+        modifier = modifier,
         shape = CircleShape,
-        color = HelloColors.DarkAccentSoft,
-        border = androidx.compose.foundation.BorderStroke(1.dp, HelloColors.DarkAccent)
+        color = profileAvatarColor(profile),
+        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.14f))
     ) {
         Box(contentAlignment = Alignment.Center) {
-            Text(initial, color = HelloColors.DarkAccentStrong, fontWeight = FontWeight.Bold)
+            if (!profile?.avatarUrl.isNullOrBlank()) {
+                AsyncImage(
+                    model = profile?.avatarUrl,
+                    contentDescription = profile?.name ?: "Profile photo",
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+            } else {
+                Text(initial, color = Color.White, fontWeight = FontWeight.Bold)
+            }
         }
     }
+}
+
+private fun profileAvatarColor(profile: BrowserProfileRecord?): Color {
+    val palette = listOf(
+        Color(0xFF0F766E),
+        Color(0xFF2563EB),
+        Color(0xFF7C3AED),
+        Color(0xFF16A34A),
+        Color(0xFFDC2626),
+        Color(0xFF0891B2),
+        Color(0xFFCA8A04),
+        Color(0xFFDB2777)
+    )
+    val seed = profile?.email ?: profile?.name ?: profile?.id ?: "glassbox"
+    val index = seed.fold(0) { acc, char -> acc + char.code }.mod(palette.size)
+    return palette[index]
 }
 
 @Composable
@@ -1061,6 +1226,181 @@ private fun TabsSheet(
 }
 
 @Composable
+private fun ProfileSwitcherSheet(
+    profiles: List<BrowserProfileRecord>,
+    activeProfileId: String,
+    activeProfile: BrowserProfileRecord?,
+    onClose: () -> Unit,
+    onSwitchProfile: (String) -> Unit,
+    onAddGoogleAccount: () -> Unit,
+    onAddOutlookAccount: () -> Unit
+) {
+    val accountProfiles = profiles.filter { it.isConnectedAccount }
+    val otherProfiles = accountProfiles.filterNot { it.id == activeProfileId }
+    val activeTitle = activeProfile?.takeIf { it.isConnectedAccount }?.name ?: "Sign in"
+    val activeSubtitle = activeProfile?.email ?: "Connect Google or Outlook to create a profile"
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .navigationBarsPadding()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = HelloSpacing.Lg, vertical = HelloSpacing.Md),
+        verticalArrangement = Arrangement.spacedBy(HelloSpacing.Md),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Spacer(modifier = Modifier.size(46.dp))
+            HelloIconButton(onClick = onClose, active = false) {
+                Icon(Icons.Default.Close, contentDescription = "Close profiles", tint = HelloColors.DarkText)
+            }
+        }
+
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(HelloSpacing.Xs),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            ProfileAvatar(profile = activeProfile, onClick = { }, modifier = Modifier.size(74.dp))
+            Text(
+                text = activeTitle,
+                color = HelloColors.DarkText,
+                fontWeight = FontWeight.Bold,
+                fontSize = 21.sp,
+                maxLines = 1
+            )
+            Text(
+                text = activeSubtitle,
+                color = HelloColors.DarkTextMuted,
+                fontSize = 15.sp,
+                maxLines = 1
+            )
+        }
+
+        HelloPanel(
+            modifier = Modifier.fillMaxWidth(),
+            strong = true,
+            shape = RoundedCornerShape(24.dp)
+        ) {
+            Column {
+                if (otherProfiles.isEmpty()) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(HelloSpacing.Lg),
+                        verticalArrangement = Arrangement.spacedBy(HelloSpacing.Xs)
+                    ) {
+                        Text(
+                            text = if (accountProfiles.isEmpty()) "No signed-in profiles yet" else "No other signed-in profiles",
+                            color = HelloColors.DarkText,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "Add a mail account to create a separate browser profile with its own tabs, cookies, downloads, and passwords.",
+                            color = HelloColors.DarkTextMuted,
+                            fontSize = 14.sp
+                        )
+                    }
+                } else {
+                    otherProfiles.forEachIndexed { index, profile ->
+                        ProfileSwitchRow(
+                            profile = profile,
+                            onClick = { onSwitchProfile(profile.id) }
+                        )
+                        if (index != otherProfiles.lastIndex) {
+                            HorizontalDivider(
+                                color = HelloColors.DarkBorder,
+                                modifier = Modifier.padding(start = 76.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        Surface(
+            onClick = onAddGoogleAccount,
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(20.dp),
+            color = HelloColors.DarkAccentSoft,
+            border = androidx.compose.foundation.BorderStroke(1.dp, HelloColors.DarkAccent)
+        ) {
+            Row(
+                modifier = Modifier.padding(HelloSpacing.Lg),
+                horizontalArrangement = Arrangement.spacedBy(HelloSpacing.Md),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                GoogleGMark()
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Add Google account", color = HelloColors.DarkText, fontWeight = FontWeight.Bold)
+                    Text("Creates a profile after the Gmail address is detected", color = HelloColors.DarkTextMuted)
+                }
+                Icon(Icons.Default.Add, contentDescription = null, tint = HelloColors.DarkAccent)
+            }
+        }
+
+        Surface(
+            onClick = onAddOutlookAccount,
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(20.dp),
+            color = HelloColors.DarkPanelMuted,
+            border = androidx.compose.foundation.BorderStroke(1.dp, HelloColors.DarkBorder)
+        ) {
+            Row(
+                modifier = Modifier.padding(HelloSpacing.Lg),
+                horizontalArrangement = Arrangement.spacedBy(HelloSpacing.Md),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(Icons.Default.Public, contentDescription = null, tint = HelloColors.DarkAccent)
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Add Outlook account", color = HelloColors.DarkText, fontWeight = FontWeight.Bold)
+                    Text("Creates a profile after the mail address is detected", color = HelloColors.DarkTextMuted)
+                }
+                Icon(Icons.Default.Add, contentDescription = null, tint = HelloColors.DarkAccent)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProfileSwitchRow(
+    profile: BrowserProfileRecord,
+    onClick: () -> Unit
+) {
+    Surface(
+        onClick = onClick,
+        color = Color.Transparent,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = HelloSpacing.Lg, vertical = HelloSpacing.Md),
+            horizontalArrangement = Arrangement.spacedBy(HelloSpacing.Md),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            ProfileAvatar(profile = profile, onClick = { onClick() }, modifier = Modifier.size(44.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = profile.name,
+                    color = HelloColors.DarkText,
+                    fontWeight = FontWeight.Medium,
+                    fontSize = 18.sp,
+                    maxLines = 1
+                )
+                Text(
+                    text = profile.email ?: "Local profile",
+                    color = HelloColors.DarkTextMuted,
+                    fontSize = 14.sp,
+                    maxLines = 1
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun BrowserStatusBanner(
     text: String,
     tone: Color,
@@ -1125,7 +1465,8 @@ private fun BrowserToolsSheet(
             MenuQuickAction("History", Icons.Default.History, onClick = { onSelectTool(BrowserToolTab.History) })
             MenuQuickAction("Downloads", Icons.Default.Download, onClick = { onSelectTool(BrowserToolTab.Downloads) })
             MenuQuickAction("Passwords", Icons.Default.Lock, onClick = { onSelectTool(BrowserToolTab.Passwords) })
-            MenuQuickAction("New Profile", Icons.Default.Add, onClick = onCreateProfile)
+            MenuQuickAction("Privacy", Icons.Default.Public, onClick = { onSelectTool(BrowserToolTab.Privacy) })
+            MenuQuickAction("Add Account", Icons.Default.Add, onClick = onCreateProfile)
         }
 
         Row(
@@ -1192,23 +1533,46 @@ private fun ProfilesPanel(
     profiles: List<BrowserProfileRecord>,
     activeProfileId: String,
     onProfileClick: (String) -> Unit,
-    onNewProfileClick: () -> Unit
+    onAddGoogleAccount: () -> Unit,
+    onAddOutlookAccount: () -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(HelloSpacing.Sm)) {
-        Text("Profiles", fontWeight = FontWeight.Bold, color = HelloColors.DarkText)
-        profiles.forEach { profile ->
-            HelloListItem(
-                title = profile.name,
-                subtitle = profile.email ?: if (profile.id == activeProfileId) "Active profile" else profile.id,
-                leading = {
-                    HelloIconButton(onClick = { onProfileClick(profile.id) }, active = profile.id == activeProfileId) {
-                        Icon(Icons.Default.Person, contentDescription = null, tint = HelloColors.DarkAccent)
-                    }
-                }
-            )
+        Text("Signed-in profiles", fontWeight = FontWeight.Bold, color = HelloColors.DarkText)
+        if (profiles.isEmpty()) {
+            Text("No connected accounts yet. Add Google or Outlook to create a browser profile.", color = HelloColors.DarkTextMuted)
+        } else {
+            profiles.forEach { profile ->
+                HelloListItem(
+                    title = profile.name,
+                    subtitle = profile.email.orEmpty(),
+                    leading = {
+                        ProfileAvatar(
+                            profile = profile,
+                            onClick = { onProfileClick(profile.id) },
+                            modifier = Modifier.size(38.dp)
+                        )
+                    },
+                    trailing = {
+                        if (profile.id == activeProfileId) {
+                            Box(
+                                modifier = Modifier
+                                    .size(10.dp)
+                                    .clip(CircleShape)
+                                .background(HelloColors.DarkAccent)
+                            )
+                        }
+                    },
+                    onClick = { onProfileClick(profile.id) }
+                )
+            }
         }
-        TextButton(onClick = onNewProfileClick) {
-            Text("Create new profile")
+        Row(horizontalArrangement = Arrangement.spacedBy(HelloSpacing.Sm)) {
+            TextButton(onClick = onAddGoogleAccount) {
+                Text("Add Google")
+            }
+            TextButton(onClick = onAddOutlookAccount) {
+                Text("Add Outlook")
+            }
         }
     }
 }
@@ -1249,9 +1613,13 @@ private fun HistoryPanel(
 }
 
 @Composable
-private fun DownloadsPanel(downloads: List<BrowserDownloadRecord>) {
+private fun DownloadsPanel(
+    downloads: List<BrowserDownloadRecord>,
+    activeProfileName: String
+) {
     Column(verticalArrangement = Arrangement.spacedBy(HelloSpacing.Sm)) {
         Text("Downloads", fontWeight = FontWeight.Bold, color = HelloColors.DarkText)
+        Text("Profile: $activeProfileName", color = HelloColors.DarkTextMuted)
         if (downloads.isEmpty()) {
             Text("No downloads yet.", color = HelloColors.DarkTextMuted)
         } else {
@@ -1276,14 +1644,22 @@ private fun PasswordsPanel(
     origin: String,
     username: String,
     password: String,
+    passwordVisible: Boolean,
+    revealedPasswordIds: Set<String>,
     onOriginChange: (String) -> Unit,
     onUsernameChange: (String) -> Unit,
     onPasswordChange: (String) -> Unit,
+    onPasswordVisibilityChange: (Boolean) -> Unit,
     onSave: () -> Unit,
+    onReveal: (BrowserPasswordRecord) -> Unit,
     onAutofill: (BrowserPasswordRecord) -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(HelloSpacing.Sm)) {
         Text("Passwords", fontWeight = FontWeight.Bold, color = HelloColors.DarkText)
+        Text(
+            "Passwords stay in the active profile. Revealing a saved password requires device unlock.",
+            color = HelloColors.DarkTextMuted
+        )
         OutlinedTextField(
             value = origin,
             onValueChange = onOriginChange,
@@ -1300,10 +1676,16 @@ private fun PasswordsPanel(
             value = password,
             onValueChange = onPasswordChange,
             label = { Text("Password") },
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier.fillMaxWidth(),
+            visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation()
         )
-        Button(onClick = onSave) {
-            Text("Save password")
+        Row(horizontalArrangement = Arrangement.spacedBy(HelloSpacing.Sm)) {
+            TextButton(onClick = { onPasswordVisibilityChange(!passwordVisible) }) {
+                Text(if (passwordVisible) "Hide password" else "Show password")
+            }
+            TextButton(onClick = onSave) {
+                Text("Ask to store")
+            }
         }
         if (passwords.isEmpty()) {
             Text("No saved passwords yet.", color = HelloColors.DarkTextMuted)
@@ -1311,12 +1693,46 @@ private fun PasswordsPanel(
             passwords.take(20).forEach { record ->
                 HelloListItem(
                     title = record.origin,
-                    subtitle = record.username,
+                    subtitle = if (revealedPasswordIds.contains(record.id)) {
+                        "${record.username} • ${record.password}"
+                    } else {
+                        "${record.username} • protected"
+                    },
                     leading = {
-                        HelloIconButton(onClick = { onAutofill(record) }, active = true) {
+                        HelloIconButton(onClick = { onReveal(record) }, active = true) {
                             Icon(Icons.Default.Lock, contentDescription = null, tint = HelloColors.DarkAccent)
                         }
+                    },
+                    trailing = {
+                        TextButton(onClick = { onAutofill(record) }) {
+                            Text("Use")
+                        }
                     }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PrivacyPanel(
+    activeProfileName: String,
+    onClearCookies: (BrowserClearRange) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(HelloSpacing.Sm)) {
+        Text("Privacy", fontWeight = FontWeight.Bold, color = HelloColors.DarkText)
+        Text(
+            "Clear cookies and site data for the active profile.",
+            color = HelloColors.DarkTextMuted
+        )
+        Text("Profile: $activeProfileName", color = HelloColors.DarkTextMuted)
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(HelloSpacing.Sm)) {
+            items(BrowserClearRange.entries) { range ->
+                HelloFilterChip(
+                    label = range.label,
+                    active = false,
+                    onClick = { onClearCookies(range) },
+                    dark = true
                 )
             }
         }

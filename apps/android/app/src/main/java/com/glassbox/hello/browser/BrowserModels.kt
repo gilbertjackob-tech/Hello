@@ -4,8 +4,13 @@ data class BrowserProfileRecord(
     val id: String,
     val name: String,
     val email: String? = null,
+    val avatarUrl: String? = null,
+    val authProvider: String = BROWSER_PROVIDER_LOCAL,
+    val pendingSignIn: Boolean = false,
     val createdAt: Long = System.currentTimeMillis()
-)
+) {
+    val isConnectedAccount: Boolean get() = !email.isNullOrBlank()
+}
 
 data class BrowserTabRecord(
     val id: String,
@@ -51,6 +56,20 @@ data class BrowserPasswordRecord(
     val updatedAt: Long = System.currentTimeMillis()
 )
 
+data class BrowserPasswordPrompt(
+    val profileId: String,
+    val origin: String,
+    val username: String,
+    val password: String
+)
+
+enum class BrowserClearRange(val label: String, val durationMillis: Long?) {
+    OneHour("1 hour", 60L * 60L * 1000L),
+    TwentyFourHours("24 hours", 24L * 60L * 60L * 1000L),
+    SevenDays("7 days", 7L * 24L * 60L * 60L * 1000L),
+    AllTime("All time", null)
+}
+
 data class BrowserDomNode(
     val tag: String,
     val text: String? = null,
@@ -94,20 +113,26 @@ data class BrowserPageSummary(
 data class BrowserStoredOriginData(
     val cookies: String? = null,
     val localStorage: Map<String, String> = emptyMap(),
-    val sessionStorage: Map<String, String> = emptyMap()
+    val sessionStorage: Map<String, String> = emptyMap(),
+    val updatedAt: Long = System.currentTimeMillis()
 )
 
 data class BrowserPersistedState(
     val profiles: List<BrowserProfileRecord> = listOf(
-        BrowserProfileRecord(id = "default", name = "Default")
-    ),
-    val activeProfileId: String = "default",
-    val tabsByProfile: Map<String, List<BrowserTabRecord>> = mapOf(
-        "default" to listOf(
-            BrowserTabRecord(id = "tab-default", profileId = "default")
+        BrowserProfileRecord(
+            id = DEFAULT_BROWSER_PROFILE_ID,
+            name = "Sign in",
+            authProvider = BROWSER_PROVIDER_GOOGLE,
+            pendingSignIn = true
         )
     ),
-    val selectedTabByProfile: Map<String, String?> = mapOf("default" to "tab-default"),
+    val activeProfileId: String = DEFAULT_BROWSER_PROFILE_ID,
+    val tabsByProfile: Map<String, List<BrowserTabRecord>> = mapOf(
+        DEFAULT_BROWSER_PROFILE_ID to listOf(
+            BrowserTabRecord(id = "tab-$DEFAULT_BROWSER_PROFILE_ID", profileId = DEFAULT_BROWSER_PROFILE_ID)
+        )
+    ),
+    val selectedTabByProfile: Map<String, String?> = mapOf(DEFAULT_BROWSER_PROFILE_ID to "tab-$DEFAULT_BROWSER_PROFILE_ID"),
     val historyByProfile: Map<String, List<BrowserHistoryRecord>> = emptyMap(),
     val downloadsByProfile: Map<String, List<BrowserDownloadRecord>> = emptyMap(),
     val passwordsByProfile: Map<String, List<BrowserPasswordRecord>> = emptyMap(),
@@ -116,7 +141,7 @@ data class BrowserPersistedState(
 
 data class BrowserUiState(
     val profiles: List<BrowserProfileRecord> = emptyList(),
-    val activeProfileId: String = "default",
+    val activeProfileId: String = DEFAULT_BROWSER_PROFILE_ID,
     val tabsByProfile: Map<String, List<BrowserTabRecord>> = emptyMap(),
     val selectedTabByProfile: Map<String, String?> = emptyMap(),
     val historyByProfile: Map<String, List<BrowserHistoryRecord>> = emptyMap(),
@@ -127,11 +152,13 @@ data class BrowserUiState(
     val domSnapshot: List<BrowserDomNode> = emptyList(),
     val queryResult: List<BrowserDomNode> = emptyList(),
     val actionTargets: List<BrowserActionTarget> = emptyList(),
+    val pendingPasswordPrompt: BrowserPasswordPrompt? = null,
     val statusMessage: String? = null,
     val requestResult: String? = null,
     val errorMessage: String? = null
 ) {
     val activeProfile: BrowserProfileRecord? get() = profiles.firstOrNull { it.id == activeProfileId }
+    val connectedProfiles: List<BrowserProfileRecord> get() = profiles.filter { it.isConnectedAccount }
     val activeTabs: List<BrowserTabRecord> get() = tabsByProfile[activeProfileId].orEmpty()
     val activeTabId: String? get() = selectedTabByProfile[activeProfileId]
     val activeTab: BrowserTabRecord? get() = activeTabs.firstOrNull { it.id == activeTabId }

@@ -83,6 +83,7 @@ import com.glassbox.hello.ui.theme.ChatWallpaperBackground
 import com.glassbox.hello.ui.theme.HelloColors
 import com.glassbox.hello.ui.theme.HelloShapes
 import com.glassbox.hello.ui.theme.HelloSpacing
+import com.glassbox.hello.ui.theme.rememberChatTheme
 import com.glassbox.hello.ui.utils.AnimationUtils
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -120,6 +121,7 @@ fun ChatRoomScreen(
     val socketManager = remember { SocketManager.getInstance() }
     val voiceRecorder = remember(context) { VoiceNoteRecorder(context) }
     val settingsState = rememberHelloSettingsState(context).value
+    val chatTheme by rememberChatTheme(context, currentUserId)
     val listState = rememberLazyListState()
     val isNearBottom = rememberNearBottom(listState)
 
@@ -157,7 +159,7 @@ fun ChatRoomScreen(
 
     val title = chat.displayName(currentUserId)
     val other = chat.otherParticipant(currentUserId)
-    val wallpaperOpacity = settingsState.wallpaperOpacity.coerceIn(0, 100) / 100f
+    val wallpaperOpacity = 1f
     val subtitle = when {
         chat.isGroup -> "${chat.members?.size ?: chat.participants?.size ?: 0} participants"
         other?.online == true -> "Online"
@@ -600,7 +602,7 @@ fun ChatRoomScreen(
             )
 
             ChatWallpaperBackground(
-                wallpaper = settingsState.wallpaper,
+                wallpaper = chatTheme.wallpaper,
                 opacity = wallpaperOpacity,
                 modifier = Modifier.weight(1f)
             ) {
@@ -644,6 +646,7 @@ fun ChatRoomScreen(
                                     onOpenAttachment = { url -> openExternalTarget(context, url) },
                                     onOpenImage = { url, label -> mediaViewerState = MediaViewerState(url, label) },
                                     onDownloadAttachment = { url, fileName -> downloadAttachment(context, url, fileName) },
+                                    outgoingBubbleColor = chatTheme.color,
                                     onJumpToLatest = {
                                         scope.launch {
                                             if (visibleMessages.isNotEmpty()) {
@@ -1068,6 +1071,7 @@ private fun Context.checkSelfPermissionCompat(permission: String): Boolean {
 private fun classifyAttachment(mimeType: String): String = when {
     mimeType.startsWith("image/") -> "image"
     mimeType.startsWith("audio/") -> "audio"
+    mimeType.startsWith("video/") -> "video"
     else -> "file"
 }
 
