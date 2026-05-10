@@ -1,6 +1,7 @@
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.ksp)
 }
 
 android {
@@ -81,6 +82,8 @@ dependencies {
     implementation(libs.coil.svg)
     implementation(libs.androidx.webkit)
     implementation(libs.androidx.room.runtime)
+    implementation(libs.androidx.room.ktx)
+    ksp(libs.androidx.room.compiler)
     implementation(libs.webrtc.android)
 
     testImplementation(libs.junit)
@@ -91,4 +94,10 @@ dependencies {
 
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     debugImplementation(libs.androidx.compose.ui.tooling)
+}
+
+ksp {
+    arg("room.schemaLocation", "$projectDir/schemas")
+    arg("room.incremental", "true")
+    arg("room.generateKotlin", "true")
 }

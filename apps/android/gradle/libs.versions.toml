@@ -15,6 +15,7 @@ coil = "2.7.0"
 webrtc = "137.7151.05"
 webkit = "1.10.0"
 room = "2.6.1"
+ksp = "2.2.10-2.0.2"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -41,7 +42,10 @@ coil-svg = { group = "io.coil-kt", name = "coil-svg", version.ref = "coil" }
 webrtc-android = { group = "io.github.webrtc-sdk", name = "android", version.ref = "webrtc" }
 androidx-webkit = { group = "androidx.webkit", name = "webkit", version.ref = "webkit" }
 androidx-room-runtime = { group = "androidx.room", name = "room-runtime", version.ref = "room" }
+androidx-room-ktx = { group = "androidx.room", name = "room-ktx", version.ref = "room" }
+androidx-room-compiler = { group = "androidx.room", name = "room-compiler", version.ref = "room" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }

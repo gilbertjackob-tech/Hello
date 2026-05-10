@@ -1934,6 +1934,274 @@ export const vlmPageApi = {
     };
   },
 
+  async parse(tabId: string, body: any = {}) {
+    const tab = getTabOrThrow(tabId);
+    const includeActionTargets = body?.includeActionTargets !== false;
+
+    const parsed: any = await runInPage(tab, () => {
+      function cleanText(value: unknown, limit = 500) {
+        return String(value || '')
+          .replace(/\s+/g, ' ')
+          .trim()
+          .slice(0, limit);
+      }
+
+      function attr(el: Element, name: string) {
+        return el.getAttribute(name) || '';
+      }
+
+      function selectorFor(el: Element) {
+        const htmlEl = el as HTMLElement;
+        if (htmlEl.id) {
+          return `#${CSS.escape(htmlEl.id)}`;
+        }
+
+        const name = attr(el, 'name');
+        if (name) {
+          return `${el.tagName.toLowerCase()}[name="${name.replace(/"/g, '\\"')}"]`;
+        }
+
+        const aria = attr(el, 'aria-label');
+        if (aria) {
+          return `${el.tagName.toLowerCase()}[aria-label="${aria.replace(/"/g, '\\"')}"]`;
+        }
+
+        const parent = el.parentElement;
+        if (!parent) return el.tagName.toLowerCase();
+
+        const siblings = Array.from(parent.children).filter((node) => node.tagName === el.tagName);
+        const index = siblings.indexOf(el) + 1;
+        return `${el.tagName.toLowerCase()}:nth-of-type(${Math.max(1, index)})`;
+      }
+
+      function elementSummary(el: Element) {
+        const rect = el.getBoundingClientRect();
+        const input = el as HTMLInputElement;
+        const type = input.type || attr(el, 'type') || '';
+        const isPassword = type.toLowerCase() === 'password';
+
+        return {
+          tag: el.tagName.toLowerCase(),
+          selector: selectorFor(el),
+          id: (el as HTMLElement).id || '',
+          name: attr(el, 'name'),
+          type,
+          role: attr(el, 'role'),
+          label: cleanText(
+            attr(el, 'aria-label') ||
+            attr(el, 'placeholder') ||
+            attr(el, 'title') ||
+            (el as HTMLInputElement).labels?.[0]?.textContent ||
+            el.textContent,
+            240,
+          ),
+          text: cleanText(el.textContent, 240),
+          value: isPassword ? '' : cleanText(input.value, 240),
+          href: attr(el, 'href'),
+          disabled: Boolean((input as any).disabled) || attr(el, 'aria-disabled') === 'true',
+          bbox: {
+            x: Math.round(rect.x),
+            y: Math.round(rect.y),
+            width: Math.round(rect.width),
+            height: Math.round(rect.height),
+          },
+        };
+      }
+
+      const metadata = {
+        title: document.title || '',
+        description: attr(document.querySelector('meta[name="description"]') || document.createElement('meta'), 'content'),
+        canonicalUrl: attr(document.querySelector('link[rel="canonical"]') || document.createElement('link'), 'href'),
+        lang: document.documentElement.lang || '',
+        viewport: attr(document.querySelector('meta[name="viewport"]') || document.createElement('meta'), 'content'),
+        charset: document.characterSet || '',
+      };
+
+      const headings = Array.from(document.querySelectorAll('h1,h2,h3,h4,h5,h6'))
+        .slice(0, 120)
+        .map((heading) => ({
+          level: Number(heading.tagName.slice(1)),
+          text: cleanText(heading.textContent, 300),
+          selector: selectorFor(heading),
+        }))
+        .filter((heading) => heading.text);
+
+      const links = Array.from(document.querySelectorAll('a[href]'))
+        .slice(0, 200)
+        .map((link) => ({
+          text: cleanText(link.textContent || attr(link, 'aria-label'), 240),
+          href: (link as HTMLAnchorElement).href,
+          selector: selectorFor(link),
+        }));
+
+      const inputs = Array.from(document.querySelectorAll('input, textarea, select, [contenteditable="true"]'))
+        .slice(0, 160)
+        .map(elementSummary);
+
+      const buttons = Array.from(document.querySelectorAll('button, input[type="button"], input[type="submit"], [role="button"]'))
+        .slice(0, 160)
+        .map(elementSummary);
+
+      const forms = Array.from(document.querySelectorAll('form'))
+        .slice(0, 40)
+        .map((form) => ({
+          selector: selectorFor(form),
+          action: (form as HTMLFormElement).action || '',
+          method: ((form as HTMLFormElement).method || 'get').toUpperCase(),
+          text: cleanText(form.textContent, 500),
+          inputs: Array.from(form.querySelectorAll('input, textarea, select, button'))
+            .slice(0, 80)
+            .map(elementSummary),
+        }));
+
+      return {
+        metadata,
+        readableText: cleanText(document.body?.innerText || '', 20000),
+        headings,
+        links,
+        forms,
+        inputs,
+        buttons,
+        counts: {
+          headings: headings.length,
+          links: links.length,
+          forms: forms.length,
+          inputs: inputs.length,
+          buttons: buttons.length,
+        },
+      };
+    });
+
+    const targets = includeActionTargets
+      ? await this.actionTargets(tabId).catch((error: any) => ({ error: error?.message || String(error), targets: [] }))
+      : null;
+
+    return {
+      tabId,
+      url: tab.webContents.getURL(),
+      title: tab.title,
+      capturedAt: Date.now(),
+      ...parsed,
+      actionTargets: targets ? (Array.isArray((targets as any).targets) ? (targets as any).targets : []) : undefined,
+      actionTargetError: targets && (targets as any).error ? (targets as any).error : undefined,
+    };
+  },
+
+  async request(tabId: string, body: any = {}) {
+    const tab = getTabOrThrow(tabId);
+    const method = String(body?.method || 'GET').trim().toUpperCase();
+    const allowedMethods = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']);
+    if (!allowedMethods.has(method)) {
+      throw new Error('UNSUPPORTED_METHOD');
+    }
+
+    const rawUrl = typeof body?.url === 'string' ? body.url.trim() : '';
+    if (!rawUrl) {
+      throw new Error('URL_REQUIRED');
+    }
+
+    const currentUrl = tab.webContents.getURL();
+    const requestUrl = new URL(rawUrl, currentUrl).toString();
+    if (!/^https?:\/\//i.test(requestUrl)) {
+      throw new Error('HTTP_URL_REQUIRED');
+    }
+
+    const headerEntries = body?.headers && typeof body.headers === 'object' && !Array.isArray(body.headers)
+      ? Object.entries(body.headers as Record<string, unknown>)
+      : [];
+    const headers = Object.fromEntries(
+      headerEntries
+        .filter(([key, value]) => typeof key === 'string' && key.trim() && typeof value === 'string')
+        .slice(0, 64)
+        .map(([key, value]) => [key.trim(), String(value)]),
+    );
+
+    let requestBody: string | undefined;
+    if (body?.json !== undefined) {
+      requestBody = JSON.stringify(body.json);
+      if (!Object.keys(headers).some((key) => key.toLowerCase() === 'content-type')) {
+        headers['Content-Type'] = 'application/json';
+      }
+    } else if (typeof body?.body === 'string') {
+      requestBody = body.body;
+    }
+
+    if (method === 'GET' || method === 'HEAD') {
+      requestBody = undefined;
+    }
+
+    const maxBytes = Math.max(1024, Math.min(Number(body?.maxBytes) || 200000, 1000000));
+    const timeoutMs = Math.max(1000, Math.min(Number(body?.timeoutMs) || 15000, 60000));
+
+    return await runInPage(tab, async (input: {
+      method: string;
+      url: string;
+      headers: Record<string, string>;
+      body?: string;
+      maxBytes: number;
+      timeoutMs: number;
+    }) => {
+      const startedAt = Date.now();
+      const controller = new AbortController();
+      const timeoutId = window.setTimeout(() => controller.abort(), input.timeoutMs);
+
+      try {
+        const response = await fetch(input.url, {
+          method: input.method,
+          headers: input.headers,
+          body: input.body,
+          credentials: 'include',
+          redirect: 'follow',
+          signal: controller.signal,
+        });
+
+        const arrayBuffer = await response.arrayBuffer();
+        const totalSize = arrayBuffer.byteLength;
+        const previewBuffer = arrayBuffer.slice(0, input.maxBytes);
+        const text = new TextDecoder().decode(previewBuffer);
+        const responseHeaders: Record<string, string> = {};
+        response.headers.forEach((value, key) => {
+          responseHeaders[key] = value;
+        });
+
+        let json: unknown = null;
+        const contentType = response.headers.get('content-type') || '';
+        if (contentType.includes('json')) {
+          try {
+            json = JSON.parse(text);
+          } catch {
+            json = null;
+          }
+        }
+
+        return {
+          ok: response.ok,
+          status: response.status,
+          statusText: response.statusText,
+          url: response.url,
+          redirected: response.redirected,
+          responseHeaders,
+          contentType,
+          text,
+          json,
+          sizeBytes: totalSize,
+          truncated: totalSize > input.maxBytes,
+          elapsedMs: Date.now() - startedAt,
+          capturedAt: Date.now(),
+        };
+      } finally {
+        window.clearTimeout(timeoutId);
+      }
+    }, [{
+      method,
+      url: requestUrl,
+      headers,
+      body: requestBody,
+      maxBytes,
+      timeoutMs,
+    }]);
+  },
+
   async actionTargets(tabId: string) {
     const tab = getTabOrThrow(tabId);
 

@@ -467,6 +467,38 @@ export function startApiServer(port: number = 3000): Promise<void> {
       }
     });
 
+    app.post('/api/tabs/:id/back', async (req, res) => {
+      try {
+        res.json(await tabManager.goBack(req.params.id));
+      } catch (error: any) {
+        errorResponse(res, error, 404);
+      }
+    });
+
+    app.post('/api/tabs/:id/forward', async (req, res) => {
+      try {
+        res.json(await tabManager.goForward(req.params.id));
+      } catch (error: any) {
+        errorResponse(res, error, 404);
+      }
+    });
+
+    app.post('/api/tabs/:id/reload', async (req, res) => {
+      try {
+        res.json(await tabManager.reload(req.params.id, Boolean(req.body?.hard)));
+      } catch (error: any) {
+        errorResponse(res, error, 404);
+      }
+    });
+
+    app.post('/api/tabs/:id/stop', async (req, res) => {
+      try {
+        res.json(await tabManager.stop(req.params.id));
+      } catch (error: any) {
+        errorResponse(res, error, 404);
+      }
+    });
+
     app.get('/api/tabs/:id/dom', (req, res) => {
       const tab = tabManager.getTab(req.params.id);
       res.json(tab?.elements || []);
@@ -483,6 +515,22 @@ export function startApiServer(port: number = 3000): Promise<void> {
     app.post('/api/tabs/:id/query', async (req, res) => {
       try {
         res.json(await vlmPageApi.query(req.params.id, req.body || {}));
+      } catch (error: any) {
+        errorResponse(res, error);
+      }
+    });
+
+    app.post('/api/tabs/:id/parse', async (req, res) => {
+      try {
+        res.json(await vlmPageApi.parse(req.params.id, req.body || {}));
+      } catch (error: any) {
+        errorResponse(res, error);
+      }
+    });
+
+    app.post('/api/tabs/:id/request', async (req, res) => {
+      try {
+        res.json(await vlmPageApi.request(req.params.id, req.body || {}));
       } catch (error: any) {
         errorResponse(res, error);
       }

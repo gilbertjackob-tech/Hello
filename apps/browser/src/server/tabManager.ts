@@ -454,6 +454,15 @@ class TabManager {
   }
 
   private clampBounds(bounds: { x: number; y: number; width: number; height: number }) {
+    if (Number(bounds.width) <= 0 || Number(bounds.height) <= 0) {
+      return {
+        x: Math.max(0, Math.round(Number(bounds.x) || 0)),
+        y: Math.max(0, Math.round(Number(bounds.y) || 0)),
+        width: 0,
+        height: 0,
+      };
+    }
+
     const normalized = {
       x: Math.max(0, Math.round(bounds.x)),
       y: Math.max(0, Math.round(bounds.y)),

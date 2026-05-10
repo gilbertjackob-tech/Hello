@@ -8,6 +8,7 @@ import { Sidebar } from "./components/Sidebar";
 import { ChatWindow } from "./components/ChatWindow";
 import { CallOverlay } from "./components/CallOverlay";
 import { AuthScreen } from "./components/AuthScreen";
+import { HelloBrowser } from "./components/HelloBrowser";
 import { Chat, User } from "./types";
 import { ThemeProvider } from "./ThemeContext";
 import { NotificationProvider } from "./NotificationContext";
@@ -23,6 +24,7 @@ import {
   Users,
   Settings,
   UserCircle2,
+  Globe2,
 } from "lucide-react";
 import { PermissionsModal } from "./components/PermissionsModal";
 
@@ -37,6 +39,7 @@ const VALID_RAIL_TABS = new Set([
   "profile",
   "settings",
   "starred",
+  "browser",
 ]);
 
 function getInitialRailTab() {
@@ -60,6 +63,7 @@ export default function App() {
   const savedActiveChatId = currentUser
     ? localStorage.getItem(`${ACTIVE_CHAT_STORAGE_PREFIX}_${currentUser.id}`)
     : null;
+  const isBrowserRailTab = activeRailTab === "browser";
 
   const selectChat = useCallback((chat: Chat | null) => {
     setActiveChat(chat);
@@ -220,6 +224,22 @@ export default function App() {
                 <Users className="w-5 sm:w-6 h-5 sm:h-6" />
               </button>
 
+              <button
+                onClick={() => {
+                  setActiveRailTab("browser");
+                  selectChat(null);
+                }}
+                className={cn(
+                  "rounded-full p-2.5 transition-colors",
+                  activeRailTab === "browser"
+                    ? "bg-[var(--hello-accent-soft)] text-[var(--hello-accent)]"
+                    : "hover:bg-black/5 dark:hover:bg-white/5",
+                )}
+                title="Browser"
+              >
+                <Globe2 className="w-5 sm:w-6 h-5 sm:h-6" />
+              </button>
+
               <div className="hidden md:block flex-1"></div>
 
               <button
@@ -260,10 +280,12 @@ export default function App() {
           <div
             className={cn(
               "z-20 order-1 flex flex-col border-[var(--hello-border)] transition-all duration-300 md:order-2 md:border-r md:min-h-0",
-              !activeChat
-                ? "flex-1 w-full min-h-0 md:h-full md:w-[350px] md:flex-none"
-                : "hidden md:flex md:w-[350px] md:h-full md:flex-none",
-              !isSidebarOpen && "md:w-0 md:hidden",
+              isBrowserRailTab
+                ? "hidden"
+                : !activeChat
+                  ? "flex-1 w-full min-h-0 md:h-full md:w-[350px] md:flex-none"
+                  : "hidden md:flex md:w-[350px] md:h-full md:flex-none",
+              !isBrowserRailTab && !isSidebarOpen && "md:w-0 md:hidden",
             )}
           >
             <Sidebar
@@ -281,7 +303,7 @@ export default function App() {
           <div
             className={cn(
               "relative order-2 flex h-full flex-1 flex-col min-h-0 overflow-hidden bg-transparent transition-colors duration-300 md:order-3",
-              !activeChat && "hidden md:flex",
+              !activeChat && !isBrowserRailTab && "hidden md:flex",
             )}
           >
             {/* Minimal top bar when sidebar is collapsed on desktop, or mobile back button */}
@@ -308,7 +330,9 @@ export default function App() {
               </div>
             )}
 
-            {activeChat ? (
+            {isBrowserRailTab ? (
+              <HelloBrowser />
+            ) : activeChat ? (
               <ChatWindow
                 key={activeChat.id}
                 chat={activeChat}

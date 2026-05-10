@@ -283,6 +283,7 @@ export default function App() {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [appMode, setAppMode] = useState<AppMode>(getInitialAppMode);
   const browserViewRef = useRef<HTMLDivElement>(null);
+  const helloFrameRef = useRef<HTMLIFrameElement>(null);
   const urlInputRef = useRef<HTMLInputElement>(null);
   const profileSelectRef = useRef<HTMLSelectElement>(null);
   const commandPaletteInputRef = useRef<HTMLInputElement>(null);
@@ -384,6 +385,53 @@ export default function App() {
       height: Math.round(rect.height),
     });
   };
+
+  useEffect(() => {
+    const normalizeHelloBounds = (bounds: any) => ({
+      x: Math.max(0, Math.round(Number(bounds?.x) || 0)),
+      y: Math.max(0, Math.round(Number(bounds?.y) || 0)),
+      width: Math.max(0, Math.round(Number(bounds?.width) || 0)),
+      height: Math.max(0, Math.round(Number(bounds?.height) || 0)),
+    });
+
+    const handleHelloBrowserMessage = (event: MessageEvent) => {
+      const data = event.data || {};
+      if (data.source !== 'glassbox-hello-browser' || data.type !== 'glassbox:browser-view') return;
+      if (appModeRef.current !== 'hello' || !(window as any).glassbox) return;
+      if (helloFrameRef.current?.contentWindow && event.source !== helloFrameRef.current.contentWindow) return;
+
+      const requestedTabId = typeof data.tabId === 'string' && data.tabId ? data.tabId : activeTabId;
+      if (!requestedTabId) return;
+
+      if (!data.active) {
+        (window as any).glassbox.activateTab(requestedTabId, {
+          x: 0,
+          y: 0,
+          width: 0,
+          height: 0,
+        });
+        return;
+      }
+
+      const rawBounds = normalizeHelloBounds(data.bounds);
+      const frameRect = helloFrameRef.current?.getBoundingClientRect();
+      const bounds = data.coordinateSpace === 'iframe' && frameRect
+        ? {
+            x: Math.round(frameRect.x + rawBounds.x),
+            y: Math.round(frameRect.y + rawBounds.y),
+            width: rawBounds.width,
+            height: rawBounds.height,
+          }
+        : rawBounds;
+
+      setActiveTabId(requestedTabId);
+      (window as any).glassbox.activateTab(requestedTabId, bounds);
+    };
+
+    window.addEventListener('message', handleHelloBrowserMessage);
+
+    return () => window.removeEventListener('message', handleHelloBrowserMessage);
+  }, [activeTabId]);
 
   useEffect(() => {
     appModeRef.current = appMode;
@@ -3139,6 +3187,7 @@ export default function App() {
 
       <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden">
         <iframe
+          ref={helloFrameRef}
           src="/hello"
           allow="camera; microphone; autoplay; display-capture; clipboard-read; clipboard-write"
           title="Hello"

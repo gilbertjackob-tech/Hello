@@ -714,7 +714,7 @@ export async function mountHello(
 
     const routeValidatedSignal = (event: string, data: any) => {
       const validation = validateCallSignal(data);
-      if (!validation.ok) {
+      if ("reason" in validation) {
         console.log(`[CALL_TRACE] blocked event=${event} reason=${validation.reason} callId=${data?.callId || data?.id || "unknown"}`);
         failCallSignal(data, validation.reason);
         return null;
