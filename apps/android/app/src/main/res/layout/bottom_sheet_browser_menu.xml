@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<GridLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@color/surface"
+    android:columnCount="4"
+    android:padding="@dimen/space_16"
+    android:rowCount="2"
+    tools:targetApi="lollipop">
+
+    <TextView
+        style="@style/Widget.Hello.MenuItem"
+        android:drawableTop="@android:drawable/ic_menu_add"
+        android:text="@string/new_tab" />
+
+    <TextView
+        style="@style/Widget.Hello.MenuItem"
+        android:drawableTop="@android:drawable/ic_menu_recent_history"
+        android:text="@string/history" />
+
+    <TextView
+        style="@style/Widget.Hello.MenuItem"
+        android:drawableTop="@android:drawable/btn_star_big_off"
+        android:text="@string/bookmarks" />
+
+    <TextView
+        style="@style/Widget.Hello.MenuItem"
+        android:drawableTop="@android:drawable/stat_sys_download_done"
+        android:text="@string/downloads" />
+
+    <TextView
+        style="@style/Widget.Hello.MenuItem"
+        android:drawableTop="@android:drawable/ic_menu_manage"
+        android:text="@string/settings" />
+
+    <TextView
+        style="@style/Widget.Hello.MenuItem"
+        android:drawableTop="@android:drawable/ic_menu_upload"
+        android:text="@string/sync" />
+
+    <TextView
+        style="@style/Widget.Hello.MenuItem"
+        android:drawableTop="@android:drawable/ic_menu_delete"
+        android:text="@string/clear_data" />
+
+    <TextView
+        style="@style/Widget.Hello.MenuItem"
+        android:drawableTop="@android:drawable/ic_dialog_info"
+        android:text="@string/page_info" />
+</GridLayout>

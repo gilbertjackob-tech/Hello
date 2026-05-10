@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Build
+import android.webkit.JavascriptInterface
 import android.webkit.CookieManager
 import android.webkit.DownloadListener
 import android.webkit.ValueCallback
@@ -27,6 +28,7 @@ import java.util.UUID
 import kotlin.coroutines.resume
 
 private const val BROWSER_DATA_SUFFIX = "glassbox_browser"
+private const val PROFILE_BRIDGE_NAME = "GlassBoxProfileBridge"
 
 class BrowserRuntime(
     private val context: Context,
@@ -83,7 +85,7 @@ class BrowserRuntime(
 
     fun loadUrl(tabId: String, rawUrl: String) {
         val session = sessions[tabId] ?: return
-        val normalized = normalizeUrl(rawUrl)
+        val normalized = normalizeBrowserUrl(rawUrl)
         session.webView.post { session.webView.loadUrl(normalized) }
     }
 
@@ -245,7 +247,7 @@ class BrowserRuntime(
         bodyText: String
     ): String {
         val session = sessions[tabId] ?: return "No active browser tab"
-        val targetUrl = normalizeUrl(url)
+        val targetUrl = normalizeBrowserUrl(url)
         val builder = Request.Builder().url(targetUrl)
         val httpMethod = method.trim().uppercase().ifBlank { "GET" }
         val headerLines = headersText.lineSequence()
@@ -340,14 +342,15 @@ class BrowserRuntime(
         }
     }
 
-    fun createTab(profileId: String, url: String = "about:blank"): BrowserTabSession {
-        val tab = BrowserTabRecord(id = "tab-${UUID.randomUUID().toString().take(8)}", profileId = profileId, url = normalizeUrl(url))
+    fun createTab(profileId: String, url: String = DEFAULT_BROWSER_HOME_URL): BrowserTabSession {
+        val tab = BrowserTabRecord(id = "tab-${UUID.randomUUID().toString().take(8)}", profileId = profileId, url = normalizeBrowserUrl(url))
         return ensureSession(tab)
     }
 
     private fun createSession(tab: BrowserTabRecord): BrowserTabSession {
         val webView = WebView(context)
         configureWebView(webView)
+        webView.addJavascriptInterface(ProfileCaptureBridge(viewModel), PROFILE_BRIDGE_NAME)
         val session = BrowserTabSession(tabId = tab.id, profileId = tab.profileId, webView = webView)
         webView.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView?, request: android.webkit.WebResourceRequest?): Boolean {
@@ -384,6 +387,7 @@ class BrowserRuntime(
                     viewModel.recordHistory(tab.profileId, title.ifBlank { actualUrl }, actualUrl)
                     scope.launch { applyStoredOriginData(tab.id, actualUrl) }
                     captureAndStoreSession(tab.id)
+                    injectProfileCaptureBridge(webView)
                 }
             }
 
@@ -461,7 +465,6 @@ class BrowserRuntime(
         with(webView.settings) {
             javaScriptEnabled = true
             domStorageEnabled = true
-            databaseEnabled = true
             loadsImagesAutomatically = true
             useWideViewPort = true
             loadWithOverviewMode = true
@@ -471,6 +474,10 @@ class BrowserRuntime(
             allowFileAccess = true
             allowContentAccess = true
             cacheMode = WebSettings.LOAD_DEFAULT
+            mediaPlaybackRequiresUserGesture = false
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                offscreenPreRaster = true
+            }
         }
     }
 
@@ -637,18 +644,33 @@ class BrowserRuntime(
         }
     }
 
-    private fun normalizeUrl(raw: String): String {
-        val value = raw.trim()
-        if (value.isBlank()) return "about:blank"
-        if (value == "about:blank") return value
-        if (value.startsWith("http://") || value.startsWith("https://") || value.startsWith("file://") || value.startsWith("data:")) {
-            return value
-        }
-        return if (value.contains('.') && !value.contains(' ')) {
-            "https://${value.trimStart('/')}"
-        } else {
-            "https://www.google.com/search?q=${Uri.encode(value)}"
-        }
+    private fun injectProfileCaptureBridge(webView: WebView) {
+        val script = """
+            (function() {
+              if (window.__glassboxProfileBridgeReady) return;
+              window.__glassboxProfileBridgeReady = true;
+              const bridge = window.$PROFILE_BRIDGE_NAME;
+              if (!bridge || typeof bridge.captureEmail !== 'function') return;
+              const send = function(value) {
+                if (typeof value !== 'string') return;
+                const normalized = value.trim().toLowerCase();
+                if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) {
+                  bridge.captureEmail(normalized);
+                }
+              };
+              const track = function(root) {
+                root.querySelectorAll('input').forEach(function(input) {
+                  send(input.value || '');
+                  input.addEventListener('input', function() { send(input.value || ''); }, true);
+                  input.addEventListener('change', function() { send(input.value || ''); }, true);
+                  input.addEventListener('blur', function() { send(input.value || ''); }, true);
+                });
+              };
+              track(document);
+              document.addEventListener('submit', function() { track(document); }, true);
+            })();
+        """.trimIndent()
+        webView.evaluateJavascript(script, null)
     }
 
     private fun extractOrigin(url: String): String? {
@@ -658,6 +680,18 @@ class BrowserRuntime(
             val host = uri.host ?: return null
             "$scheme://$host"
         }.getOrNull()
+    }
+}
+
+private class ProfileCaptureBridge(
+    private val viewModel: BrowserViewModel
+) {
+    @JavascriptInterface
+    fun captureEmail(email: String?) {
+        val value = email?.trim().orEmpty()
+        if (isEmailAddress(value)) {
+            viewModel.bindDetectedEmailToActiveProfile(value)
+        }
     }
 }
 

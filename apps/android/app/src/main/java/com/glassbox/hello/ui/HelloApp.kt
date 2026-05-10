@@ -25,8 +25,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.glassbox.hello.activities.BrowserActivity
 import com.glassbox.hello.auth.AuthScreen
-import com.glassbox.hello.browser.BrowserScreen
 import com.glassbox.hello.calls.CallViewModel
 import com.glassbox.hello.calls.CallsScreen
 import com.glassbox.hello.calls.GlobalCallOverlay
@@ -107,7 +107,7 @@ fun HelloApp(darkTheme: Boolean = true) {
                         modifier = Modifier.fillMaxSize()
                     )
                     MainTab.Status -> StatusScreen(currentUserId = currentUser.value!!.id, modifier = Modifier.fillMaxSize())
-                    MainTab.Browser -> BrowserScreen(modifier = Modifier.fillMaxSize())
+                    MainTab.Browser -> Box(modifier = Modifier.fillMaxSize())
                     MainTab.Settings -> SettingsScreen(
                         sessionManager = sessionManager,
                         onDetailVisibilityChanged = { isSettingsDetailVisible.value = it },
@@ -127,10 +127,14 @@ fun HelloApp(darkTheme: Boolean = true) {
                         val selected = selectedTab.intValue == tab.ordinal
                         androidx.compose.material3.TextButton(
                             onClick = {
-                                selectedTab.intValue = tab.ordinal
-                                isChatRoomVisible.value = false
-                                if (tab != MainTab.Settings) {
-                                    isSettingsDetailVisible.value = false
+                                if (tab == MainTab.Browser) {
+                                    context.startActivity(BrowserActivity.createIntent(context))
+                                } else {
+                                    selectedTab.intValue = tab.ordinal
+                                    isChatRoomVisible.value = false
+                                    if (tab != MainTab.Settings) {
+                                        isSettingsDetailVisible.value = false
+                                    }
                                 }
                             },
                             contentPadding = PaddingValues(horizontal = 6.dp, vertical = 6.dp)

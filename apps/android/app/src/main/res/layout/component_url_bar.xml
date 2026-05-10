@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<com.google.android.material.textfield.TextInputLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/url_input_layout"
+    style="@style/Widget.Hello.UrlInputLayout"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    app:endIconMode="clear_text"
+    app:hintEnabled="false"
+    app:startIconDrawable="@android:drawable/ic_menu_search"
+    app:startIconTint="@color/on_surface_variant">
+
+    <com.google.android.material.textfield.TextInputEditText
+        android:id="@+id/url_bar"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:hint="@string/search_or_type_url"
+        android:imeOptions="actionGo"
+        android:inputType="textUri"
+        android:maxLines="1"
+        android:paddingHorizontal="@dimen/space_8"
+        android:singleLine="true"
+        android:textColor="@color/on_surface"
+        android:textColorHint="@color/on_surface_variant"
+        android:textSize="@dimen/text_body" />
+</com.google.android.material.textfield.TextInputLayout>

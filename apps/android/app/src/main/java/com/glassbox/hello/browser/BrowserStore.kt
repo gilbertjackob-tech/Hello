@@ -43,7 +43,15 @@ class BrowserStore(context: Context) {
     private fun BrowserPersistedState.ensureDefaults(): BrowserPersistedState {
         val profiles = if (profiles.isEmpty()) listOf(BrowserProfileRecord("default", "Default")) else profiles
         val activeProfileId = if (profiles.any { it.id == this.activeProfileId }) this.activeProfileId else profiles.first().id
-        val tabsByProfile = tabsByProfile.toMutableMap()
+        val tabsByProfile = tabsByProfile.mapValues { (_, tabs) ->
+            tabs.map { tab ->
+                if (tab.url == "about:blank") {
+                    tab.copy(url = DEFAULT_BROWSER_HOME_URL, title = if (tab.title == "New tab") "Google" else tab.title)
+                } else {
+                    tab
+                }
+            }
+        }.toMutableMap()
         val selectedTabByProfile = selectedTabByProfile.toMutableMap()
         val historyByProfile = historyByProfile.toMutableMap()
         val downloadsByProfile = downloadsByProfile.toMutableMap()

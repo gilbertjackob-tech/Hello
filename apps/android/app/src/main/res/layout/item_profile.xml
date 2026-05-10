@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="utf-8"?>
+<com.google.android.material.card.MaterialCardView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginHorizontal="@dimen/space_16"
+    android:layout_marginVertical="@dimen/space_6"
+    app:cardBackgroundColor="@color/surface_container"
+    app:cardCornerRadius="@dimen/card_radius"
+    app:cardElevation="@dimen/elevation_card"
+    app:strokeColor="@color/outline_variant"
+    app:strokeWidth="@dimen/hairline">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:padding="@dimen/space_12">
+
+        <TextView
+            android:id="@+id/profile_avatar"
+            android:layout_width="@dimen/avatar_size"
+            android:layout_height="@dimen/avatar_size"
+            android:background="@drawable/avatar_background"
+            android:gravity="center"
+            android:textColor="@color/on_primary"
+            android:textSize="@dimen/text_title"
+            android:textStyle="bold"
+            tools:text="H" />
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="@dimen/space_12"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/profile_name"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:textColor="@color/on_surface"
+                android:textSize="@dimen/text_body"
+                android:textStyle="bold"
+                tools:text="Hasnat" />
+
+            <TextView
+                android:id="@+id/profile_email"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:textColor="@color/on_surface_variant"
+                android:textSize="@dimen/text_caption"
+                tools:text="hasnat@example.com" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/profile_active_indicator"
+            android:layout_width="@dimen/active_indicator_size"
+            android:layout_height="@dimen/active_indicator_size"
+            android:background="@drawable/active_indicator_background"
+            android:contentDescription="@string/active_profile"
+            android:visibility="gone"
+            tools:visibility="visible" />
+    </LinearLayout>
+</com.google.android.material.card.MaterialCardView>

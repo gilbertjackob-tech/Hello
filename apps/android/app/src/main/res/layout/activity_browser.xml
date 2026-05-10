@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/surface"
+    tools:context=".activities.BrowserActivity">
+
+    <WebView
+        android:id="@+id/web_view"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@color/surface" />
+
+    <LinearLayout
+        android:id="@+id/toolbar_container"
+        android:layout_width="match_parent"
+        android:layout_height="@dimen/browser_toolbar_height"
+        android:background="@color/toolbar_background"
+        android:elevation="@dimen/elevation_toolbar"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="@dimen/space_8"
+        android:paddingTop="@dimen/status_bar_overlay_padding"
+        android:paddingEnd="@dimen/space_8">
+
+        <ImageButton
+            android:id="@+id/btn_back"
+            style="@style/Widget.Hello.IconButton"
+            android:contentDescription="@string/back"
+            android:src="@android:drawable/ic_media_previous" />
+
+        <ImageButton
+            android:id="@+id/btn_forward"
+            style="@style/Widget.Hello.IconButton"
+            android:contentDescription="@string/forward"
+            android:src="@android:drawable/ic_media_next" />
+
+        <include
+            android:id="@+id/url_input"
+            layout="@layout/component_url_bar"
+            android:layout_width="0dp"
+            android:layout_height="@dimen/url_bar_height"
+            android:layout_marginHorizontal="@dimen/space_8"
+            android:layout_weight="1" />
+
+        <ImageButton
+            android:id="@+id/btn_refresh"
+            style="@style/Widget.Hello.IconButton"
+            android:contentDescription="@string/refresh"
+            android:src="@android:drawable/ic_popup_sync" />
+
+        <ImageButton
+            android:id="@+id/btn_more"
+            style="@style/Widget.Hello.IconButton"
+            android:contentDescription="@string/more_options"
+            android:src="@android:drawable/ic_menu_more" />
+    </LinearLayout>
+
+    <ProgressBar
+        android:id="@+id/browser_progress"
+        style="?android:attr/progressBarStyleHorizontal"
+        android:layout_width="match_parent"
+        android:layout_height="@dimen/progress_height"
+        android:layout_gravity="top"
+        android:layout_marginTop="@dimen/browser_toolbar_height"
+        android:indeterminate="false"
+        android:max="100"
+        android:progressTint="@color/primary"
+        android:visibility="gone"
+        tools:progress="45"
+        tools:visibility="visible" />
+
+    <com.glassbox.hello.ui.DraggableFloatingButton
+        android:id="@+id/fab_return"
+        android:layout_width="@dimen/fab_size"
+        android:layout_height="@dimen/fab_size"
+        android:layout_gravity="end|bottom"
+        android:layout_margin="@dimen/space_20"
+        android:background="@drawable/fab_background"
+        android:contentDescription="@string/return_to_hello"
+        android:elevation="@dimen/elevation_fab"
+        android:padding="@dimen/space_12">
+
+        <ImageView
+            android:layout_width="@dimen/fab_icon_size"
+            android:layout_height="@dimen/fab_icon_size"
+            android:layout_gravity="center"
+            android:contentDescription="@null"
+            android:src="@android:drawable/ic_menu_revert"
+            app:tint="@color/on_primary" />
+    </com.glassbox.hello.ui.DraggableFloatingButton>
+</FrameLayout>

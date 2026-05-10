@@ -10,8 +10,8 @@ data class BrowserProfileRecord(
 data class BrowserTabRecord(
     val id: String,
     val profileId: String,
-    val url: String = "about:blank",
-    val title: String = "New tab",
+    val url: String = DEFAULT_BROWSER_HOME_URL,
+    val title: String = "Google",
     val isLoading: Boolean = false,
     val canGoBack: Boolean = false,
     val canGoForward: Boolean = false,

@@ -1,11 +1,63 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <style name="Theme.Hello" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/primary</item>
+        <item name="colorOnPrimary">@color/on_primary</item>
+        <item name="colorPrimaryContainer">@color/primary_container</item>
+        <item name="colorOnPrimaryContainer">@color/on_primary_container</item>
+        <item name="colorSecondary">@color/secondary</item>
+        <item name="colorOnSecondary">@color/on_secondary</item>
+        <item name="colorTertiary">@color/tertiary</item>
+        <item name="colorOnTertiary">@color/on_tertiary</item>
+        <item name="colorError">@color/error</item>
+        <item name="colorOnError">@color/on_error</item>
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:colorAccent">@color/primary</item>
+    </style>
 
-    <style name="Theme.Hello" parent="android:Theme.Material.Light.NoActionBar" />
+    <style name="Theme.Hello.Browser" parent="Theme.Hello">
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowActionBar">false</item>
+        <item name="android:windowFullscreen">false</item>
+    </style>
 
-    <style name="Theme.Hello.Splash" parent="android:Theme.Material.Light.NoActionBar">
+    <style name="Theme.Hello.Splash" parent="Theme.Material3.DayNight.NoActionBar">
         <item name="android:windowBackground">#00BF63</item>
         <item name="android:statusBarColor">#00BF63</item>
         <item name="android:navigationBarColor">#00BF63</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+
+    <style name="Widget" />
+    <style name="Widget.Hello" />
+
+    <style name="Widget.Hello.IconButton">
+        <item name="android:layout_width">@dimen/icon_button_size</item>
+        <item name="android:layout_height">@dimen/icon_button_size</item>
+        <item name="android:background">?attr/selectableItemBackgroundBorderless</item>
+        <item name="android:padding">@dimen/icon_button_padding</item>
+        <item name="android:scaleType">center</item>
+        <item name="android:tint">@color/on_surface</item>
+    </style>
+
+    <style name="Widget.Hello.UrlInputLayout" parent="Widget.Material3.TextInputLayout.FilledBox.Dense">
+        <item name="boxBackgroundColor">@color/url_bar_background</item>
+        <item name="boxCornerRadiusBottomEnd">@dimen/control_radius</item>
+        <item name="boxCornerRadiusBottomStart">@dimen/control_radius</item>
+        <item name="boxCornerRadiusTopEnd">@dimen/control_radius</item>
+        <item name="boxCornerRadiusTopStart">@dimen/control_radius</item>
+        <item name="boxStrokeColor">@color/outline_variant</item>
+        <item name="hintEnabled">false</item>
+    </style>
+
+    <style name="Widget.Hello.MenuItem">
+        <item name="android:layout_width">@dimen/menu_item_width</item>
+        <item name="android:layout_height">@dimen/menu_item_height</item>
+        <item name="android:gravity">center</item>
+        <item name="android:padding">@dimen/space_8</item>
+        <item name="android:textColor">@color/on_surface</item>
+        <item name="android:textSize">@dimen/text_caption</item>
+        <item name="android:drawablePadding">@dimen/space_6</item>
     </style>
 </resources>

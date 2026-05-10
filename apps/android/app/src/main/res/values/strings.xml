@@ -1,3 +1,30 @@
 <resources>
     <string name="app_name">Hello</string>
+    <string name="default_profile_name">Default</string>
+
+    <string name="back">Back</string>
+    <string name="forward">Forward</string>
+    <string name="refresh">Refresh</string>
+    <string name="more_options">More options</string>
+    <string name="search_or_type_url">Search or type URL</string>
+    <string name="return_to_hello">Return to Hello</string>
+    <string name="file_picker_unavailable">File picker is unavailable</string>
+    <string name="browser_menu">Browser menu</string>
+
+    <string name="new_tab">New tab</string>
+    <string name="history">History</string>
+    <string name="bookmarks">Bookmarks</string>
+    <string name="downloads">Downloads</string>
+    <string name="settings">Settings</string>
+    <string name="sync">Sync</string>
+    <string name="clear_data">Clear data</string>
+    <string name="page_info">Page info</string>
+    <string name="active_profile">Active profile</string>
+
+    <string name="download_complete">Download complete</string>
+    <string name="download_failed">Download failed</string>
+    <string name="download_control_in_progress">Updating download</string>
+    <string name="background_sync">Background sync</string>
+    <string name="sync_in_progress">Sync in progress</string>
+    <string name="sync_in_progress_detail">Updating browser data</string>
 </resources>

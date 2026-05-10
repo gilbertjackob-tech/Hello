@@ -1,5 +1,35 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <color name="primary">#006C4E</color>
+    <color name="on_primary">#FFFFFF</color>
+    <color name="primary_container">#8CF8C8</color>
+    <color name="on_primary_container">#002116</color>
+    <color name="secondary">#4C6358</color>
+    <color name="on_secondary">#FFFFFF</color>
+    <color name="secondary_container">#CEE9DA</color>
+    <color name="on_secondary_container">#092016</color>
+    <color name="tertiary">#3F6374</color>
+    <color name="on_tertiary">#FFFFFF</color>
+    <color name="tertiary_container">#C3E8FC</color>
+    <color name="on_tertiary_container">#001F2A</color>
+    <color name="error">#BA1A1A</color>
+    <color name="on_error">#FFFFFF</color>
+    <color name="error_container">#FFDAD6</color>
+    <color name="on_error_container">#410002</color>
+    <color name="success">#1B8A4A</color>
+    <color name="warning">#A46600</color>
+    <color name="surface">#F8FAF7</color>
+    <color name="on_surface">#191C1A</color>
+    <color name="surface_variant">#DCE5DD</color>
+    <color name="on_surface_variant">#404944</color>
+    <color name="surface_container">#EDF1EC</color>
+    <color name="surface_container_high">#E7ECE6</color>
+    <color name="outline">#707973</color>
+    <color name="outline_variant">#C0C9C2</color>
+    <color name="toolbar_background">#F8FAF7</color>
+    <color name="url_bar_background">#EDF1EC</color>
+    <color name="scrim">#66000000</color>
+
     <color name="purple_200">#FFBB86FC</color>
     <color name="purple_500">#FF6200EE</color>
     <color name="purple_700">#FF3700B3</color>

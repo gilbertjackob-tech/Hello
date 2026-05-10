@@ -4,10 +4,10 @@ import android.app.Application
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.launch
 import java.util.UUID
 
 class BrowserViewModel(application: Application) : AndroidViewModel(application) {
@@ -65,15 +65,15 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    fun createTab(profileId: String = _state.value.activeProfileId, url: String = "about:blank") {
-        val target = normalizeUrl(url)
+    fun createTab(profileId: String = _state.value.activeProfileId, url: String = DEFAULT_BROWSER_HOME_URL) {
+        val target = normalizeBrowserUrl(url)
         updateState { current ->
             val tabs = current.tabsByProfile[profileId].orEmpty().toMutableList()
             val tab = BrowserTabRecord(
                 id = "tab-${UUID.randomUUID().toString().take(8)}",
                 profileId = profileId,
                 url = target,
-                title = if (target == "about:blank") "New tab" else target
+                title = if (target == DEFAULT_BROWSER_HOME_URL) "Google" else target
             )
             tabs += tab
             current.copy(
@@ -140,8 +140,8 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun recordHistory(profileId: String, title: String, url: String) {
-        val normalized = normalizeUrl(url)
-        if (normalized == "about:blank") return
+        val normalized = normalizeBrowserUrl(url)
+        if (normalized == DEFAULT_BROWSER_HOME_URL && title.isBlank()) return
         updateState { current ->
             val history = current.historyByProfile[profileId].orEmpty().toMutableList()
             history.removeAll { it.url == normalized }
@@ -245,8 +245,8 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun applyPageUrl(profileId: String, tabId: String, url: String) {
-        updateTabState(tabId) { tab -> tab.copy(url = normalizeUrl(url), updatedAt = System.currentTimeMillis()) }
-        val normalized = normalizeUrl(url)
+        updateTabState(tabId) { tab -> tab.copy(url = normalizeBrowserUrl(url), updatedAt = System.currentTimeMillis()) }
+        val normalized = normalizeBrowserUrl(url)
         recordHistory(profileId, normalized, normalized)
     }
 
@@ -255,6 +255,27 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         val tab = _state.value.tabsByProfile[profileId].orEmpty().firstOrNull()
         if (tab != null) {
             updateState { current -> current.copy(selectedTabByProfile = current.selectedTabByProfile + (profileId to tab.id)) }
+        }
+    }
+
+    fun bindDetectedEmailToActiveProfile(email: String) {
+        val normalizedEmail = email.trim().lowercase()
+        if (!isEmailAddress(normalizedEmail)) return
+        updateState { current ->
+            val activeProfile = current.activeProfile ?: return@updateState current
+            if (activeProfile.email.equals(normalizedEmail, ignoreCase = true)) return@updateState current
+            if (!activeProfile.email.isNullOrBlank()) return@updateState current
+            val displayName = deriveProfileLabelFromEmail(normalizedEmail)
+            current.copy(
+                profiles = current.profiles.map { profile ->
+                    if (profile.id == activeProfile.id) {
+                        profile.copy(name = displayName, email = normalizedEmail)
+                    } else {
+                        profile
+                    }
+                },
+                statusMessage = "Profile saved for $normalizedEmail"
+            )
         }
     }
 
@@ -294,21 +315,6 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
             passwordsByProfile = passwordsByProfile,
             storageByProfile = storageByProfile
         )
-    }
-
-    private fun normalizeUrl(raw: String): String {
-        val value = raw.trim()
-        if (value.isBlank()) return "about:blank"
-        if (value == "about:blank") return value
-        if (value.startsWith("http://") || value.startsWith("https://") || value.startsWith("file://") || value.startsWith("data:")) {
-            return value
-        }
-        val hasSpaces = value.contains(" ")
-        return if (value.contains(".") && !hasSpaces && !value.startsWith("http")) {
-            if (value.startsWith("www.")) "https://$value" else "https://$value"
-        } else {
-            "https://www.google.com/search?q=${Uri.encode(value)}"
-        }
     }
 
     private fun extractOrigin(url: String): String? {
