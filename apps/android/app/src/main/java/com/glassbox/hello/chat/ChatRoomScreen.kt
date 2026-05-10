@@ -17,6 +17,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -86,6 +88,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 import java.io.File
+import androidx.activity.result.PickVisualMediaRequest
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -241,6 +244,12 @@ fun ChatRoomScreen(
         }
     }
 
+    val galleryPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickMultipleVisualMedia(10)
+    ) { uris ->
+        queuePickedAttachments(uris)
+    }
+
     val multiPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         queuePickedAttachments(uris)
     }
@@ -353,7 +362,7 @@ fun ChatRoomScreen(
     fun pickAttachment(action: AttachmentAction) {
         showAttachmentMenu = false
         when (action) {
-            AttachmentAction.Gallery -> multiPicker.launch(arrayOf("image/*"))
+            AttachmentAction.Gallery -> galleryPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
             AttachmentAction.File -> multiPicker.launch(arrayOf("*/*"))
             AttachmentAction.Audio -> multiPicker.launch(arrayOf("audio/*"))
             AttachmentAction.Camera -> {
@@ -429,51 +438,34 @@ fun ChatRoomScreen(
 
     fun sendCurrentMessage() {
         val trimmed = messageText.trim()
-val attachments = pendingAttachments.toList()
-                val replySnapshot = replyTo?.let {
-                    ChatModels.ReplyTo(
-                        id = it.id,
-                        text = it.text.ifBlank { "Attachment" },
-                        senderName = it.senderName,
-                        senderId = it.senderId
-                    )
-                }
-                if (trimmed.isBlank() && attachments.isEmpty()) return
+        val attachments = pendingAttachments.toList()
+        val replySnapshot = replyTo?.let {
+            ChatModels.ReplyTo(
+                id = it.id,
+                text = it.text.ifBlank { "Attachment" },
+                senderName = it.senderName,
+                senderId = it.senderId
+            )
+        }
 
-                if (attachments.isNotEmpty()) {
-                    messageText = ""
-                    pendingAttachments.clear()
-                    replyTo = null
-                    AnimationUtils.Haptics.sendMessage(context)
-                    ChatFeedback.playSent(settingsState.chatSounds)
-                    socketManager.typing(chat.id, currentUserId, currentUserName, isTyping = false)
-                    attachments.forEach { attachment ->
-                        val optimistic = OptimisticMessageManager.createOptimisticMessage(
-                            chatId = chat.id,
-                            text = trimmed,
-                            senderId = currentUserId,
-                            senderName = currentUserName,
-                            senderAvatar = currentUserAvatar,
-                            attachmentUrl = attachment.previewUrl,
-                            attachmentType = classifyAttachment(attachment.mimeType),
-                            attachmentName = attachment.name,
-                            attachmentSize = attachment.sizeBytes,
-                            replyTo = replySnapshot
-                        )
-                        viewModel.addOptimisticMessage(optimistic.message)
-                        viewModel.uploadAndSendAttachment(
-                            chatId = chat.id,
-                            fileName = attachment.name,
-                            mimeType = attachment.mimeType,
-                            bytes = attachment.bytes,
-                            senderId = currentUserId,
-                            senderName = currentUserName,
-                            senderAvatar = currentUserAvatar,
-                            caption = trimmed,
-                            replyTo = replySnapshot,
-                            optimisticTempId = optimistic.tempId
-                        )
-                    }
+        if (trimmed.isBlank() && attachments.isEmpty()) return
+
+        if (attachments.isNotEmpty()) {
+            messageText = ""
+            pendingAttachments.clear()
+            replyTo = null
+            AnimationUtils.Haptics.sendMessage(context)
+            ChatFeedback.playSent(settingsState.chatSounds)
+            socketManager.typing(chat.id, currentUserId, currentUserName, isTyping = false)
+            viewModel.uploadAndSendAttachments(
+                chatId = chat.id,
+                attachments = attachments,
+                senderId = currentUserId,
+                senderName = currentUserName,
+                senderAvatar = currentUserAvatar,
+                caption = trimmed,
+                replyTo = replySnapshot
+            )
             return
         }
 
@@ -589,7 +581,7 @@ val attachments = pendingAttachments.toList()
         }
     }
 
-    Box(modifier = modifier.fillMaxSize()) {
+    Box(modifier = modifier.fillMaxSize().imePadding().navigationBarsPadding()) {
         Column(
             modifier = Modifier
                 .fillMaxSize()

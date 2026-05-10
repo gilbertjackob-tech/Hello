@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.ui.draw.shadow
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AttachFile
@@ -33,7 +34,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.text.input.ImeAction
 import com.glassbox.hello.chat.VoiceRecordingState
 import com.glassbox.hello.ui.components.HelloIconButton
-import com.glassbox.hello.ui.components.HelloPanel
 import com.glassbox.hello.ui.theme.HelloColors
 import com.glassbox.hello.ui.theme.HelloShapes
 import com.glassbox.hello.ui.theme.HelloSpacing
@@ -55,12 +55,14 @@ fun ChatComposer(
     enterSends: Boolean,
     onKeyboardSend: () -> Unit
 ) {
-    HelloPanel(
+    Box(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = HelloSpacing.Md, vertical = HelloSpacing.Xs),
-        strong = true,
-        shape = HelloShapes.Lg
+            .padding(horizontal = HelloSpacing.Md, vertical = HelloSpacing.Xs)
+            .shadow(4.dp, HelloShapes.Lg, ambientColor = Color.Black.copy(alpha = 0.14f))
+            .clip(HelloShapes.Lg)
+            .background(HelloColors.DarkPanelStrong)
+            .border(1.dp, HelloColors.DarkBorderStrong, HelloShapes.Lg)
     ) {
         Column(
             modifier = Modifier

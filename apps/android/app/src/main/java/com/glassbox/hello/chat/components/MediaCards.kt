@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -71,8 +72,7 @@ fun ImageCard(
             contentScale = ContentScale.Crop,
             modifier = Modifier
                 .fillMaxWidth()
-                .widthIn(max = 340.dp)
-                .aspectRatio(1.08f)
+                .heightIn(max = 180.dp)
                 .clip(RoundedCornerShape(16.dp))
                 .background(Color(0xFF071219))
                 .combinedClickable(onClick = { onOpenImage(resolvedUrl, message.attachmentName ?: "Image") }),
@@ -341,8 +341,7 @@ private fun AttachmentPlaceholder(label: String) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .widthIn(max = 340.dp)
-            .aspectRatio(1.08f)
+            .heightIn(max = 180.dp)
             .clip(RoundedCornerShape(16.dp))
             .background(Color(0xFF071219)),
         contentAlignment = Alignment.Center

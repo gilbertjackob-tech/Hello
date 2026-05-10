@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.glassbox.hello.chat.ChatModels.Chat
 import com.glassbox.hello.chat.ChatModels.Message
 import com.glassbox.hello.chat.ChatModels.User
+import com.glassbox.hello.chat.components.AttachmentDraft
 import com.glassbox.hello.core.ResultState
 import com.glassbox.hello.network.HelloApiClient
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -379,6 +380,76 @@ class ChatViewModel : ViewModel() {
                 replyTo = replyTo,
                 optimisticTempId = optimisticTempId
             )
+        }
+    }
+
+    fun uploadAndSendAttachments(
+        chatId: String,
+        attachments: List<AttachmentDraft>,
+        senderId: String,
+        senderName: String,
+        senderAvatar: String? = null,
+        caption: String = "",
+        replyTo: ChatModels.ReplyTo? = null
+    ) {
+        if (attachments.isEmpty()) return
+
+        _uploadState.value = ResultState.Loading
+        viewModelScope.launch {
+            var lastUploaded: ChatModels.UploadedFile? = null
+            var firstError: String? = null
+
+            for (attachment in attachments) {
+                val optimistic = OptimisticMessageManager.createOptimisticMessage(
+                    chatId = chatId,
+                    text = caption,
+                    senderId = senderId,
+                    senderName = senderName,
+                    senderAvatar = senderAvatar,
+                    attachmentUrl = attachment.previewUrl,
+                    attachmentType = classifyAttachment(attachment.mimeType),
+                    attachmentName = attachment.name,
+                    attachmentSize = attachment.sizeBytes,
+                    replyTo = replyTo
+                )
+                addOptimisticMessage(optimistic.message)
+
+                val upload = repository.uploadFile(attachment.name, attachment.mimeType, attachment.bytes, senderId)
+                if (upload.isFailure) {
+                    markMessageFailed(optimistic.tempId)
+                    firstError = firstError ?: (upload.exceptionOrNull()?.message ?: "Failed to upload file")
+                    continue
+                }
+
+                val file = upload.getOrNull()!!
+                lastUploaded = file
+
+                val result = repository.sendMessage(
+                    chatId = chatId,
+                    text = caption,
+                    senderId = senderId,
+                    senderName = senderName,
+                    senderAvatar = senderAvatar,
+                    attachmentUrl = file.url,
+                    attachmentType = classifyAttachment(file.mimeType),
+                    attachmentName = file.originalName,
+                    attachmentSize = file.size,
+                    replyTo = replyTo
+                )
+
+                if (result.isSuccess) {
+                    result.getOrNull()?.let { upsertMessage(it, optimistic.tempId) }
+                } else {
+                    markMessageFailed(optimistic.tempId)
+                    firstError = firstError ?: (result.exceptionOrNull()?.message ?: "Failed to send message")
+                }
+            }
+
+            _uploadState.value = when {
+                firstError != null -> ResultState.Error(firstError!!)
+                lastUploaded != null -> ResultState.Success(lastUploaded!!)
+                else -> null
+            }
         }
     }
 

@@ -111,7 +111,9 @@ object HelloNotificationCenter {
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
             .build()
 
-        NotificationManagerCompat.from(context).notify(message.chatId.hashCode(), notification)
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) {
+            NotificationManagerCompat.from(context).notify(message.chatId.hashCode(), notification)
+        }
     }
 
     private fun notificationBodyFor(message: ChatModels.Message): String {

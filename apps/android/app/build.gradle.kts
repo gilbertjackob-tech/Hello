@@ -79,6 +79,7 @@ dependencies {
     implementation(libs.gson)
     implementation(libs.coil.compose)
     implementation(libs.coil.svg)
+    implementation(libs.androidx.webkit)
     implementation(libs.webrtc.android)
 
     testImplementation(libs.junit)
