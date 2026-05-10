@@ -33,14 +33,12 @@ import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.PhoneDisabled
 import androidx.compose.material.icons.filled.RecordVoiceOver
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Speaker
 import androidx.compose.material.icons.filled.SpeakerNotesOff
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material.icons.filled.VideocamOff
-import androidx.compose.material.icons.filled.Visibility
-import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
@@ -140,7 +138,7 @@ fun GlobalCallOverlay(
     val context = LocalContext.current
     val callState by callViewModel.state.collectAsState()
     var permissionDialog by remember { mutableStateOf(false) }
-    var showVideoControls by remember { mutableStateOf(true) }
+    var videoSettingsOpen by remember { mutableStateOf(false) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -200,8 +198,8 @@ fun GlobalCallOverlay(
                     cameraOff = callState.cameraOff,
                     videoQuality = callState.selectedVideoQuality,
                     visualLook = callState.selectedVisualLook,
-                    showVideoControls = showVideoControls,
-                    onToggleVideoControls = { showVideoControls = !showVideoControls },
+                    videoSettingsOpen = videoSettingsOpen,
+                    onToggleVideoSettings = { videoSettingsOpen = !videoSettingsOpen },
                     onMute = { callViewModel.toggleMute() },
                     onSpeaker = { callViewModel.toggleSpeaker(context) },
                     onCamera = { callViewModel.toggleCamera() },
@@ -222,8 +220,8 @@ fun GlobalCallOverlay(
                     cameraOff = callState.cameraOff,
                     videoQuality = callState.selectedVideoQuality,
                     visualLook = callState.selectedVisualLook,
-                    showVideoControls = showVideoControls,
-                    onToggleVideoControls = { showVideoControls = !showVideoControls },
+                    videoSettingsOpen = videoSettingsOpen,
+                    onToggleVideoSettings = { videoSettingsOpen = !videoSettingsOpen },
                     onMute = { callViewModel.toggleMute() },
                     onSpeaker = { callViewModel.toggleSpeaker(context) },
                     onCamera = { callViewModel.toggleCamera() },
@@ -374,8 +372,8 @@ fun ActiveCallScreen(
     cameraOff: Boolean = false,
     videoQuality: VideoQualityProfile = VideoQualityProfile.Auto,
     visualLook: CallVisualLook = CallVisualLook.Natural,
-    showVideoControls: Boolean = true,
-    onToggleVideoControls: () -> Unit = {},
+    videoSettingsOpen: Boolean = false,
+    onToggleVideoSettings: () -> Unit = {},
     onMute: () -> Unit = {},
     onSpeaker: () -> Unit = {},
     onCamera: () -> Unit = {},
@@ -419,29 +417,13 @@ fun ActiveCallScreen(
                 fontWeight = FontWeight.Medium
             )
             if (video) {
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Button(onClick = onToggleVideoControls) {
-                        Icon(
-                            if (showVideoControls) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                            contentDescription = if (showVideoControls) "Hide resolution and filters" else "Show resolution and filters",
-                            tint = HelloColors.AuthText
-                        )
-                        Text(
-                            text = if (showVideoControls) "Hide settings" else "Show settings",
-                            color = HelloColors.AuthText
-                        )
-                    }
-                }
-                if (showVideoControls) {
-                    CallSelectorRow(
-                        title = "Quality",
-                        selectedLabel = videoQuality.label,
-                        options = VideoQualityProfile.entries.map { it.label to { onSelectQuality(it) } }
-                    )
-                    CallSelectorRow(
-                        title = "Look",
-                        selectedLabel = visualLook.label,
-                        options = CallVisualLook.entries.map { it.label to { onSelectVisualLook(it) } }
+                if (videoSettingsOpen) {
+                    VideoCallSettingsPanel(
+                        videoQuality = videoQuality,
+                        visualLook = visualLook,
+                        onSelectQuality = onSelectQuality,
+                        onSelectVisualLook = onSelectVisualLook,
+                        onClose = onToggleVideoSettings
                     )
                 }
             }
@@ -458,6 +440,9 @@ fun ActiveCallScreen(
                     }
                     RoundCallButton(onClick = onSwitchCamera, size = 64.dp) {
                         Icon(Icons.Default.Cameraswitch, contentDescription = "Switch camera", tint = HelloColors.AuthText)
+                    }
+                    RoundCallButton(onClick = onToggleVideoSettings, active = videoSettingsOpen, size = 64.dp) {
+                        Icon(Icons.Default.Settings, contentDescription = "Video settings", tint = HelloColors.AuthText)
                     }
                 } else {
                     RoundCallButton(onClick = {}, size = 64.dp) {
@@ -483,8 +468,8 @@ fun GroupActiveCallScreen(
     cameraOff: Boolean,
     videoQuality: VideoQualityProfile = VideoQualityProfile.Auto,
     visualLook: CallVisualLook = CallVisualLook.Natural,
-    showVideoControls: Boolean = true,
-    onToggleVideoControls: () -> Unit = {},
+    videoSettingsOpen: Boolean = false,
+    onToggleVideoSettings: () -> Unit = {},
     onMute: () -> Unit,
     onSpeaker: () -> Unit,
     onCamera: () -> Unit,
@@ -525,29 +510,13 @@ fun GroupActiveCallScreen(
                 color = HelloColors.DarkTextMuted
             )
             if (video) {
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Button(onClick = onToggleVideoControls) {
-                        Icon(
-                            if (showVideoControls) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                            contentDescription = if (showVideoControls) "Hide resolution and filters" else "Show resolution and filters",
-                            tint = HelloColors.AuthText
-                        )
-                        Text(
-                            text = if (showVideoControls) "Hide settings" else "Show settings",
-                            color = HelloColors.AuthText
-                        )
-                    }
-                }
-                if (showVideoControls) {
-                    CallSelectorRow(
-                        title = "Quality",
-                        selectedLabel = videoQuality.label,
-                        options = VideoQualityProfile.entries.map { it.label to { onSelectQuality(it) } }
-                    )
-                    CallSelectorRow(
-                        title = "Look",
-                        selectedLabel = visualLook.label,
-                        options = CallVisualLook.entries.map { it.label to { onSelectVisualLook(it) } }
+                if (videoSettingsOpen) {
+                    VideoCallSettingsPanel(
+                        videoQuality = videoQuality,
+                        visualLook = visualLook,
+                        onSelectQuality = onSelectQuality,
+                        onSelectVisualLook = onSelectVisualLook,
+                        onClose = onToggleVideoSettings
                     )
                 }
             }
@@ -571,6 +540,9 @@ fun GroupActiveCallScreen(
                 }
                 RoundCallButton(onClick = onSwitchCamera, size = 64.dp) {
                     Icon(Icons.Default.Cameraswitch, contentDescription = "Switch camera", tint = HelloColors.AuthText)
+                }
+                RoundCallButton(onClick = onToggleVideoSettings, active = videoSettingsOpen, size = 64.dp) {
+                    Icon(Icons.Default.Settings, contentDescription = "Video settings", tint = HelloColors.AuthText)
                 }
             }
             RoundCallButton(onClick = onEnd, danger = true, size = 72.dp) {
@@ -714,6 +686,48 @@ private fun CallSelectorRow(
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun VideoCallSettingsPanel(
+    videoQuality: VideoQualityProfile,
+    visualLook: CallVisualLook,
+    onSelectQuality: (VideoQualityProfile) -> Unit,
+    onSelectVisualLook: (CallVisualLook) -> Unit,
+    onClose: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(HelloShapes.Lg)
+            .background(HelloColors.DarkPanelStrong.copy(alpha = 0.92f))
+            .padding(HelloSpacing.Md),
+        verticalArrangement = Arrangement.spacedBy(HelloSpacing.Md),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Video settings", color = HelloColors.DarkText, fontWeight = FontWeight.Bold)
+                Text("Resolution and filter", color = HelloColors.DarkTextMuted)
+            }
+            TextButton(onClick = onClose) {
+                Text("Close", color = HelloColors.DarkAccent)
+            }
+        }
+        CallSelectorRow(
+            title = "Quality",
+            selectedLabel = videoQuality.label,
+            options = VideoQualityProfile.entries.map { it.label to { onSelectQuality(it) } }
+        )
+        CallSelectorRow(
+            title = "Filter",
+            selectedLabel = visualLook.label,
+            options = CallVisualLook.entries.map { it.label to { onSelectVisualLook(it) } }
+        )
     }
 }
 

@@ -13,7 +13,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -74,6 +73,7 @@ fun ChatMessageBubble(
     onDownloadAttachment: (String, String?) -> Unit,
     outgoingBubbleColor: Color,
     incomingBubbleColor: Color,
+    bubbleOpacity: Float,
     modifier: Modifier = Modifier,
     showSenderName: Boolean = false,
     compactWithPrevious: Boolean = false,
@@ -93,11 +93,12 @@ fun ChatMessageBubble(
         "failed" -> HelloColors.DarkDanger
         else -> HelloColors.DarkTextMuted
     }
+    val themeBubbleAlpha = bubbleOpacity.coerceIn(0.40f, 1f)
     val bubbleColor = when {
         isStickerMessage(message.text) -> Color.Transparent
         message.isDeleted == true -> Color(0xB31D2930)
-        isOwn -> outgoingBubbleColor.copy(alpha = if (isSystemInDarkTheme()) 0.90f else 0.95f)
-        else -> incomingBubbleColor.copy(alpha = if (isSystemInDarkTheme()) 0.88f else 0.96f)
+        isOwn -> outgoingBubbleColor.copy(alpha = themeBubbleAlpha)
+        else -> incomingBubbleColor.copy(alpha = themeBubbleAlpha)
     }
     val contentColor = readableMessageTextColor(bubbleColor)
     val bubbleBorder = when {

@@ -60,9 +60,9 @@ import com.glassbox.hello.ui.theme.HelloSpacing
 fun AttachmentPreviewBar(
     file: AttachmentDraft,
     onRemove: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier.fillMaxWidth()
 ) {
-    HelloPanel(modifier = modifier.fillMaxWidth(), strong = true, shape = HelloShapes.Md) {
+    HelloPanel(modifier = modifier, strong = true, shape = HelloShapes.Md) {
         Row(
             modifier = Modifier.padding(HelloSpacing.Md),
             verticalAlignment = Alignment.CenterVertically,
@@ -109,6 +109,27 @@ fun AttachmentPreviewBar(
             HelloIconButton(onClick = onRemove) {
                 Icon(Icons.Default.Close, contentDescription = "Remove attachment", tint = HelloColors.DarkTextMuted)
             }
+        }
+    }
+}
+
+@Composable
+fun AttachmentPreviewStrip(
+    files: List<AttachmentDraft>,
+    onRemove: (AttachmentDraft) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    LazyRow(
+        modifier = modifier.fillMaxWidth(),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = HelloSpacing.Lg),
+        horizontalArrangement = Arrangement.spacedBy(HelloSpacing.Sm)
+    ) {
+        items(files, key = { "${it.uri}-${it.name}-${it.sizeBytes}" }) { file ->
+            AttachmentPreviewBar(
+                file = file,
+                onRemove = { onRemove(file) },
+                modifier = Modifier.width(312.dp)
+            )
         }
     }
 }

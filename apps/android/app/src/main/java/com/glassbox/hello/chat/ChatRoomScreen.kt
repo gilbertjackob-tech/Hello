@@ -55,7 +55,7 @@ import com.glassbox.hello.chat.ChatModels.Message
 import com.glassbox.hello.chat.components.ActionMessageState
 import com.glassbox.hello.chat.components.AttachmentBottomSheet
 import com.glassbox.hello.chat.components.AttachmentDraft
-import com.glassbox.hello.chat.components.AttachmentPreviewBar
+import com.glassbox.hello.chat.components.AttachmentPreviewStrip
 import com.glassbox.hello.chat.components.ChatActionSheet
 import com.glassbox.hello.chat.components.ChatComposer
 import com.glassbox.hello.chat.components.ChatHeader
@@ -160,6 +160,7 @@ fun ChatRoomScreen(
     val title = chat.displayName(currentUserId)
     val other = chat.otherParticipant(currentUserId)
     val wallpaperOpacity = chatTheme.wallpaperOpacity.coerceIn(35, 100) / 100f
+    val bubbleOpacity = chatTheme.bubbleOpacity.coerceIn(40, 100) / 100f
     val subtitle = when {
         chat.isGroup -> "${chat.members?.size ?: chat.participants?.size ?: 0} participants"
         other?.online == true -> "Online"
@@ -649,6 +650,7 @@ fun ChatRoomScreen(
                                     onDownloadAttachment = { url, fileName -> downloadAttachment(context, url, fileName) },
                                     outgoingBubbleColor = chatTheme.color,
                                     incomingBubbleColor = chatTheme.incomingColor,
+                                    bubbleOpacity = bubbleOpacity,
                                     onJumpToLatest = {
                                         scope.launch {
                                             if (visibleMessages.isNotEmpty()) {
@@ -684,14 +686,14 @@ fun ChatRoomScreen(
                     modifier = Modifier.padding(horizontal = HelloSpacing.Lg, vertical = HelloSpacing.Xs)
                 )
             }
-            pendingAttachments.forEach { attachment ->
-                AttachmentPreviewBar(
-                    file = attachment,
-                    onRemove = {
+            if (pendingAttachments.isNotEmpty()) {
+                AttachmentPreviewStrip(
+                    files = pendingAttachments.toList(),
+                    onRemove = { attachment ->
                         pendingAttachments.remove(attachment)
                         viewModel.resetUploadState()
                     },
-                    modifier = Modifier.padding(horizontal = HelloSpacing.Lg, vertical = HelloSpacing.Xs)
+                    modifier = Modifier.padding(vertical = HelloSpacing.Xs)
                 )
             }
             replyTo?.let {

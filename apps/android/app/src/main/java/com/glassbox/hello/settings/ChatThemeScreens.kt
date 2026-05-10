@@ -338,8 +338,17 @@ fun ThemePreviewScreen(
                     .padding(HelloSpacing.Lg)
             )
             OpacitySelector(
+                label = "Wallpaper",
                 selected = selection.wallpaperOpacity,
                 onSelected = { opacity -> selection = selection.copy(wallpaperOpacity = opacity, themeId = "custom") },
+                modifier = Modifier
+                    .align(Alignment.CenterStart)
+                    .padding(start = HelloSpacing.Md)
+            )
+            OpacitySelector(
+                label = "Bubbles",
+                selected = selection.bubbleOpacity,
+                onSelected = { opacity -> selection = selection.copy(bubbleOpacity = opacity, themeId = "custom") },
                 modifier = Modifier
                     .align(Alignment.CenterEnd)
                     .padding(end = HelloSpacing.Md)
@@ -578,9 +587,9 @@ private fun ThemePreviewPanel(selection: ChatThemeSelection, modifier: Modifier 
 @Composable
 private fun MiniMessagePreview(selection: ChatThemeSelection, modifier: Modifier = Modifier) {
     Column(modifier = modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        PreviewBubble(text = "Hi, are we still on for dinner?", color = selection.incomingColor, textColor = selection.incomingTextColor, alignEnd = false)
-        PreviewBubble(text = "Yes. I booked the place.", color = selection.color, alignEnd = true)
-        PreviewBubble(text = "Perfect.", color = selection.incomingColor, textColor = selection.incomingTextColor, alignEnd = false)
+        PreviewBubble(text = "Hi, are we still on for dinner?", color = selection.incomingPreviewBubbleColor(), textColor = selection.incomingTextColor, alignEnd = false)
+        PreviewBubble(text = "Yes. I booked the place.", color = selection.outgoingPreviewBubbleColor(), textColor = selection.outgoingTextColor, alignEnd = true)
+        PreviewBubble(text = "Perfect.", color = selection.incomingPreviewBubbleColor(), textColor = selection.incomingTextColor, alignEnd = false)
     }
 }
 
@@ -598,11 +607,11 @@ private fun FullChatPreview(selection: ChatThemeSelection, modifier: Modifier = 
                 .padding(horizontal = HelloSpacing.Lg, vertical = HelloSpacing.Xxl),
             verticalArrangement = Arrangement.Center
         ) {
-            PreviewBubble("This wallpaper feels clean.", selection.incomingColor, selection.incomingTextColor, alignEnd = false)
+            PreviewBubble("This wallpaper feels clean.", selection.incomingPreviewBubbleColor(), selection.incomingTextColor, alignEnd = false)
             Spacer(Modifier.height(10.dp))
-            PreviewBubble("The color also matches the chat.", selection.color, selection.outgoingTextColor, alignEnd = true)
+            PreviewBubble("The color also matches the chat.", selection.outgoingPreviewBubbleColor(), selection.outgoingTextColor, alignEnd = true)
             Spacer(Modifier.height(10.dp))
-            PreviewBubble("Apply it when you are ready.", selection.incomingColor, selection.incomingTextColor, alignEnd = false)
+            PreviewBubble("Apply it when you are ready.", selection.incomingPreviewBubbleColor(), selection.incomingTextColor, alignEnd = false)
         }
     }
 }
@@ -625,7 +634,7 @@ private fun PreviewBubble(
             modifier = Modifier
                 .fillMaxWidth(0.72f)
                 .clip(RoundedCornerShape(18.dp))
-                .background(color.copy(alpha = 0.94f))
+                .background(color)
                 .padding(horizontal = 14.dp, vertical = 10.dp)
         )
     }
@@ -667,6 +676,7 @@ private fun PreviewModeChip(label: String, active: Boolean, onClick: () -> Unit)
 
 @Composable
 private fun OpacitySelector(
+    label: String,
     selected: Int,
     onSelected: (Int) -> Unit,
     modifier: Modifier = Modifier
@@ -681,7 +691,7 @@ private fun OpacitySelector(
         verticalArrangement = Arrangement.spacedBy(7.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Text("Opacity", color = Color.White, style = MaterialTheme.typography.labelSmall, maxLines = 1)
+        Text(label, color = Color.White, style = MaterialTheme.typography.labelSmall, maxLines = 1)
         options.forEach { option ->
             val active = selected == option
             Text(
@@ -697,4 +707,12 @@ private fun OpacitySelector(
             )
         }
     }
+}
+
+private fun ChatThemeSelection.outgoingPreviewBubbleColor(): Color {
+    return color.copy(alpha = bubbleOpacity.coerceIn(40, 100) / 100f)
+}
+
+private fun ChatThemeSelection.incomingPreviewBubbleColor(): Color {
+    return incomingColor.copy(alpha = bubbleOpacity.coerceIn(40, 100) / 100f)
 }

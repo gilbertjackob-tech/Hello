@@ -25,6 +25,7 @@ data class ChatThemeOption(
     val incomingArgb: Int,
     val wallpaper: String,
     val wallpaperOpacity: Int = 100,
+    val bubbleOpacity: Int = 94,
     val darkMode: Boolean = true
 )
 
@@ -33,6 +34,7 @@ data class ChatThemeSelection(
     val incomingArgb: Int = ChatThemeStore.DefaultIncomingArgb,
     val wallpaper: String = HelloWallpapers.Default,
     val wallpaperOpacity: Int = 100,
+    val bubbleOpacity: Int = 94,
     val darkMode: Boolean = true,
     val themeId: String = ChatThemeStore.DefaultThemeId
 ) {
@@ -53,6 +55,7 @@ object ChatThemeStore {
     private const val KEY_INCOMING_ARGB = "incoming_argb"
     private const val KEY_WALLPAPER = "wallpaper"
     private const val KEY_WALLPAPER_OPACITY = "wallpaper_opacity"
+    private const val KEY_BUBBLE_OPACITY = "bubble_opacity"
     private const val KEY_DARK_MODE = "dark_mode"
 
     val Colors = listOf(
@@ -118,6 +121,7 @@ object ChatThemeStore {
         val incomingArgb = prefs.getInt("$prefix$KEY_INCOMING_ARGB", Int.MIN_VALUE)
         val wallpaper = prefs.getString("$prefix$KEY_WALLPAPER", null)
         val opacity = prefs.getInt("$prefix$KEY_WALLPAPER_OPACITY", Int.MIN_VALUE)
+        val bubbleOpacity = prefs.getInt("$prefix$KEY_BUBBLE_OPACITY", Int.MIN_VALUE)
         val darkMode = if (prefs.contains("$prefix$KEY_DARK_MODE")) {
             prefs.getBoolean("$prefix$KEY_DARK_MODE", true)
         } else {
@@ -129,6 +133,7 @@ object ChatThemeStore {
             incomingArgb = if (incomingArgb == Int.MIN_VALUE) theme.incomingArgb else incomingArgb,
             wallpaper = Wallpapers.firstOrNull { it == (wallpaper ?: theme.wallpaper) } ?: theme.wallpaper,
             wallpaperOpacity = (if (opacity == Int.MIN_VALUE) theme.wallpaperOpacity else opacity).coerceIn(35, 100),
+            bubbleOpacity = (if (bubbleOpacity == Int.MIN_VALUE) theme.bubbleOpacity else bubbleOpacity).coerceIn(40, 100),
             darkMode = darkMode ?: theme.darkMode,
             themeId = theme.id
         )
@@ -142,6 +147,7 @@ object ChatThemeStore {
             .putInt("$prefix$KEY_INCOMING_ARGB", selection.incomingArgb)
             .putString("$prefix$KEY_WALLPAPER", Wallpapers.firstOrNull { it == selection.wallpaper } ?: HelloWallpapers.Default)
             .putInt("$prefix$KEY_WALLPAPER_OPACITY", selection.wallpaperOpacity.coerceIn(35, 100))
+            .putInt("$prefix$KEY_BUBBLE_OPACITY", selection.bubbleOpacity.coerceIn(40, 100))
             .putBoolean("$prefix$KEY_DARK_MODE", selection.darkMode)
             .apply()
     }
@@ -152,6 +158,7 @@ object ChatThemeStore {
             incomingArgb = theme.incomingArgb,
             wallpaper = theme.wallpaper,
             wallpaperOpacity = theme.wallpaperOpacity,
+            bubbleOpacity = theme.bubbleOpacity,
             darkMode = theme.darkMode,
             themeId = theme.id
         )
