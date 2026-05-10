@@ -5,6 +5,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.graphics.Color
 
 private val DarkColorScheme = darkColorScheme(
@@ -44,16 +45,19 @@ private val LightColorScheme = lightColorScheme(
 @Composable
 fun HelloTheme(
     themeMode: String = "system",
-    content: @Composable () -> Unit
+    content: @Composable (Boolean) -> Unit
 ) {
     val darkTheme = when (themeMode.lowercase()) {
         "dark" -> true
         "light" -> false
         else -> isSystemInDarkTheme()
     }
+    SideEffect {
+        HelloThemeRuntime.darkMode.value = darkTheme
+    }
     MaterialTheme(
         colorScheme = if (darkTheme) DarkColorScheme else LightColorScheme,
         typography = HelloTypography.MaterialTypography,
-        content = content
+        content = { content(darkTheme) }
     )
 }

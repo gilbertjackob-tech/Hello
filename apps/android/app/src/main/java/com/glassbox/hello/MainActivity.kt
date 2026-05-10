@@ -14,9 +14,9 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            rememberHelloSettingsState(this)
-            HelloTheme(themeMode = "dark") {
-                HelloApp(darkTheme = true)
+            val settings by rememberHelloSettingsState(this)
+            HelloTheme(themeMode = settings.themeMode) { darkTheme ->
+                HelloApp(darkTheme = darkTheme)
             }
         }
     }

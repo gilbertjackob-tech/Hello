@@ -421,6 +421,15 @@ class CallViewModel(
         callEngine.switchCamera()
     }
 
+    fun setVideoQuality(profile: VideoQualityProfile) {
+        callEngine.setPreferredVideoProfile(profile)
+        _state.value = _state.value.copy(selectedVideoQuality = profile)
+    }
+
+    fun setVisualLook(look: CallVisualLook) {
+        _state.value = _state.value.copy(selectedVisualLook = look)
+    }
+
     fun attachLocalRenderer(renderer: SurfaceViewRenderer) {
         callEngine.attachLocalRenderer(renderer)
     }

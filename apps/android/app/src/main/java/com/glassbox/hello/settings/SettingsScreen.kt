@@ -258,12 +258,12 @@ private fun AppearanceRows() {
     var opacity by remember { mutableFloatStateOf(prefs.getInt("wallpaper_opacity", 100).toFloat()) }
     var customImageDialog by remember { mutableStateOf(false) }
 
-    OptionRow("Theme", "dark only in beta", listOf("dark only in beta")) {
-        theme = "dark"
-        prefs.edit().putString("theme", "dark").apply()
+    OptionRow("Theme", theme, listOf("system", "light", "dark")) {
+        theme = it
+        prefs.edit().putString("theme", it).apply()
     }
     Text(
-        "Light/System are disabled in this beta so the Android app does not show a half-light, half-dark UI.",
+        "System, white, and dark mode now use the same shared palette path so the UI stays consistent instead of mixing hardcoded dark widgets.",
         color = HelloColors.DarkTextMuted,
         modifier = Modifier.padding(horizontal = HelloSpacing.Lg, vertical = HelloSpacing.Xs)
     )
@@ -305,7 +305,7 @@ private fun AppearanceRows() {
     if (customImageDialog) {
         InfoDialog(
             title = "Custom image",
-            message = "Custom image coming later.",
+            message = "Built-in premium wallpapers are ready now. Custom image wallpaper still needs a proper crop pipeline.",
             onDismiss = { customImageDialog = false }
         )
     }

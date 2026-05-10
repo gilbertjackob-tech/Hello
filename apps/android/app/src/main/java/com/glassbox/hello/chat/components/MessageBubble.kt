@@ -13,6 +13,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -41,6 +42,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
@@ -66,6 +68,7 @@ fun ChatMessageBubble(
     onLongPress: (ChatModels.Message) -> Unit,
     onOpenAttachment: (String) -> Unit,
     onOpenImage: (String, String) -> Unit,
+    onDownloadAttachment: (String, String?) -> Unit,
     modifier: Modifier = Modifier,
     showSenderName: Boolean = false,
     compactWithPrevious: Boolean = false,
@@ -86,9 +89,10 @@ fun ChatMessageBubble(
         else -> HelloColors.DarkTextMuted
     }
     val bubbleColor = when {
+        isStickerMessage(message.text) -> Color.Transparent
         message.isDeleted == true -> Color(0xB31D2930)
-        isOwn -> Color(0xFF04765F)
-        else -> Color(0xFF14212B)
+        isOwn -> if (isSystemInDarkTheme()) Color.White.copy(alpha = 0.08f) else Color.Black.copy(alpha = 0.05f)
+        else -> if (isSystemInDarkTheme()) Color.White.copy(alpha = 0.06f) else Color.Black.copy(alpha = 0.04f)
     }
     val bubbleShape = messageBubbleShape(isOwn, compactWithPrevious, compactWithNext)
 
@@ -105,8 +109,8 @@ fun ChatMessageBubble(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(
-                    start = 12.dp,
-                    end = 12.dp,
+                    start = 0.dp,
+                    end = 0.dp,
                     top = if (compactWithPrevious) 1.dp else 7.dp,
                     bottom = if (compactWithNext) 1.dp else 7.dp
                 )
@@ -118,7 +122,7 @@ fun ChatMessageBubble(
             ) {
                 if (!isOwn) ReplyHint(visible = showReplyIcon)
                 Column(
-                    modifier = Modifier.widthIn(max = 314.dp),
+                    modifier = Modifier.fillMaxWidth(),
                     horizontalAlignment = if (isOwn) Alignment.End else Alignment.Start
                 ) {
                     if (showSenderName && !isOwn) {
@@ -134,9 +138,10 @@ fun ChatMessageBubble(
                         modifier = Modifier
                             .offset { IntOffset(swipeOffset.roundToInt(), 0) }
                             .fillMaxWidth()
+                            .shadow(if (isStickerMessage(message.text)) 0.dp else 6.dp, bubbleShape, ambientColor = Color.Black.copy(alpha = 0.14f))
                             .clip(bubbleShape)
                             .background(bubbleColor)
-                            .border(1.dp, Color.White.copy(alpha = if (isOwn) 0.06f else 0.08f), bubbleShape)
+                            .border(1.dp, if (isSystemInDarkTheme()) Color.White.copy(alpha = 0.10f) else Color.Black.copy(alpha = 0.08f), bubbleShape)
                             .combinedClickable(
                                 onClick = {},
                                 onLongClick = {
@@ -167,7 +172,7 @@ fun ChatMessageBubble(
                                     }
                                 )
                             }
-                            .padding(horizontal = 11.dp, vertical = 8.dp)
+                            .padding(horizontal = 12.dp, vertical = 10.dp)
                     ) {
                         Column(
                             modifier = Modifier.graphicsLayer(
@@ -181,7 +186,8 @@ fun ChatMessageBubble(
                                 message = message,
                                 isOwn = isOwn,
                                 onOpenAttachment = onOpenAttachment,
-                                onOpenImage = onOpenImage
+                                onOpenImage = onOpenImage,
+                                onDownloadAttachment = onDownloadAttachment
                             )
                             MessageMeta(
                                 message = message,
@@ -235,10 +241,10 @@ private fun ReplyPreview(message: ChatModels.Message, isOwn: Boolean) {
         modifier = Modifier
             .fillMaxWidth()
             .padding(bottom = 7.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .background(if (isOwn) Color(0x3328C0A4) else Color(0x1FE2E8F0))
-            .border(1.dp, HelloColors.DarkAccentSoft, RoundedCornerShape(12.dp))
-            .padding(horizontal = 10.dp, vertical = 7.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(Color.White.copy(alpha = if (isOwn) 0.08f else 0.07f))
+            .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(14.dp))
+            .padding(horizontal = 12.dp, vertical = 8.dp)
     ) {
         Column {
             Text(
@@ -263,7 +269,8 @@ private fun MessageBody(
     message: ChatModels.Message,
     isOwn: Boolean,
     onOpenAttachment: (String) -> Unit,
-    onOpenImage: (String, String) -> Unit
+    onOpenImage: (String, String) -> Unit,
+    onDownloadAttachment: (String, String?) -> Unit
 ) {
     if (message.isDeleted == true) {
         Text(
@@ -271,6 +278,15 @@ private fun MessageBody(
             color = HelloColors.DarkTextMuted,
             style = MaterialTheme.typography.bodyMedium,
             fontStyle = FontStyle.Italic
+        )
+        return
+    }
+
+    if (isStickerMessage(message.text) && message.attachmentUrl.isNullOrBlank()) {
+        Text(
+            text = stickerPayload(message.text),
+            style = MaterialTheme.typography.displayMedium,
+            modifier = Modifier.padding(vertical = 4.dp)
         )
         return
     }
@@ -284,9 +300,9 @@ private fun MessageBody(
     val resolved = normalizeAttachmentUrl(message.attachmentUrl)
     if (!resolved.isNullOrBlank()) {
         when (message.attachmentType) {
-            "image" -> ImageCard(message, resolved, onOpenImage)
-            "audio" -> AudioCard(message, resolved)
-            else -> FileCard(message, resolved, onOpenAttachment)
+            "image" -> ImageCard(message, resolved, onOpenImage, onDownloadAttachment)
+            "audio" -> AudioCard(message, resolved, onDownloadAttachment)
+            else -> FileCard(message, resolved, onOpenAttachment, onDownloadAttachment)
         }
     }
 
@@ -373,22 +389,21 @@ private fun ReplyHint(visible: Boolean) {
 }
 
 private fun messageBubbleShape(isOwn: Boolean, compactWithPrevious: Boolean, compactWithNext: Boolean): RoundedCornerShape {
-    val large = 20.dp
-    val tight = 8.dp
-    val tail = 5.dp
+    val large = 24.dp
+    val compact = 14.dp
     return if (isOwn) {
         RoundedCornerShape(
             topStart = large,
-            topEnd = if (compactWithPrevious) tight else large,
-            bottomEnd = if (compactWithNext) tight else tail,
+            topEnd = if (compactWithPrevious) compact else large,
+            bottomEnd = if (compactWithNext) compact else large,
             bottomStart = large
         )
     } else {
         RoundedCornerShape(
-            topStart = if (compactWithPrevious) tight else large,
+            topStart = if (compactWithPrevious) compact else large,
             topEnd = large,
             bottomEnd = large,
-            bottomStart = if (compactWithNext) tight else tail
+            bottomStart = if (compactWithNext) compact else large
         )
     }
 }

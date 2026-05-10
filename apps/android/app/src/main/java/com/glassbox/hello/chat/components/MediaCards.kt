@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Pause
@@ -40,6 +41,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -55,29 +57,39 @@ import com.glassbox.hello.ui.theme.HelloColors
 fun ImageCard(
     message: ChatModels.Message,
     resolvedUrl: String,
-    onOpenImage: (String, String) -> Unit
+    onOpenImage: (String, String) -> Unit,
+    onDownload: (String, String?) -> Unit
 ) {
-    SubcomposeAsyncImage(
-        model = ImageRequest.Builder(androidx.compose.ui.platform.LocalContext.current)
-            .data(resolvedUrl)
-            .decoderFactory(SvgDecoder.Factory())
-            .crossfade(true)
-            .build(),
-        contentDescription = message.attachmentName ?: "Image attachment",
-        contentScale = ContentScale.Crop,
-        modifier = Modifier
-            .fillMaxWidth()
-            .aspectRatio(1.08f)
-            .clip(RoundedCornerShape(16.dp))
-            .background(Color(0xFF071219))
-            .combinedClickable(onClick = { onOpenImage(resolvedUrl, message.attachmentName ?: "Image") }),
-        loading = { AttachmentPlaceholder("Loading image") },
-        error = { AttachmentPlaceholder("Image unavailable") }
-    )
+    Box {
+        SubcomposeAsyncImage(
+            model = ImageRequest.Builder(androidx.compose.ui.platform.LocalContext.current)
+                .data(resolvedUrl)
+                .decoderFactory(SvgDecoder.Factory())
+                .crossfade(true)
+                .build(),
+            contentDescription = message.attachmentName ?: "Image attachment",
+            contentScale = ContentScale.Crop,
+            modifier = Modifier
+                .fillMaxWidth()
+                .widthIn(max = 340.dp)
+                .aspectRatio(1.08f)
+                .clip(RoundedCornerShape(16.dp))
+                .background(Color(0xFF071219))
+                .combinedClickable(onClick = { onOpenImage(resolvedUrl, message.attachmentName ?: "Image") }),
+            loading = { AttachmentPlaceholder("Loading image") },
+            error = { AttachmentPlaceholder("Image unavailable") }
+        )
+        DownloadChip(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(10.dp),
+            onClick = { onDownload(resolvedUrl, message.attachmentName) }
+        )
+    }
 }
 
 @Composable
-fun AudioCard(message: ChatModels.Message, resolvedUrl: String) {
+fun AudioCard(message: ChatModels.Message, resolvedUrl: String, onDownload: (String, String?) -> Unit) {
     var player by remember(resolvedUrl) { mutableStateOf<MediaPlayer?>(null) }
     var isPlaying by remember { mutableStateOf(false) }
     DisposableEffect(resolvedUrl) {
@@ -89,7 +101,7 @@ fun AudioCard(message: ChatModels.Message, resolvedUrl: String) {
 
     Row(
         modifier = Modifier
-            .fillMaxWidth()
+            .widthIn(max = 340.dp)
             .clip(RoundedCornerShape(16.dp))
             .background(Color.Black.copy(alpha = 0.18f))
             .padding(10.dp),
@@ -144,14 +156,20 @@ fun AudioCard(message: ChatModels.Message, resolvedUrl: String) {
             )
             VoiceWaveform(isPlaying = isPlaying)
         }
+        DownloadChip(onClick = { onDownload(resolvedUrl, message.attachmentName) })
     }
 }
 
 @Composable
-fun FileCard(message: ChatModels.Message, resolvedUrl: String, onOpen: (String) -> Unit) {
+fun FileCard(
+    message: ChatModels.Message,
+    resolvedUrl: String,
+    onOpen: (String) -> Unit,
+    onDownload: (String, String?) -> Unit
+) {
     Row(
         modifier = Modifier
-            .fillMaxWidth()
+            .widthIn(max = 340.dp)
             .clip(RoundedCornerShape(16.dp))
             .background(Color.Black.copy(alpha = 0.18f))
             .combinedClickable(onClick = { onOpen(resolvedUrl) })
@@ -190,6 +208,7 @@ fun FileCard(message: ChatModels.Message, resolvedUrl: String, onOpen: (String) 
                 style = MaterialTheme.typography.labelSmall
             )
         }
+        DownloadChip(onClick = { onDownload(resolvedUrl, message.attachmentName) })
     }
 }
 
@@ -203,7 +222,7 @@ fun LocationCard(message: ChatModels.Message, onOpen: (String) -> Unit) {
     }
     Row(
         modifier = Modifier
-            .fillMaxWidth()
+            .widthIn(max = 340.dp)
             .clip(RoundedCornerShape(16.dp))
             .background(Color.Black.copy(alpha = 0.18f))
             .combinedClickable(onClick = { onOpen(target) })
@@ -239,7 +258,7 @@ fun ContactCard(message: ChatModels.Message) {
     val name = lines.firstOrNull()?.removePrefix("Contact:")?.trim().orEmpty().ifBlank { "Contact" }
     Row(
         modifier = Modifier
-            .fillMaxWidth()
+            .widthIn(max = 340.dp)
             .clip(RoundedCornerShape(16.dp))
             .background(Color.Black.copy(alpha = 0.18f))
             .padding(11.dp),
@@ -272,7 +291,7 @@ fun ContactCard(message: ChatModels.Message) {
 fun LinkCard(text: String, onOpen: (String) -> Unit) {
     Row(
         modifier = Modifier
-            .fillMaxWidth()
+            .widthIn(max = 340.dp)
             .clip(RoundedCornerShape(16.dp))
             .background(Color.Black.copy(alpha = 0.18f))
             .combinedClickable(onClick = { onOpen(text) })
@@ -322,6 +341,7 @@ private fun AttachmentPlaceholder(label: String) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
+            .widthIn(max = 340.dp)
             .aspectRatio(1.08f)
             .clip(RoundedCornerShape(16.dp))
             .background(Color(0xFF071219)),
@@ -338,5 +358,19 @@ fun openExternalTarget(context: Context, url: String) {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
         )
+    }
+}
+
+@Composable
+private fun DownloadChip(modifier: Modifier = Modifier, onClick: () -> Unit) {
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(999.dp))
+            .background(Color.Black.copy(alpha = 0.45f))
+            .combinedClickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(Icons.Default.Download, contentDescription = "Download attachment", tint = Color.White)
     }
 }

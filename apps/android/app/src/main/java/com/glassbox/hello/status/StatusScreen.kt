@@ -8,14 +8,17 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
@@ -44,12 +47,18 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.ColorMatrix
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import coil.compose.SubcomposeAsyncImage
 import coil.decode.SvgDecoder
@@ -74,6 +83,7 @@ import com.glassbox.hello.ui.theme.HelloColors
 import com.glassbox.hello.ui.theme.HelloShapes
 import com.glassbox.hello.ui.theme.HelloSpacing
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 
 private const val STATUS_TTL_MS = 24L * 60L * 60L * 1000L
 
@@ -381,8 +391,14 @@ private fun StatusOverlayText(
     text: String,
     color: Color,
     fontFamily: FontFamily,
+    boxStyle: StatusTextBoxStyle = StatusTextBoxStyle.Glass,
     modifier: Modifier = Modifier
 ) {
+    val overlayBg = when (boxStyle) {
+        StatusTextBoxStyle.Glass -> Color.Black.copy(alpha = 0.34f)
+        StatusTextBoxStyle.Solid -> Color(0xE6101218)
+        StatusTextBoxStyle.Clean -> Color.Transparent
+    }
     Text(
         text = text,
         color = color,
@@ -391,7 +407,7 @@ private fun StatusOverlayText(
         textAlign = TextAlign.Center,
         style = androidx.compose.material3.MaterialTheme.typography.headlineSmall,
         modifier = modifier
-            .background(Color.Black.copy(alpha = 0.34f), HelloShapes.Md)
+            .background(overlayBg, HelloShapes.Md)
             .padding(horizontal = HelloSpacing.Lg, vertical = HelloSpacing.Md)
     )
 }
@@ -409,7 +425,10 @@ private fun CreateStatusDialog(
     var background by remember { mutableStateOf("#0f8f78") }
     var fontStyle by remember { mutableStateOf(StatusFont.Normal) }
     var textColor by remember { mutableStateOf(StatusTextColor.White) }
-    var overlayAlign by remember { mutableStateOf(StatusOverlayAlign.Bottom) }
+    var look by remember { mutableStateOf(StatusImageLook.Natural) }
+    var boxStyle by remember { mutableStateOf(StatusTextBoxStyle.Glass) }
+    var overlayOffsetX by remember { mutableStateOf(0f) }
+    var overlayOffsetY by remember { mutableStateOf(0.22f) }
     var picked by remember { mutableStateOf<PickedStatusFile?>(null) }
     var posting by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -417,88 +436,145 @@ private fun CreateStatusDialog(
         picked = uri?.let { readPickedStatusFile(context, it) }
     }
 
-    AlertDialog(
-        onDismissRequest = onClose,
-        containerColor = HelloColors.DarkPanelStrong,
-        title = { Text("Create status", color = HelloColors.DarkText, fontWeight = FontWeight.Bold) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(HelloSpacing.Md)) {
-                Text("Share a thought or photo. Status disappears after 24 hours.", color = HelloColors.DarkTextMuted)
-                StatusPreview(
-                    text = text,
-                    background = background,
-                    picked = picked,
-                    fontStyle = fontStyle,
-                    textColor = textColor,
-                    overlayAlign = overlayAlign
-                )
-                HelloSearchBar(value = text, onValueChange = { text = it }, placeholder = "Bangla or English overlay text")
-                HelloSettingsMediaRow(
-                    label = picked?.name ?: "Photo status",
-                    helper = picked?.mimeType ?: "Pick a photo",
-                    onClick = { picker.launch("image/*") }
-                )
-                StatusChoiceRow("Font", StatusFont.values().map { it.label }, fontStyle.label) { label ->
-                    fontStyle = StatusFont.values().first { it.label == label }
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(HelloColors.DarkBg.copy(alpha = 0.98f))
+            .safeDrawingPadding()
+            .padding(HelloSpacing.Lg)
+    ) {
+        Column(
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.spacedBy(HelloSpacing.Md)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(HelloSpacing.Md)) {
+                HelloIconButton(onClick = onClose) {
+                    Icon(Icons.Default.Close, contentDescription = "Close editor", tint = HelloColors.DarkText)
                 }
-                StatusChoiceRow("Text color", StatusTextColor.values().map { it.label }, textColor.label) { label ->
-                    textColor = StatusTextColor.values().first { it.label == label }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Create status", color = HelloColors.DarkText, fontWeight = FontWeight.Bold)
+                    Text("Edit directly on the story canvas, then post the final image.", color = HelloColors.DarkTextMuted)
                 }
-                StatusChoiceRow("Text position", StatusOverlayAlign.values().map { it.label }, overlayAlign.label) { label ->
-                    overlayAlign = StatusOverlayAlign.values().first { it.label == label }
-                }
-                if (picked == null) {
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(HelloSpacing.Sm)) {
-                        items(listOf("#0f8f78", "#8b5cf6", "#f43f5e", "#3b82f6", "#eab308", "#222222")) { c ->
-                            Box(
-                                modifier = Modifier
-                                    .size(36.dp)
-                                    .background(parseColor(c), HelloShapes.Pill)
-                                    .clickable { background = c }
+                TextButton(
+                    enabled = !posting && (text.trim().isNotBlank() || picked != null),
+                    onClick = {
+                        posting = true
+                        error = null
+                        scope.launch {
+                            val upload = picked?.let { photo ->
+                                runCatching {
+                                    renderEditedStatusImage(
+                                        sourceBytes = photo.bytes,
+                                        caption = text.trim(),
+                                        look = look,
+                                        textColor = textColor.color.toArgb(),
+                                        font = fontStyle,
+                                        boxStyle = boxStyle,
+                                        offsetX = overlayOffsetX,
+                                        offsetY = overlayOffsetY
+                                    )
+                                }.fold(
+                                    onSuccess = { rendered ->
+                                        api.uploadFile(
+                                            "status-${System.currentTimeMillis()}.jpg",
+                                            "image/jpeg",
+                                            rendered,
+                                            currentUserId
+                                        )
+                                    },
+                                    onFailure = { Result.failure(it) }
+                                )
+                            }
+                            if (upload?.isFailure == true) {
+                                error = upload.exceptionOrNull()?.message ?: "Upload failed"
+                                posting = false
+                                return@launch
+                            }
+                            val uploaded = upload?.getOrNull()
+                            val result = api.createStatus(
+                                userId = currentUserId,
+                                text = if (uploaded == null) text.trim() else "",
+                                attachmentUrl = uploaded?.url,
+                                attachmentType = uploaded?.mimeType,
+                                backgroundColor = if (uploaded == null) background else "",
+                                duration = 5000
                             )
-                        }
-                    }
-                }
-                if (error != null) Text(error.orEmpty(), color = HelloColors.DarkDanger)
-            }
-        },
-        confirmButton = {
-            TextButton(
-                enabled = !posting && (text.trim().isNotBlank() || picked != null),
-                onClick = {
-                    posting = true
-                    scope.launch {
-                        val upload = picked?.let { api.uploadFile(it.name, it.mimeType, it.bytes, currentUserId) }
-                        if (upload?.isFailure == true) {
-                            error = upload.exceptionOrNull()?.message ?: "Upload failed"
                             posting = false
-                            return@launch
+                            if (result.isSuccess) onPosted() else error = result.exceptionOrNull()?.message ?: "Failed to post status"
                         }
-                        val uploaded = upload?.getOrNull()
-                        val result = api.createStatus(
-                            userId = currentUserId,
-                            text = text.trim(),
-                            attachmentUrl = uploaded?.url,
-                            attachmentType = uploaded?.mimeType,
-                            backgroundColor = if (uploaded == null) background else "",
-                            duration = 5000
-                        )
-                        posting = false
-                        if (result.isSuccess) onPosted() else error = result.exceptionOrNull()?.message ?: "Failed to post status"
                     }
+                ) {
+                    Icon(Icons.Default.Send, contentDescription = null, tint = HelloColors.DarkAccent)
+                    Text(if (posting) "Posting..." else "Post", color = HelloColors.DarkAccent)
                 }
-            ) {
-                Icon(Icons.Default.Send, contentDescription = null, tint = HelloColors.DarkAccent)
-                Text("Post", color = HelloColors.DarkAccent)
             }
-        },
-        dismissButton = {
-            TextButton(onClick = onClose) { Text("Cancel", color = HelloColors.DarkTextMuted) }
+
+            DirectEditStatusPreview(
+                text = text,
+                background = background,
+                picked = picked,
+                fontStyle = fontStyle,
+                textColor = textColor,
+                boxStyle = boxStyle,
+                look = look,
+                overlayOffsetX = overlayOffsetX,
+                overlayOffsetY = overlayOffsetY,
+                onOverlayOffsetChange = { x, y ->
+                    overlayOffsetX = x
+                    overlayOffsetY = y
+                }
+            )
+
+            HelloPanel(modifier = Modifier.fillMaxWidth(), strong = true, shape = HelloShapes.Xl) {
+                Column(
+                    modifier = Modifier.padding(HelloSpacing.Lg),
+                    verticalArrangement = Arrangement.spacedBy(HelloSpacing.Md)
+                ) {
+                    HelloSearchBar(value = text, onValueChange = { text = it }, placeholder = "Type directly on the story canvas")
+                    HelloSettingsMediaRow(
+                        label = picked?.name ?: "Choose story photo",
+                        helper = if (picked == null) "Pick a photo from device" else "Replace the current photo",
+                        onClick = { picker.launch("image/*") }
+                    )
+                    if (picked != null) {
+                        StatusChoiceRow("Look", StatusImageLook.entries.map { it.label }, look.label) { label ->
+                            look = StatusImageLook.entries.first { it.label == label }
+                        }
+                    }
+                    StatusChoiceRow("Font", StatusFont.entries.map { it.label }, fontStyle.label) { label ->
+                        fontStyle = StatusFont.entries.first { it.label == label }
+                    }
+                    StatusChoiceRow("Text color", StatusTextColor.entries.map { it.label }, textColor.label) { label ->
+                        textColor = StatusTextColor.entries.first { it.label == label }
+                    }
+                    StatusChoiceRow("Text box", StatusTextBoxStyle.entries.map { it.label }, boxStyle.label) { label ->
+                        boxStyle = StatusTextBoxStyle.entries.first { it.label == label }
+                    }
+                    if (picked == null) {
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(HelloSpacing.Sm)) {
+                            items(listOf("#0f8f78", "#8b5cf6", "#f43f5e", "#3b82f6", "#eab308", "#0f172a", "#f97316", "#1d4ed8")) { c ->
+                                Box(
+                                    modifier = Modifier
+                                        .size(36.dp)
+                                        .clip(HelloShapes.Pill)
+                                        .background(parseColor(c))
+                                        .clickable { background = c }
+                                )
+                            }
+                        }
+                    }
+                    Text(
+                        "Drag the caption directly on the preview. Image stories are exported with the selected look and text baked in.",
+                        color = HelloColors.DarkTextMuted
+                    )
+                    if (error != null) Text(error.orEmpty(), color = HelloColors.DarkDanger)
+                }
+            }
         }
-    )
+    }
 }
 
-private enum class StatusFont(val label: String, val family: FontFamily) {
+enum class StatusFont(val label: String, val family: FontFamily) {
     Normal("Normal", FontFamily.Default),
     Bold("Bold", FontFamily.Default),
     Serif("Serif", FontFamily.Serif),
@@ -506,34 +582,36 @@ private enum class StatusFont(val label: String, val family: FontFamily) {
 }
 
 private enum class StatusTextColor(val label: String, val color: Color) {
-    White("White", Color.White),
-    Black("Black", Color.Black),
-    HelloGreen("Hello green", HelloColors.DarkAccent),
-    Red("Red", Color(0xFFFF5555)),
-    Yellow("Yellow", Color(0xFFFFE15A))
-}
-
-private enum class StatusOverlayAlign(val label: String) {
-    Center("Center"),
-    Bottom("Bottom")
+    White("Ivory", Color(0xFFFFFBF4)),
+    Black("Ink", Color(0xFF101418)),
+    HelloGreen("Mint", HelloColors.DarkAccent),
+    Red("Rose", Color(0xFFFF7388)),
+    Yellow("Sun", Color(0xFFFFE15A))
 }
 
 @Composable
-private fun StatusPreview(
+private fun DirectEditStatusPreview(
     text: String,
     background: String,
     picked: PickedStatusFile?,
     fontStyle: StatusFont,
     textColor: StatusTextColor,
-    overlayAlign: StatusOverlayAlign
+    boxStyle: StatusTextBoxStyle,
+    look: StatusImageLook,
+    overlayOffsetX: Float,
+    overlayOffsetY: Float,
+    onOverlayOffsetChange: (Float, Float) -> Unit
 ) {
-    Box(
+    BoxWithConstraints(
         modifier = Modifier
             .fillMaxWidth()
-            .height(320.dp)
-            .background(parseColor(background), HelloShapes.Xl),
+            .height(520.dp)
+            .clip(HelloShapes.Xl)
+            .background(parseColor(background)),
         contentAlignment = Alignment.Center
     ) {
+        val widthPx = constraints.maxWidth.toFloat().coerceAtLeast(1f)
+        val heightPx = constraints.maxHeight.toFloat().coerceAtLeast(1f)
         if (picked != null) {
             SubcomposeAsyncImage(
                 model = ImageRequest.Builder(LocalContext.current)
@@ -543,28 +621,53 @@ private fun StatusPreview(
                 contentDescription = "Selected status photo",
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop,
+                colorFilter = if (look == StatusImageLook.Natural) null else ColorFilter.colorMatrix(ColorMatrix(statusLookMatrix(look))),
                 loading = { ImageStatusPlaceholder("Loading photo") },
                 error = { ImageStatusPlaceholder("Photo unavailable") }
             )
         }
-        if (text.isBlank() && picked == null) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = if (picked == null) 0.08f else 0.12f))
+        )
+        if (text.isBlank()) {
             Text(
-                "Type a status",
+                if (picked == null) "Type a status" else "Add text or post the photo as-is",
                 color = Color.White.copy(alpha = 0.72f),
                 fontWeight = FontWeight.Bold
             )
         }
         if (text.isNotBlank()) {
-            val align = if (overlayAlign == StatusOverlayAlign.Bottom) Alignment.BottomCenter else Alignment.Center
             StatusOverlayText(
                 text = text,
                 color = textColor.color,
                 fontFamily = fontStyle.family,
+                boxStyle = boxStyle,
                 modifier = Modifier
-                    .align(align)
-                    .padding(HelloSpacing.Xxl)
+                    .offset {
+                        IntOffset(
+                            x = (overlayOffsetX * widthPx * 0.42f).roundToInt(),
+                            y = (overlayOffsetY * heightPx * 0.42f).roundToInt()
+                        )
+                    }
+                    .pointerInput(text, picked?.name, boxStyle.label) {
+                        detectDragGestures { change, dragAmount ->
+                            change.consume()
+                            val nextX = overlayOffsetX + (dragAmount.x / (widthPx * 0.42f))
+                            val nextY = overlayOffsetY + (dragAmount.y / (heightPx * 0.42f))
+                            onOverlayOffsetChange(nextX.coerceIn(-0.38f, 0.38f), nextY.coerceIn(-0.42f, 0.42f))
+                        }
+                    }
             )
         }
+        HelloPill(
+            text = if (picked != null) "Drag text on image" else "Text status",
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = HelloSpacing.Lg),
+            active = true
+        )
     }
 }
 

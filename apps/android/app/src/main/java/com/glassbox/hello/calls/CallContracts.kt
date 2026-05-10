@@ -50,6 +50,7 @@ interface CallMediaEngine {
     fun setMuted(muted: Boolean)
     fun setCameraOff(off: Boolean)
     fun setSpeaker(context: Context, on: Boolean)
+    fun setPreferredVideoProfile(profile: VideoQualityProfile)
     fun switchCamera()
     fun attachLocalRenderer(renderer: SurfaceViewRenderer)
     fun attachRemoteRenderer(renderer: SurfaceViewRenderer)

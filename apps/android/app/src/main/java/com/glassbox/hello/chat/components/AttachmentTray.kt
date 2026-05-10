@@ -174,7 +174,7 @@ fun AttachmentBottomSheet(onAction: (AttachmentAction) -> Unit) {
             items(actions) { (action, label, icon) ->
                 HelloPanel(
                     modifier = Modifier
-                        .size(96.dp)
+                        .size(84.dp)
                         .clickable { onAction(action) },
                     strong = true,
                     shape = HelloShapes.Md
@@ -248,7 +248,7 @@ fun ContactShareDialog(
 private fun AttachmentIcon() {
     Box(
         modifier = Modifier
-            .size(56.dp)
+            .size(48.dp)
             .background(HelloColors.DarkAccentSoft, HelloShapes.Md),
         contentAlignment = Alignment.Center
     ) {

@@ -9,9 +9,11 @@ import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -52,9 +54,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -138,7 +138,6 @@ fun GlobalCallOverlay(
     val context = LocalContext.current
     val callState by callViewModel.state.collectAsState()
     var permissionDialog by remember { mutableStateOf(false) }
-    var showDebugDialog by remember { mutableStateOf(false) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -196,10 +195,14 @@ fun GlobalCallOverlay(
                     muted = callState.muted,
                     speakerOn = callState.speakerOn,
                     cameraOff = callState.cameraOff,
+                    videoQuality = callState.selectedVideoQuality,
+                    visualLook = callState.selectedVisualLook,
                     onMute = { callViewModel.toggleMute() },
                     onSpeaker = { callViewModel.toggleSpeaker(context) },
                     onCamera = { callViewModel.toggleCamera() },
                     onSwitchCamera = { callViewModel.switchCamera() },
+                    onSelectQuality = { callViewModel.setVideoQuality(it) },
+                    onSelectVisualLook = { callViewModel.setVisualLook(it) },
                     onEnd = { callViewModel.endCall("ended") },
                     modifier = modifier.fillMaxSize()
                 )
@@ -212,10 +215,14 @@ fun GlobalCallOverlay(
                     muted = callState.muted,
                     speakerOn = callState.speakerOn,
                     cameraOff = callState.cameraOff,
+                    videoQuality = callState.selectedVideoQuality,
+                    visualLook = callState.selectedVisualLook,
                     onMute = { callViewModel.toggleMute() },
                     onSpeaker = { callViewModel.toggleSpeaker(context) },
                     onCamera = { callViewModel.toggleCamera() },
                     onSwitchCamera = { callViewModel.switchCamera() },
+                    onSelectQuality = { callViewModel.setVideoQuality(it) },
+                    onSelectVisualLook = { callViewModel.setVisualLook(it) },
                     onAttachLocalRenderer = { callViewModel.attachLocalRenderer(it) },
                     onAttachRemoteRenderer = { callViewModel.attachRemoteRenderer(it) },
                     onEnd = { callViewModel.endCall("ended") },
@@ -230,7 +237,6 @@ fun GlobalCallOverlay(
         CallUiStatus.Unavailable,
         CallUiStatus.Failed -> CallResultDialog(
             message = callState.message ?: "Call ended",
-            onShowDebug = { showDebugDialog = true },
             onDismiss = { callViewModel.dismissCallOverlay() }
         )
         CallUiStatus.PermissionDenied -> PermissionRequiredDialog(
@@ -274,12 +280,6 @@ fun GlobalCallOverlay(
         )
     }
 
-    if (showDebugDialog) {
-        CallDebugDialog(
-            debugText = callViewModel.callDebugText(),
-            onDismiss = { showDebugDialog = false }
-        )
-    }
 }
 
 @Composable
@@ -365,10 +365,14 @@ fun ActiveCallScreen(
     muted: Boolean = false,
     speakerOn: Boolean = true,
     cameraOff: Boolean = false,
+    videoQuality: VideoQualityProfile = VideoQualityProfile.Auto,
+    visualLook: CallVisualLook = CallVisualLook.Natural,
     onMute: () -> Unit = {},
     onSpeaker: () -> Unit = {},
     onCamera: () -> Unit = {},
     onSwitchCamera: () -> Unit = {},
+    onSelectQuality: (VideoQualityProfile) -> Unit = {},
+    onSelectVisualLook: (CallVisualLook) -> Unit = {},
     onAttachLocalRenderer: ((SurfaceViewRenderer) -> Unit)? = null,
     onAttachRemoteRenderer: ((SurfaceViewRenderer) -> Unit)? = null,
     onEnd: () -> Unit,
@@ -384,6 +388,7 @@ fun ActiveCallScreen(
                 name = name,
                 mediaPhase = mediaPhase,
                 cameraOff = cameraOff,
+                visualLook = visualLook,
                 onAttachLocalRenderer = onAttachLocalRenderer,
                 onAttachRemoteRenderer = onAttachRemoteRenderer
             )
@@ -404,6 +409,18 @@ fun ActiveCallScreen(
                 color = HelloColors.DarkTextMuted,
                 fontWeight = FontWeight.Medium
             )
+            if (video) {
+                CallSelectorRow(
+                    title = "Quality",
+                    selectedLabel = videoQuality.label,
+                    options = VideoQualityProfile.entries.map { it.label to { onSelectQuality(it) } }
+                )
+                CallSelectorRow(
+                    title = "Look",
+                    selectedLabel = visualLook.label,
+                    options = CallVisualLook.entries.map { it.label to { onSelectVisualLook(it) } }
+                )
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
                 RoundCallButton(onClick = onMute, active = muted) {
                     Icon(if (muted) Icons.Default.MicOff else Icons.Default.Mic, contentDescription = "Mute", tint = HelloColors.AuthText)
@@ -440,10 +457,14 @@ fun GroupActiveCallScreen(
     muted: Boolean,
     speakerOn: Boolean,
     cameraOff: Boolean,
+    videoQuality: VideoQualityProfile = VideoQualityProfile.Auto,
+    visualLook: CallVisualLook = CallVisualLook.Natural,
     onMute: () -> Unit,
     onSpeaker: () -> Unit,
     onCamera: () -> Unit,
     onSwitchCamera: () -> Unit,
+    onSelectQuality: (VideoQualityProfile) -> Unit = {},
+    onSelectVisualLook: (CallVisualLook) -> Unit = {},
     onEnd: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -477,6 +498,18 @@ fun GroupActiveCallScreen(
                 text = if (video && cameraOff) "Camera off" else if (video) "Video call" else "Audio call",
                 color = HelloColors.DarkTextMuted
             )
+            if (video) {
+                CallSelectorRow(
+                    title = "Quality",
+                    selectedLabel = videoQuality.label,
+                    options = VideoQualityProfile.entries.map { it.label to { onSelectQuality(it) } }
+                )
+                CallSelectorRow(
+                    title = "Look",
+                    selectedLabel = visualLook.label,
+                    options = CallVisualLook.entries.map { it.label to { onSelectVisualLook(it) } }
+                )
+            }
         }
         Row(
             modifier = Modifier
@@ -511,6 +544,7 @@ private fun VideoCallSurface(
     name: String,
     mediaPhase: CallMediaPhase,
     cameraOff: Boolean,
+    visualLook: CallVisualLook,
     onAttachLocalRenderer: ((SurfaceViewRenderer) -> Unit)?,
     onAttachRemoteRenderer: ((SurfaceViewRenderer) -> Unit)?
 ) {
@@ -553,6 +587,7 @@ private fun VideoCallSurface(
                 )
             }
         }
+        VideoLookOverlay(look = visualLook, modifier = Modifier.fillMaxSize())
     }
 }
 
@@ -612,9 +647,54 @@ private fun phaseLabel(phase: CallMediaPhase): String = when (phase) {
 }
 
 @Composable
+private fun CallSelectorRow(
+    title: String,
+    selectedLabel: String,
+    options: List<Pair<String, () -> Unit>>
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Text(
+            text = "$title: $selectedLabel",
+            color = HelloColors.DarkTextMuted,
+            fontWeight = FontWeight.Medium
+        )
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            options.forEach { (label, onClick) ->
+                HelloPill(
+                    text = label,
+                    active = label == selectedLabel,
+                    modifier = Modifier.clickable(onClick = onClick)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun VideoLookOverlay(look: CallVisualLook, modifier: Modifier = Modifier) {
+    val tint = when (look) {
+        CallVisualLook.Natural -> HelloColors.DarkBg.copy(alpha = 0f)
+        CallVisualLook.Vivid -> androidx.compose.ui.graphics.Color(0x121FC6FF)
+        CallVisualLook.Warm -> androidx.compose.ui.graphics.Color(0x14FFB36B)
+        CallVisualLook.Cool -> androidx.compose.ui.graphics.Color(0x102D6CFF)
+        CallVisualLook.Clean -> androidx.compose.ui.graphics.Color(0x10FFFFFF)
+    }
+    if (tint.alpha == 0f) return
+    Box(
+        modifier = modifier
+            .background(tint)
+    )
+}
+
+@Composable
 private fun CallResultDialog(
     message: String,
-    onShowDebug: () -> Unit,
     onDismiss: () -> Unit
 ) {
     AlertDialog(
@@ -625,41 +705,6 @@ private fun CallResultDialog(
         confirmButton = {
             TextButton(onClick = onDismiss) {
                 Text("OK", color = HelloColors.DarkAccent)
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onShowDebug) {
-                Text("Show Call Debug", color = HelloColors.DarkAccent)
-            }
-        }
-    )
-}
-
-@Composable
-private fun CallDebugDialog(
-    debugText: String,
-    onDismiss: () -> Unit
-) {
-    val clipboardManager = LocalClipboardManager.current
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        containerColor = HelloColors.DarkPanelStrong,
-        title = { Text("Call Debug", color = HelloColors.DarkText, fontWeight = FontWeight.Bold) },
-        text = {
-            Text(
-                text = debugText,
-                color = HelloColors.DarkTextMuted,
-                modifier = Modifier.verticalScroll(rememberScrollState())
-            )
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Close", color = HelloColors.DarkAccent)
-            }
-        },
-        dismissButton = {
-            Button(onClick = { clipboardManager.setText(AnnotatedString(debugText)) }) {
-                Text("Copy Debug Logs")
             }
         }
     )

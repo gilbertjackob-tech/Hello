@@ -84,6 +84,7 @@ fun attachmentTypeLabel(message: ChatModels.Message): String {
 
 fun messagePreviewText(message: ChatModels.Message): String {
     return when {
+        isStickerMessage(message.text) -> "Sticker"
         message.isDeleted == true -> "Deleted message"
         message.location != null -> message.text.ifBlank { "Location" }
         message.text.isNotBlank() -> message.text

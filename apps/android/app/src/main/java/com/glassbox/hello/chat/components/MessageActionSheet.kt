@@ -13,6 +13,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Link
@@ -67,6 +68,7 @@ fun MessageActionSheet(
     onReact: (String) -> Unit,
     onPin: () -> Unit,
     onOpen: () -> Unit,
+    onDownload: () -> Unit,
     onCopy: () -> Unit,
     onDeleteForMe: () -> Unit,
     onDeleteForEveryone: () -> Unit
@@ -101,6 +103,7 @@ fun MessageActionSheet(
         SheetRow("Copy text", Icons.Default.ContentCopy, onCopy)
         if (!message.attachmentUrl.isNullOrBlank()) {
             SheetRow("Open attachment", Icons.Default.Folder, onOpen)
+            SheetRow("Download attachment", Icons.Default.Download, onDownload)
         }
         SheetRow("Delete for me", Icons.Default.Delete, onDeleteForMe, danger = true)
         if (isOwn && message.isDeleted != true) {

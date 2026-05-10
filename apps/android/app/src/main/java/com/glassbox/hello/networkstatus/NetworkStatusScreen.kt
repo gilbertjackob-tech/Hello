@@ -11,11 +11,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Public
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material.icons.filled.WifiOff
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -29,7 +32,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import com.glassbox.hello.core.AppConfig
 import com.glassbox.hello.ui.components.HelloIconButton
-import com.glassbox.hello.ui.components.HelloListItem
 import com.glassbox.hello.ui.components.HelloPanel
 import com.glassbox.hello.ui.components.HelloPill
 import com.glassbox.hello.ui.components.HelloPrimaryButton
@@ -40,6 +42,7 @@ import com.glassbox.hello.ui.theme.HelloColors
 import com.glassbox.hello.ui.theme.HelloShapes
 import com.glassbox.hello.ui.theme.HelloSpacing
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -62,17 +65,15 @@ fun NetworkStatusScreen(
     var networkStatus by remember { mutableStateOf<NetworkStatus>(NetworkStatus.Checking) }
     var checkedUrl by remember { mutableStateOf(AppConfig.HELLO_STATUS_URL) }
     var diagnosticText by remember { mutableStateOf("Not checked yet") }
+    var vpnToggleMessage by remember { mutableStateOf<String?>(null) }
 
-    // Function to check network status
-    val checkNetworkStatus = {
+    fun checkNetworkStatus() {
         coroutineScope.launch {
             networkStatus = NetworkStatus.Checking
             checkedUrl = AppConfig.HELLO_STATUS_URL
             diagnosticText = "Checking..."
             try {
-                val result = withContext(Dispatchers.IO) {
-                    checkHelloStatus()
-                }
+                val result = withContext(Dispatchers.IO) { checkHelloStatus() }
                 checkedUrl = result.checkedUrl
                 diagnosticText = result.detail
                 networkStatus = result.status
@@ -84,7 +85,23 @@ fun NetworkStatusScreen(
         }
     }
 
-    // Auto-check on first load
+    fun requestVpnStateChange(enable: Boolean) {
+        networkStatus = NetworkStatus.Checking
+        diagnosticText = if (enable) "Requesting Family Network connection..." else "Requesting Family Network disconnect..."
+        val triggered = if (enable) TailscaleHelper.connectVpn(context) else TailscaleHelper.disconnectVpn(context)
+        if (!triggered) {
+            diagnosticText = "Tailscale toggle could not be sent. Open VPN settings and confirm the tunnel there."
+            vpnToggleMessage = diagnosticText
+            TailscaleHelper.openTailscaleSettings(context)
+            checkNetworkStatus()
+            return
+        }
+        coroutineScope.launch {
+            delay(1400)
+            checkNetworkStatus()
+        }
+    }
+
     LaunchedEffect(Unit) {
         checkNetworkStatus()
     }
@@ -162,19 +179,58 @@ fun NetworkStatusScreen(
 
         HelloSettingsCard {
             HelloSettingsRow(
-                title = "Open Tailscale",
-                subtitle = "Connect the private Family Network, then retry.",
-                onClick = { TailscaleHelper.openTailscale(context) },
+                title = "Device VPN switch",
+                subtitle = "Turn Tailscale on or off from inside Hello.",
+                onClick = {
+                    requestVpnStateChange(networkStatus != NetworkStatus.Connected && networkStatus != NetworkStatus.HelloApiReachable)
+                },
                 leading = {
-                    HelloIconButton(onClick = { TailscaleHelper.openTailscale(context) }, active = true) {
+                    HelloIconButton(
+                        onClick = {
+                            requestVpnStateChange(networkStatus != NetworkStatus.Connected && networkStatus != NetworkStatus.HelloApiReachable)
+                        },
+                        active = networkStatus == NetworkStatus.Connected || networkStatus == NetworkStatus.HelloApiReachable
+                    ) {
                         Icon(Icons.Default.Public, contentDescription = null, tint = HelloColors.DarkAccent)
                     }
+                },
+                trailing = {
+                    Switch(
+                        checked = networkStatus == NetworkStatus.Connected || networkStatus == NetworkStatus.HelloApiReachable,
+                        enabled = networkStatus != NetworkStatus.Checking,
+                        onCheckedChange = { requestVpnStateChange(it) },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = HelloColors.DarkAccent,
+                            checkedTrackColor = HelloColors.DarkAccentSoft,
+                            uncheckedThumbColor = HelloColors.DarkTextMuted,
+                            uncheckedTrackColor = HelloColors.DarkPanelMuted
+                        )
+                    )
                 }
+            )
+            HelloSettingsRow(
+                title = "Open Tailscale app",
+                subtitle = "Open the official app if Android requires confirmation.",
+                onClick = { TailscaleHelper.openTailscale(context) }
             )
             HelloSettingsRow(title = "Server origin", subtitle = AppConfig.SERVER_ORIGIN)
             HelloSettingsRow(title = "Status endpoint", subtitle = AppConfig.HELLO_STATUS_URL)
             HelloSettingsRow(title = "Health endpoint", subtitle = AppConfig.HELLO_HEALTH_URL)
         }
+    }
+
+    vpnToggleMessage?.let { message ->
+        AlertDialog(
+            onDismissRequest = { vpnToggleMessage = null },
+            containerColor = HelloColors.DarkPanelStrong,
+            title = { Text("Family Network", color = HelloColors.DarkText) },
+            text = { Text(message, color = HelloColors.DarkTextMuted) },
+            confirmButton = {
+                TextButton(onClick = { vpnToggleMessage = null }) {
+                    Text("OK", color = HelloColors.DarkAccent)
+                }
+            }
+        )
     }
 }
 

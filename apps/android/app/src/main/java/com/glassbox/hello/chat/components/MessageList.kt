@@ -63,6 +63,7 @@ fun ChatMessageList(
     onOpenMessageMenu: (ChatModels.Message) -> Unit,
     onOpenAttachment: (String) -> Unit,
     onOpenImage: (String, String) -> Unit,
+    onDownloadAttachment: (String, String?) -> Unit,
     onJumpToLatest: () -> Unit
 ) {
     val isNearBottom = rememberNearBottom(listState)
@@ -95,6 +96,7 @@ fun ChatMessageList(
                     onLongPress = onOpenMessageMenu,
                     onOpenAttachment = onOpenAttachment,
                     onOpenImage = onOpenImage,
+                    onDownloadAttachment = onDownloadAttachment,
                     showSenderName = grouping.showSenderName,
                     compactWithPrevious = grouping.compactWithPrevious,
                     compactWithNext = grouping.compactWithNext

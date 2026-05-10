@@ -28,6 +28,21 @@ enum class CallMediaPhase {
     Error
 }
 
+enum class VideoQualityProfile(val label: String) {
+    Auto("Auto"),
+    DataSaver("Saver"),
+    Balanced("Balanced"),
+    Hd("HD")
+}
+
+enum class CallVisualLook(val label: String) {
+    Natural("Natural"),
+    Vivid("Vivid"),
+    Warm("Warm"),
+    Cool("Cool"),
+    Clean("Clean")
+}
+
 data class CallSignal(
     val eventId: String? = null,
     val callId: String,
@@ -123,6 +138,8 @@ data class CallUiState(
     val speakerOn: Boolean = true,
     val cameraOff: Boolean = false,
     val roomParticipants: List<String> = emptyList(),
+    val selectedVideoQuality: VideoQualityProfile = VideoQualityProfile.Auto,
+    val selectedVisualLook: CallVisualLook = CallVisualLook.Natural,
     val debugEvents: List<String> = emptyList(),
     val debugLastEvent: String? = null,
     val debugOfferReceived: Boolean = false,

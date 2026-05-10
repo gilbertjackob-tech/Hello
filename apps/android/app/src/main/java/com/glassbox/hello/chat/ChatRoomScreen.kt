@@ -30,6 +30,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -58,10 +59,14 @@ import com.glassbox.hello.chat.components.ChatComposer
 import com.glassbox.hello.chat.components.ChatHeader
 import com.glassbox.hello.chat.components.ChatMessageList
 import com.glassbox.hello.chat.components.ContactShareDialog
+import com.glassbox.hello.chat.components.EmojiStickerPickerSheet
 import com.glassbox.hello.chat.components.MediaViewer
 import com.glassbox.hello.chat.components.MediaViewerState
 import com.glassbox.hello.chat.components.MessageActionSheet
 import com.glassbox.hello.chat.components.ReplyComposerBar
+import com.glassbox.hello.chat.components.createStickerMessageText
+import com.glassbox.hello.chat.components.downloadAttachment
+import com.glassbox.hello.chat.components.normalizeAttachmentUrl
 import com.glassbox.hello.chat.components.openExternalTarget
 import com.glassbox.hello.chat.components.rememberNearBottom
 import com.glassbox.hello.chat.components.visibleForUser
@@ -129,7 +134,7 @@ fun ChatRoomScreen(
     var pendingIncomingAccept by remember { mutableStateOf(false) }
     var permissionDialog by remember { mutableStateOf(false) }
     var fileSizeError by remember { mutableStateOf<String?>(null) }
-    var pendingAttachment by remember { mutableStateOf<AttachmentDraft?>(null) }
+    val pendingAttachments = remember { mutableStateListOf<AttachmentDraft>() }
     var replyTo by remember { mutableStateOf<Message?>(null) }
     var showDeleteConfirm by remember { mutableStateOf(false) }
     var showClearChatConfirm by remember { mutableStateOf(false) }
@@ -224,22 +229,30 @@ fun ChatRoomScreen(
         }
     }
 
-    val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        if (uri != null) {
+    fun queuePickedAttachments(uris: List<Uri>?) {
+        uris?.forEach { uri ->
             readPickedFile(context, uri)?.let { selected ->
                 if (selected.bytes.size > 100 * 1024 * 1024) {
                     fileSizeError = "Maximum file size is 100 MB"
                     return@let
                 }
-                pendingAttachment = selected
+                pendingAttachments += selected
             }
         }
+    }
+
+    val multiPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        queuePickedAttachments(uris)
+    }
+
+    val gifPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        queuePickedAttachments(uri?.let { listOf(it) })
     }
 
     val cameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { saved ->
         val capture = cameraCapture
         if (saved && capture != null && capture.file.exists()) {
-            pendingAttachment = AttachmentDraft(
+            pendingAttachments += AttachmentDraft(
                 uri = capture.uri,
                 name = capture.file.name,
                 mimeType = "image/jpeg",
@@ -340,9 +353,9 @@ fun ChatRoomScreen(
     fun pickAttachment(action: AttachmentAction) {
         showAttachmentMenu = false
         when (action) {
-            AttachmentAction.Gallery -> filePicker.launch("image/*")
-            AttachmentAction.File -> filePicker.launch("*/*")
-            AttachmentAction.Audio -> filePicker.launch("audio/*")
+            AttachmentAction.Gallery -> multiPicker.launch(arrayOf("image/*"))
+            AttachmentAction.File -> multiPicker.launch(arrayOf("*/*"))
+            AttachmentAction.Audio -> multiPicker.launch(arrayOf("audio/*"))
             AttachmentAction.Camera -> {
                 if (context.checkSelfPermissionCompat(Manifest.permission.CAMERA)) {
                     val capture = createCameraCapture(context)
@@ -416,49 +429,51 @@ fun ChatRoomScreen(
 
     fun sendCurrentMessage() {
         val trimmed = messageText.trim()
-        val attachment = pendingAttachment
-        val replySnapshot = replyTo?.let {
-            ChatModels.ReplyTo(
-                id = it.id,
-                text = it.text.ifBlank { "Attachment" },
-                senderName = it.senderName,
-                senderId = it.senderId
-            )
-        }
-        if (trimmed.isBlank() && attachment == null) return
+val attachments = pendingAttachments.toList()
+                val replySnapshot = replyTo?.let {
+                    ChatModels.ReplyTo(
+                        id = it.id,
+                        text = it.text.ifBlank { "Attachment" },
+                        senderName = it.senderName,
+                        senderId = it.senderId
+                    )
+                }
+                if (trimmed.isBlank() && attachments.isEmpty()) return
 
-        if (attachment != null) {
-            val optimistic = OptimisticMessageManager.createOptimisticMessage(
-                chatId = chat.id,
-                text = trimmed,
-                senderId = currentUserId,
-                senderName = currentUserName,
-                senderAvatar = currentUserAvatar,
-                attachmentUrl = attachment.previewUrl,
-                attachmentType = classifyAttachment(attachment.mimeType),
-                attachmentName = attachment.name,
-                attachmentSize = attachment.sizeBytes,
-                replyTo = replySnapshot
-            )
-            viewModel.addOptimisticMessage(optimistic.message)
-            messageText = ""
-            pendingAttachment = null
-            replyTo = null
-            AnimationUtils.Haptics.sendMessage(context)
-            ChatFeedback.playSent(settingsState.chatSounds)
-            socketManager.typing(chat.id, currentUserId, currentUserName, isTyping = false)
-            viewModel.uploadAndSendAttachment(
-                chatId = chat.id,
-                fileName = attachment.name,
-                mimeType = attachment.mimeType,
-                bytes = attachment.bytes,
-                senderId = currentUserId,
-                senderName = currentUserName,
-                senderAvatar = currentUserAvatar,
-                caption = trimmed,
-                replyTo = replySnapshot,
-                optimisticTempId = optimistic.tempId
-            )
+                if (attachments.isNotEmpty()) {
+                    messageText = ""
+                    pendingAttachments.clear()
+                    replyTo = null
+                    AnimationUtils.Haptics.sendMessage(context)
+                    ChatFeedback.playSent(settingsState.chatSounds)
+                    socketManager.typing(chat.id, currentUserId, currentUserName, isTyping = false)
+                    attachments.forEach { attachment ->
+                        val optimistic = OptimisticMessageManager.createOptimisticMessage(
+                            chatId = chat.id,
+                            text = trimmed,
+                            senderId = currentUserId,
+                            senderName = currentUserName,
+                            senderAvatar = currentUserAvatar,
+                            attachmentUrl = attachment.previewUrl,
+                            attachmentType = classifyAttachment(attachment.mimeType),
+                            attachmentName = attachment.name,
+                            attachmentSize = attachment.sizeBytes,
+                            replyTo = replySnapshot
+                        )
+                        viewModel.addOptimisticMessage(optimistic.message)
+                        viewModel.uploadAndSendAttachment(
+                            chatId = chat.id,
+                            fileName = attachment.name,
+                            mimeType = attachment.mimeType,
+                            bytes = attachment.bytes,
+                            senderId = currentUserId,
+                            senderName = currentUserName,
+                            senderAvatar = currentUserAvatar,
+                            caption = trimmed,
+                            replyTo = replySnapshot,
+                            optimisticTempId = optimistic.tempId
+                        )
+                    }
             return
         }
 
@@ -479,6 +494,41 @@ fun ChatRoomScreen(
         viewModel.sendMessage(
             chatId = chat.id,
             text = trimmed,
+            senderId = currentUserId,
+            senderName = currentUserName,
+            senderAvatar = currentUserAvatar,
+            replyTo = replySnapshot,
+            optimisticTempId = optimistic.tempId
+        )
+    }
+
+    fun sendSticker(sticker: String) {
+        val payload = createStickerMessageText(sticker)
+        val replySnapshot = replyTo?.let {
+            ChatModels.ReplyTo(
+                id = it.id,
+                text = it.text.ifBlank { "Attachment" },
+                senderName = it.senderName,
+                senderId = it.senderId
+            )
+        }
+        val optimistic = OptimisticMessageManager.createOptimisticMessage(
+            chatId = chat.id,
+            text = payload,
+            senderId = currentUserId,
+            senderName = currentUserName,
+            senderAvatar = currentUserAvatar,
+            replyTo = replySnapshot
+        )
+        viewModel.addOptimisticMessage(optimistic.message)
+        replyTo = null
+        showEmojiRow = false
+        AnimationUtils.Haptics.sendMessage(context)
+        ChatFeedback.playSent(settingsState.chatSounds)
+        socketManager.typing(chat.id, currentUserId, currentUserName, isTyping = false)
+        viewModel.sendMessage(
+            chatId = chat.id,
+            text = payload,
             senderId = currentUserId,
             senderName = currentUserName,
             senderAvatar = currentUserAvatar,
@@ -601,6 +651,7 @@ fun ChatRoomScreen(
                                     },
                                     onOpenAttachment = { url -> openExternalTarget(context, url) },
                                     onOpenImage = { url, label -> mediaViewerState = MediaViewerState(url, label) },
+                                    onDownloadAttachment = { url, fileName -> downloadAttachment(context, url, fileName) },
                                     onJumpToLatest = {
                                         scope.launch {
                                             if (visibleMessages.isNotEmpty()) {
@@ -636,11 +687,11 @@ fun ChatRoomScreen(
                     modifier = Modifier.padding(horizontal = HelloSpacing.Lg, vertical = HelloSpacing.Xs)
                 )
             }
-            pendingAttachment?.let {
+            pendingAttachments.forEach { attachment ->
                 AttachmentPreviewBar(
-                    file = it,
+                    file = attachment,
                     onRemove = {
-                        pendingAttachment = null
+                        pendingAttachments.remove(attachment)
                         viewModel.resetUploadState()
                     },
                     modifier = Modifier.padding(horizontal = HelloSpacing.Lg, vertical = HelloSpacing.Xs)
@@ -661,11 +712,10 @@ fun ChatRoomScreen(
                 onToggleEmoji = { showEmojiRow = !showEmojiRow },
                 onEmoji = { emoji ->
                     messageText += emoji
-                    showEmojiRow = false
                 },
                 onAttach = { showAttachmentMenu = true },
                 onSendOrRecord = {
-                    if (messageText.trim().isNotEmpty() || pendingAttachment != null) {
+                    if (messageText.trim().isNotEmpty() || pendingAttachments.isNotEmpty()) {
                         sendCurrentMessage()
                     } else if (voiceState.active) {
                         finishVoiceNote(send = true)
@@ -676,8 +726,8 @@ fun ChatRoomScreen(
                 voiceState = voiceState,
                 recordingElapsedSeconds = recordingElapsedSeconds,
                 onCancelVoice = { finishVoiceNote(send = false) },
-                hasPayload = messageText.trim().isNotEmpty() || pendingAttachment != null,
-                placeholder = if (pendingAttachment == null) "Message Hello" else "Add a caption",
+                hasPayload = messageText.trim().isNotEmpty() || pendingAttachments.isNotEmpty(),
+                placeholder = if (pendingAttachments.isEmpty()) "Message Hello" else "Add a caption",
                 enterSends = settingsState.enterSends,
                 onKeyboardSend = { sendCurrentMessage() }
             )
@@ -714,7 +764,13 @@ fun ChatRoomScreen(
                         selectedMessage = null
                     },
                     onOpen = {
-                        selected.message.attachmentUrl?.let { openExternalTarget(context, it) }
+                        normalizeAttachmentUrl(selected.message.attachmentUrl)?.let { openExternalTarget(context, it) }
+                        selectedMessage = null
+                    },
+                    onDownload = {
+                        normalizeAttachmentUrl(selected.message.attachmentUrl)?.let { url ->
+                            downloadAttachment(context, url, selected.message.attachmentName)
+                        }
                         selectedMessage = null
                     },
                     onCopy = {
@@ -772,6 +828,26 @@ fun ChatRoomScreen(
                 containerColor = HelloColors.DarkPanelStrong
             ) {
                 AttachmentBottomSheet(onAction = ::pickAttachment)
+            }
+        }
+
+        if (showEmojiRow) {
+            ModalBottomSheet(
+                onDismissRequest = { showEmojiRow = false },
+                containerColor = HelloColors.DarkPanelStrong
+            ) {
+                EmojiStickerPickerSheet(
+                    onEmojiSelected = { emoji ->
+                        messageText += emoji
+                    },
+                    onStickerSelected = { sticker ->
+                        sendSticker(sticker)
+                    },
+                    onPickGif = {
+                        showEmojiRow = false
+                        gifPicker.launch("image/gif")
+                    }
+                )
             }
         }
 

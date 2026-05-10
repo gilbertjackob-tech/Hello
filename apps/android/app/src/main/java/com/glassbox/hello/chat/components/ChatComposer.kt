@@ -1,6 +1,5 @@
 package com.glassbox.hello.chat.components
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -13,8 +12,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AttachFile
@@ -70,25 +67,6 @@ fun ChatComposer(
                 .padding(horizontal = HelloSpacing.Sm, vertical = HelloSpacing.Xs)
                 .animateContentSize()
         ) {
-            AnimatedVisibility(visible = showEmojiRow) {
-                LazyRow(
-                    horizontalArrangement = Arrangement.spacedBy(HelloSpacing.Sm),
-                    modifier = Modifier.padding(horizontal = HelloSpacing.Sm, vertical = HelloSpacing.Xs)
-                ) {
-                    items(ComposerEmojis) { emoji ->
-                        Text(
-                            text = emoji,
-                            style = MaterialTheme.typography.titleLarge,
-                            modifier = Modifier
-                                .clip(HelloShapes.Pill)
-                                .background(HelloColors.DarkPanelMuted)
-                                .clickable { onEmoji(emoji) }
-                                .padding(horizontal = 12.dp, vertical = 7.dp)
-                        )
-                    }
-                }
-            }
-
             if (voiceState.active) {
                 VoiceRecordingBar(elapsedSeconds = recordingElapsedSeconds, onCancel = onCancelVoice)
             }
@@ -128,7 +106,7 @@ fun ChatComposer(
                 }
             }
             Text(
-                text = if (hasPayload) "Ready to send" else "Tap mic to record, attach files, or type a message",
+                text = if (hasPayload) "Ready to send" else "Emoji, GIFs, stickers, files, and voice notes",
                 color = HelloColors.DarkTextMuted,
                 style = MaterialTheme.typography.labelSmall,
                 modifier = Modifier.padding(start = 56.dp, top = 4.dp, bottom = 2.dp)

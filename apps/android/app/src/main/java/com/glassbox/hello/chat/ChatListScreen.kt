@@ -33,6 +33,8 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -74,6 +76,7 @@ import com.glassbox.hello.ui.theme.HelloColors
 import com.glassbox.hello.ui.theme.HelloShapes
 import com.glassbox.hello.ui.theme.HelloSpacing
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
@@ -119,6 +122,7 @@ fun ChatListScreen(
     var vpnEnabled by remember { mutableStateOf(false) }
     var vpnChecking by remember { mutableStateOf(false) }
     var vpnDetail by remember { mutableStateOf("Not checked yet") }
+    var vpnActionMessage by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(currentUserId) {
         viewModel.loadChats(currentUserId)
@@ -160,6 +164,27 @@ fun ChatListScreen(
         }
     }
 
+    fun requestVpnStateChange(enable: Boolean) {
+        vpnChecking = true
+        val triggered = if (enable) {
+            TailscaleHelper.connectVpn(context)
+        } else {
+            TailscaleHelper.disconnectVpn(context)
+        }
+        if (!triggered) {
+            vpnChecking = false
+            vpnActionMessage = "Tailscale toggle could not be sent. Opening VPN settings may be required."
+            TailscaleHelper.openTailscaleSettings(context)
+            refreshNetworkStatus()
+            return
+        }
+        vpnActionMessage = if (enable) "Requesting Family Network connection..." else "Requesting Family Network disconnect..."
+        coroutineScope.launch {
+            delay(1400)
+            refreshNetworkStatus()
+        }
+    }
+
     fun openNetworkDiagnostics() {
         showNetworkDiagnostics = true
         refreshNetworkStatus()
@@ -198,17 +223,10 @@ fun ChatListScreen(
                         overflow = TextOverflow.Ellipsis
                     )
                 }
-                CompactNetworkChip(
+                CompactNetworkSwitch(
                     checking = vpnChecking,
                     connected = vpnEnabled,
-                    onClick = {
-                        if (vpnEnabled) {
-                            refreshNetworkStatus()
-                        } else {
-                            TailscaleHelper.openTailscale(context)
-                            refreshNetworkStatus()
-                        }
-                    }
+                    onCheckedChange = { requestVpnStateChange(it) }
                 )
                 HelloIconButton(onClick = { showNewChat = true }) {
                     Icon(Icons.Default.Add, contentDescription = "New chat", tint = HelloColors.DarkAccent)
@@ -417,11 +435,23 @@ fun ChatListScreen(
                 enabled = vpnEnabled,
                 detail = vpnDetail,
                 onRetry = { refreshNetworkStatus() },
-                onOpenTailscale = {
-                    TailscaleHelper.openTailscale(context)
-                    refreshNetworkStatus()
-                },
+                onToggleVpn = { requestVpnStateChange(it) },
+                onOpenTailscale = { TailscaleHelper.openTailscale(context) },
                 onDismiss = { showNetworkDiagnostics = false }
+            )
+        }
+
+        if (vpnActionMessage != null) {
+            AlertDialog(
+                onDismissRequest = { vpnActionMessage = null },
+                containerColor = HelloColors.DarkPanelStrong,
+                title = { Text("Family Network", color = HelloColors.DarkText, fontWeight = FontWeight.Bold) },
+                text = { Text(vpnActionMessage.orEmpty(), color = HelloColors.DarkTextMuted) },
+                confirmButton = {
+                    TextButton(onClick = { vpnActionMessage = null }) {
+                        Text("OK", color = HelloColors.DarkAccent)
+                    }
+                }
             )
         }
 
@@ -481,30 +511,38 @@ private enum class SharedContentMode {
 }
 
 @Composable
-private fun CompactNetworkChip(
+private fun CompactNetworkSwitch(
     checking: Boolean,
     connected: Boolean,
-    onClick: () -> Unit
+    onCheckedChange: (Boolean) -> Unit
 ) {
-    val label = when {
-        checking -> "Checking"
-        connected -> "VPN On"
-        else -> "Open VPN"
-    }
-    Surface(
-        onClick = onClick,
-        shape = HelloShapes.Pill,
-        color = if (connected) HelloColors.DarkAccentSoft else HelloColors.DarkDanger.copy(alpha = 0.16f),
-        border = BorderStroke(1.dp, if (connected) HelloColors.DarkAccent else HelloColors.DarkDanger)
+    Row(
+        modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         Text(
-            text = label,
-            color = if (connected) HelloColors.DarkAccentStrong else HelloColors.DarkDanger,
+            text = when {
+                checking -> "Checking"
+                connected -> "VPN On"
+                else -> "VPN Off"
+            },
+            color = if (connected) HelloColors.DarkAccentStrong else HelloColors.DarkTextMuted,
             style = MaterialTheme.typography.labelMedium,
             fontWeight = FontWeight.Bold,
             maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp)
+            overflow = TextOverflow.Ellipsis
+        )
+        Switch(
+            checked = connected,
+            enabled = !checking,
+            onCheckedChange = onCheckedChange,
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = HelloColors.DarkAccent,
+                checkedTrackColor = HelloColors.DarkAccentSoft,
+                uncheckedThumbColor = HelloColors.DarkTextMuted,
+                uncheckedTrackColor = HelloColors.DarkPanelMuted
+            )
         )
     }
 }
@@ -718,6 +756,7 @@ private fun NetworkDiagnosticsDialog(
     enabled: Boolean,
     detail: String,
     onRetry: () -> Unit,
+    onToggleVpn: (Boolean) -> Unit,
     onOpenTailscale: () -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -736,6 +775,24 @@ private fun NetworkDiagnosticsDialog(
                     fontWeight = FontWeight.Bold
                 )
                 Text(text = detail, color = HelloColors.DarkTextMuted)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("Device VPN switch", color = HelloColors.DarkText, fontWeight = FontWeight.Bold)
+                    Switch(
+                        checked = enabled,
+                        enabled = !checking,
+                        onCheckedChange = onToggleVpn,
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = HelloColors.DarkAccent,
+                            checkedTrackColor = HelloColors.DarkAccentSoft,
+                            uncheckedThumbColor = HelloColors.DarkTextMuted,
+                            uncheckedTrackColor = HelloColors.DarkPanelMuted
+                        )
+                    )
+                }
             }
         },
         confirmButton = {

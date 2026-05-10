@@ -60,6 +60,7 @@ class NativeCallEngine : CallMediaEngine {
     private val queuedRemoteIce = mutableListOf<IceCandidate>()
     private var remoteDescriptionSet = false
     private var wantsVideo = false
+    private var preferredVideoProfile = VideoQualityProfile.Auto
     private val configuredIceServers = mutableListOf<PeerConnection.IceServer>()
     private val mediaStartLock = Any()
     @Volatile
@@ -224,6 +225,11 @@ class NativeCallEngine : CallMediaEngine {
         val audio = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
         audio.mode = AudioManager.MODE_IN_COMMUNICATION
         audio.isSpeakerphoneOn = on
+    }
+
+    override fun setPreferredVideoProfile(profile: VideoQualityProfile) {
+        preferredVideoProfile = profile
+        applyCaptureProfile()
     }
 
     override fun switchCamera() {
@@ -520,12 +526,7 @@ class NativeCallEngine : CallMediaEngine {
     }
 
     private fun startCaptureWithFallback(candidate: CameraCandidate): Boolean {
-        val formats = listOf(
-            Triple(640, 480, 15),
-            Triple(320, 240, 15),
-            Triple(960, 540, 15),
-            Triple(1280, 720, 15)
-        )
+        val formats = captureFormatsFor(preferredVideoProfile)
         for ((width, height, fps) in formats) {
             try {
                 debugCamera("api=${candidate.api} device=${candidate.deviceName} facing=${candidate.facing} resolution=${width}x$height fps=$fps result=attempt")
@@ -537,6 +538,48 @@ class NativeCallEngine : CallMediaEngine {
             }
         }
         return false
+    }
+
+    private fun applyCaptureProfile() {
+        val capturer = videoCapturer ?: return
+        val formats = captureFormatsFor(preferredVideoProfile)
+        for ((width, height, fps) in formats) {
+            try {
+                runCatching { capturer.stopCapture() }
+                debugCamera("quality=${preferredVideoProfile.name} resolution=${width}x$height fps=$fps result=reconfigure_attempt")
+                capturer.startCapture(width, height, fps)
+                debugCamera("quality=${preferredVideoProfile.name} resolution=${width}x$height fps=$fps result=reconfigure_success")
+                return
+            } catch (error: Exception) {
+                debugCamera("quality=${preferredVideoProfile.name} resolution=${width}x$height fps=$fps result=reconfigure_fail error=${error.message}", error)
+            }
+        }
+    }
+
+    private fun captureFormatsFor(profile: VideoQualityProfile): List<Triple<Int, Int, Int>> {
+        return when (profile) {
+            VideoQualityProfile.DataSaver -> listOf(
+                Triple(320, 240, 12),
+                Triple(480, 360, 12),
+                Triple(640, 480, 12)
+            )
+            VideoQualityProfile.Balanced -> listOf(
+                Triple(640, 480, 15),
+                Triple(960, 540, 15),
+                Triple(1280, 720, 15)
+            )
+            VideoQualityProfile.Hd -> listOf(
+                Triple(1280, 720, 24),
+                Triple(960, 540, 20),
+                Triple(640, 480, 18)
+            )
+            VideoQualityProfile.Auto -> listOf(
+                Triple(960, 540, 15),
+                Triple(640, 480, 15),
+                Triple(1280, 720, 18),
+                Triple(320, 240, 12)
+            )
+        }
     }
 
     private fun cameraEventsHandler(api: String, deviceName: String, facing: String) = object : CameraVideoCapturer.CameraEventsHandler {
