@@ -10,6 +10,7 @@ import android.os.Bundle
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
+import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.RepeatMode
@@ -36,7 +37,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -57,6 +57,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -80,9 +81,19 @@ import com.glassbox.hello.ui.components.HelloPill
 import com.glassbox.hello.ui.theme.HelloColors
 import com.glassbox.hello.ui.theme.HelloShapes
 import com.glassbox.hello.ui.theme.HelloSpacing
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.Locale
+
+private const val TAG = "VoiceAssistantDemo"
+private const val SESSION_TIMEOUT_MS = 10_000L
+private const val MINIMUM_SPEECH_LENGTH_MS = 10_000L
+private const val COMPLETE_SILENCE_MS = 4_000L
+private const val POSSIBLY_COMPLETE_SILENCE_MS = 4_000L
+private const val MAX_RECOGNITION_RESULTS = 5
 
 private enum class DemoLanguage(val label: String, val recognizerLanguage: String?) {
     Auto("Auto", null),
@@ -115,13 +126,17 @@ fun VoiceAssistantDemoScreen(
     }
     val scope = rememberCoroutineScope()
     val history = remember { mutableStateListOf<String>() }
-    var language by remember { mutableStateOf(DemoLanguage.Auto) }
+    val feedbackLog = remember { mutableStateListOf<VoiceParseFeedback>() }
+    var language by remember { mutableStateOf(DemoLanguage.Bangla) }
     var phase by remember { mutableStateOf(DemoPhase.Idle) }
     var livePartial by remember { mutableStateOf("") }
     var finalCommand by remember { mutableStateOf("") }
     var draftCommand by remember { mutableStateOf("") }
+    var parseResult by remember { mutableStateOf<VoiceParseResult?>(null) }
     var helperText by remember { mutableStateOf("Say Hello or tap the orb to capture a command.") }
     var recognizer by remember { mutableStateOf<SpeechRecognizer?>(null) }
+    var recognitionSession by remember { mutableIntStateOf(0) }
+    var timeoutJob by remember { mutableStateOf<Job?>(null) }
     var serviceAvailable by remember { mutableStateOf(SpeechRecognizer.isRecognitionAvailable(context)) }
     var hasAudioPermission by remember {
         mutableStateOf(context.hasAudioPermission())
@@ -140,9 +155,14 @@ fun VoiceAssistantDemoScreen(
     }
 
     fun resetUi(nextPhase: DemoPhase = DemoPhase.Idle) {
+        recognitionSession += 1
+        timeoutJob?.cancel()
+        timeoutJob = null
         recognizer?.cancel()
         livePartial = ""
         draftCommand = ""
+        finalCommand = ""
+        parseResult = null
         phase = nextPhase
         helperText = when (nextPhase) {
             DemoPhase.Idle -> "Say Hello or tap the orb to capture a command."
@@ -152,7 +172,73 @@ fun VoiceAssistantDemoScreen(
         }
     }
 
-    fun startRecognition(mode: RecognitionMode) {
+    fun shouldFallbackToEnglish(activeLanguage: DemoLanguage, fallbackAttempted: Boolean): Boolean {
+        return language == DemoLanguage.Bangla && activeLanguage != DemoLanguage.English && !fallbackAttempted
+    }
+
+    fun completeCommand(candidates: List<String>, draft: Boolean = false) {
+        val result = VoiceCommandParser.parseCandidates(candidates)
+        val chosen = result.chosen
+        if (chosen == null) {
+            parseResult = null
+            phase = DemoPhase.Error
+            helperText = "No command text was recognized. Try again."
+            return
+        }
+
+        parseResult = result
+        if (draft) {
+            draftCommand = chosen.rawTranscript
+            finalCommand = ""
+            helperText = "Draft speech parsed in demo mode. No real action executed."
+        } else {
+            finalCommand = chosen.rawTranscript
+            draftCommand = ""
+            history.add(0, chosen.rawTranscript)
+            while (history.size > 8) history.removeAt(history.lastIndex)
+            helperText = "Recognized command parsed in demo mode. No real action executed."
+        }
+        phase = DemoPhase.Recognized
+    }
+
+    fun clarifyTarget(target: DemoContactTarget) {
+        val current = parseResult?.chosen ?: return
+        val clarified = VoiceCommandParser.clarify(current, target)
+        parseResult = parseResult?.copy(chosen = clarified)
+        finalCommand = clarified.rawTranscript
+        draftCommand = ""
+        helperText = "Clarified target as ${target.displayName}. No real action executed."
+        Log.d(
+            TAG,
+            "clarified target=${target.displayName}, route=${clarified.route}, targetAlias=${clarified.targetAlias}"
+        )
+    }
+
+    fun rateCommand(rating: Int) {
+        val command = parseResult?.chosen ?: return
+        val feedback = VoiceParseFeedback(
+            rating = rating,
+            route = command.route,
+            targetAlias = command.targetAlias,
+            resolvedTarget = command.resolvedTarget?.displayName,
+            timestampMillis = System.currentTimeMillis()
+        )
+        feedbackLog.add(0, feedback)
+        while (feedbackLog.size > 12) feedbackLog.removeAt(feedbackLog.lastIndex)
+        // TODO: Later sync to POST /hello/api/voice/feedback. This demo keeps feedback in memory only.
+        Log.d(
+            TAG,
+            "feedback rating=$rating, route=${feedback.route}, targetAlias=${feedback.targetAlias}, " +
+                "resolvedTarget=${feedback.resolvedTarget}, timestamp=${feedback.timestampMillis}"
+        )
+        helperText = "Rating captured locally. No backend call was made."
+    }
+
+    fun startRecognition(
+        mode: RecognitionMode,
+        activeLanguage: DemoLanguage = language,
+        fallbackAttempted: Boolean = false
+    ) {
         serviceAvailable = SpeechRecognizer.isRecognitionAvailable(context)
         if (!serviceAvailable) {
             resetUi(DemoPhase.SpeechUnavailable)
@@ -167,16 +253,47 @@ fun VoiceAssistantDemoScreen(
         val activeRecognizer = recognizer ?: SpeechRecognizer.createSpeechRecognizer(context).also {
             recognizer = it
         }
+        recognitionSession += 1
+        val sessionId = recognitionSession
+        timeoutJob?.cancel()
         livePartial = ""
+        parseResult = null
         if (mode == RecognitionMode.Command) {
             draftCommand = ""
+            finalCommand = ""
             phase = DemoPhase.ListeningForCommand
-            helperText = "Listening for your Bangla or English command."
+            helperText = if (activeLanguage == DemoLanguage.English && language == DemoLanguage.Bangla) {
+                "Bangla did not catch it. Listening with English fallback."
+            } else {
+                "Listening for your Bangla command. English fallback is enabled."
+            }
         } else {
             phase = DemoPhase.WaitingForHello
-            helperText = "Waiting for Hello, হ্যালো, or হেলো."
+            helperText = if (activeLanguage == DemoLanguage.English && language == DemoLanguage.Bangla) {
+                "Trying English fallback. Say Hello again."
+            } else {
+                "Waiting for Hello, হ্যালো, or হেলো."
+            }
         }
+        Log.d(TAG, activeLanguage.recognitionSettingsLog())
         activeRecognizer.cancel()
+        timeoutJob = scope.launch {
+            delay(SESSION_TIMEOUT_MS)
+            if (sessionId != recognitionSession) return@launch
+            recognitionSession += 1
+            activeRecognizer.cancel()
+            timeoutJob = null
+            if (mode == RecognitionMode.Command && draftCommand.isNotBlank()) {
+                completeCommand(listOf(draftCommand), draft = true)
+            } else if (shouldFallbackToEnglish(activeLanguage, fallbackAttempted)) {
+                helperText = "10 seconds ended in Bangla mode. Trying English fallback."
+                delay(180)
+                startRecognition(mode, DemoLanguage.English, fallbackAttempted = true)
+            } else {
+                phase = DemoPhase.Error
+                helperText = "10 second timeout reached. Tap retry and speak again."
+            }
+        }
 
         activeRecognizer.setRecognitionListener(
             object : RecognitionListener {
@@ -188,11 +305,15 @@ fun VoiceAssistantDemoScreen(
                 override fun onEvent(eventType: Int, params: Bundle?) = Unit
 
                 override fun onPartialResults(partialResults: Bundle?) {
+                    if (sessionId != recognitionSession) return
                     val text = partialResults.bestSpeechResult()
                     if (text.isBlank()) return
                     livePartial = text
                     if (mode == RecognitionMode.Wake && text.isWakeWord()) {
                         helperText = "Hello detected. Start speaking your command."
+                        recognitionSession += 1
+                        timeoutJob?.cancel()
+                        timeoutJob = null
                         activeRecognizer.cancel()
                         scope.launch {
                             delay(250)
@@ -204,27 +325,38 @@ fun VoiceAssistantDemoScreen(
                 }
 
                 override fun onResults(results: Bundle?) {
-                    val text = results.bestSpeechResult()
+                    if (sessionId != recognitionSession) return
+                    timeoutJob?.cancel()
+                    timeoutJob = null
+                    val candidates = results.speechResults()
+                    val text = candidates.firstOrNull().orEmpty()
                     livePartial = text
                     if (mode == RecognitionMode.Wake) {
-                        if (text.isWakeWord()) {
+                        if (candidates.any { it.isWakeWord() }) {
                             helperText = "Hello detected. Start speaking your command."
                             scope.launch {
                                 delay(200)
                                 startRecognition(RecognitionMode.Command)
+                            }
+                        } else if (shouldFallbackToEnglish(activeLanguage, fallbackAttempted)) {
+                            helperText = "Bangla mode did not catch Hello. Trying English fallback."
+                            scope.launch {
+                                delay(180)
+                                startRecognition(RecognitionMode.Wake, DemoLanguage.English, fallbackAttempted = true)
                             }
                         } else {
                             phase = DemoPhase.Error
                             helperText = "Wake word was not heard. Try Hello, হ্যালো, or tap the orb."
                         }
                     } else {
-                        if (text.isNotBlank()) {
-                            finalCommand = text
-                            draftCommand = ""
-                            history.add(0, text)
-                            while (history.size > 8) history.removeAt(history.lastIndex)
-                            phase = DemoPhase.Recognized
-                            helperText = "Recognized command is ready to copy."
+                        if (candidates.isNotEmpty()) {
+                            completeCommand(candidates)
+                        } else if (shouldFallbackToEnglish(activeLanguage, fallbackAttempted)) {
+                            helperText = "Bangla mode did not return command text. Trying English fallback."
+                            scope.launch {
+                                delay(180)
+                                startRecognition(RecognitionMode.Command, DemoLanguage.English, fallbackAttempted = true)
+                            }
                         } else {
                             phase = DemoPhase.Error
                             helperText = "No command text was recognized. Try again."
@@ -233,9 +365,17 @@ fun VoiceAssistantDemoScreen(
                 }
 
                 override fun onError(error: Int) {
+                    if (sessionId != recognitionSession) return
+                    timeoutJob?.cancel()
+                    timeoutJob = null
                     if (mode == RecognitionMode.Command && draftCommand.isNotBlank()) {
-                        phase = DemoPhase.Recognized
-                        helperText = "Only draft speech was available before recognition stopped."
+                        completeCommand(listOf(draftCommand), draft = true)
+                    } else if (shouldFallbackToEnglish(activeLanguage, fallbackAttempted)) {
+                        helperText = "Bangla mode stopped without a match. Trying English fallback."
+                        scope.launch {
+                            delay(180)
+                            startRecognition(mode, DemoLanguage.English, fallbackAttempted = true)
+                        }
                     } else {
                         phase = DemoPhase.Error
                         helperText = speechErrorMessage(error)
@@ -245,8 +385,10 @@ fun VoiceAssistantDemoScreen(
         )
 
         try {
-            activeRecognizer.startListening(recognizerIntent(language))
+            activeRecognizer.startListening(recognizerIntent(activeLanguage))
         } catch (exception: RuntimeException) {
+            timeoutJob?.cancel()
+            timeoutJob = null
             phase = DemoPhase.Error
             helperText = exception.message ?: "Speech recognition could not start."
         }
@@ -264,6 +406,8 @@ fun VoiceAssistantDemoScreen(
 
     DisposableEffect(Unit) {
         onDispose {
+            recognitionSession += 1
+            timeoutJob?.cancel()
             recognizer?.cancel()
             recognizer?.destroy()
             recognizer = null
@@ -276,8 +420,10 @@ fun VoiceAssistantDemoScreen(
         livePartial = livePartial,
         finalCommand = finalCommand,
         draftCommand = draftCommand,
+        parseResult = parseResult,
         helperText = helperText,
         history = history,
+        feedbackLog = feedbackLog,
         modifier = modifier,
         onLanguageSelected = {
             language = it
@@ -293,7 +439,9 @@ fun VoiceAssistantDemoScreen(
                 clipboard.setPrimaryClip(ClipData.newPlainText("Voice command", text))
                 helperText = "Copied recognized command."
             }
-        }
+        },
+        onClarifyTarget = ::clarifyTarget,
+        onRate = ::rateCommand
     )
 }
 
@@ -304,15 +452,19 @@ private fun VoiceAssistantDemoContent(
     livePartial: String,
     finalCommand: String,
     draftCommand: String,
+    parseResult: VoiceParseResult?,
     helperText: String,
     history: List<String>,
+    feedbackLog: List<VoiceParseFeedback>,
     modifier: Modifier,
     onLanguageSelected: (DemoLanguage) -> Unit,
     onStartWake: () -> Unit,
     onCaptureCommand: () -> Unit,
     onStop: () -> Unit,
     onRequestPermission: () -> Unit,
-    onCopy: () -> Unit
+    onCopy: () -> Unit,
+    onClarifyTarget: (DemoContactTarget) -> Unit,
+    onRate: (Int) -> Unit
 ) {
     val isListening = phase == DemoPhase.WaitingForHello || phase == DemoPhase.ListeningForCommand
     val isCommandListening = phase == DemoPhase.ListeningForCommand
@@ -353,6 +505,9 @@ private fun VoiceAssistantDemoContent(
             LanguageSelector(selected = language, onSelected = onLanguageSelected)
         }
         item {
+            RecognitionSettingsPanel(language = language)
+        }
+        item {
             GlowingVoiceOrb(
                 listening = isListening,
                 commandListening = isCommandListening,
@@ -386,8 +541,12 @@ private fun VoiceAssistantDemoContent(
                 livePartial = livePartial,
                 finalCommand = finalCommand,
                 draftCommand = draftCommand,
+                parseResult = parseResult,
                 history = history,
-                onCopy = onCopy
+                feedbackLog = feedbackLog,
+                onCopy = onCopy,
+                onClarifyTarget = onClarifyTarget,
+                onRate = onRate
             )
         }
         item { Spacer(modifier = Modifier.height(HelloSpacing.Xxl)) }
@@ -420,6 +579,29 @@ private fun LanguageSelector(
             ) {
                 Text(option.label, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
+        }
+    }
+}
+
+@Composable
+private fun RecognitionSettingsPanel(language: DemoLanguage) {
+    HelloPanel(modifier = Modifier.fillMaxWidth(), strong = false, shape = HelloShapes.Md) {
+        Column(
+            modifier = Modifier.padding(HelloSpacing.Md),
+            verticalArrangement = Arrangement.spacedBy(HelloSpacing.Xs)
+        ) {
+            Text(
+                "Recognizer settings",
+                color = HelloColors.DarkText,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold
+            )
+            ParserLogRow("Language", language.recognizerLanguage ?: "System auto")
+            ParserLogRow("Session timeout", "$SESSION_TIMEOUT_MS ms")
+            ParserLogRow("Minimum speech length", "$MINIMUM_SPEECH_LENGTH_MS ms")
+            ParserLogRow("Complete silence", "$COMPLETE_SILENCE_MS ms")
+            ParserLogRow("Possibly complete silence", "$POSSIBLY_COMPLETE_SILENCE_MS ms")
+            ParserLogRow("Max results", MAX_RECOGNITION_RESULTS.toString())
         }
     }
 }
@@ -575,8 +757,12 @@ private fun TranscriptPanel(
     livePartial: String,
     finalCommand: String,
     draftCommand: String,
+    parseResult: VoiceParseResult?,
     history: List<String>,
-    onCopy: () -> Unit
+    feedbackLog: List<VoiceParseFeedback>,
+    onCopy: () -> Unit,
+    onClarifyTarget: (DemoContactTarget) -> Unit,
+    onRate: (Int) -> Unit
 ) {
     HelloPanel(modifier = Modifier.fillMaxWidth(), strong = true, shape = HelloShapes.Lg) {
         Column(
@@ -609,34 +795,188 @@ private fun TranscriptPanel(
                 large = true,
                 onClick = onCopy
             )
-            Text(
-                "Recent commands",
-                color = HelloColors.DarkText,
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.Bold
+            DemoParserLogPanel(
+                parseResult = parseResult,
+                onClarifyTarget = onClarifyTarget,
+                onRate = onRate
             )
-            if (history.isEmpty()) {
-                Text("Recognized commands will appear here.", color = HelloColors.DarkTextMuted)
-            } else {
-                Column(verticalArrangement = Arrangement.spacedBy(HelloSpacing.Xs)) {
-                    history.forEach { item ->
-                        Surface(
-                            color = Color.White.copy(alpha = 0.05f),
-                            shape = RoundedCornerShape(12.dp),
-                            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text(
-                                item,
-                                color = HelloColors.DarkText,
-                                style = MaterialTheme.typography.bodyMedium,
-                                modifier = Modifier.padding(HelloSpacing.Md)
-                            )
-                        }
-                    }
+            FeedbackLogPanel(feedbackLog = feedbackLog)
+            RecentCommandsPanel(history = history)
+        }
+    }
+}
+
+@Composable
+private fun DemoParserLogPanel(
+    parseResult: VoiceParseResult?,
+    onClarifyTarget: (DemoContactTarget) -> Unit,
+    onRate: (Int) -> Unit
+) {
+    val parserLog = parseResult?.chosen
+    Text(
+        "Demo parse log",
+        color = HelloColors.DarkText,
+        style = MaterialTheme.typography.titleSmall,
+        fontWeight = FontWeight.Bold
+    )
+    if (parserLog == null) {
+        Text("No parsed command yet.", color = HelloColors.DarkTextMuted)
+        return
+    }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(Color.White.copy(alpha = 0.05f))
+            .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(14.dp))
+            .padding(HelloSpacing.Md),
+        verticalArrangement = Arrangement.spacedBy(HelloSpacing.Xs)
+    ) {
+        ParserLogRow("Raw transcript", parserLog.rawTranscript)
+        ParserLogRow(
+            "Candidates",
+            parseResult.candidates.joinToString("\n") { "${it.transcript}  [score ${it.score}]" }
+        )
+        ParserLogRow("Chosen transcript", parserLog.rawTranscript)
+        ParserLogRow("Normalized transcript", parserLog.normalizedTranscript)
+        ParserLogRow("Intent", parserLog.intent)
+        ParserLogRow("Skill matched", parserLog.skillMatched)
+        ParserLogRow("Route", parserLog.route)
+        ParserLogRow("Target alias", parserLog.targetAlias)
+        ParserLogRow("Resolved target", parserLog.resolvedTarget?.displayName.orEmpty())
+        ParserLogRow(
+            "Resolution candidates",
+            parserLog.resolutionCandidates.joinToString(", ") { it.displayName }
+        )
+        ParserLogRow("Resolution status", parserLog.resolutionStatus.name)
+        ParserLogRow("Confidence", parserLog.confidence.name)
+        ParserLogRow("Needs confirmation", parserLog.needsConfirmation.toString())
+        ParserLogRow("Would do", parserLog.wouldDo)
+        ParserLogRow("Executed", "No real action executed in demo mode")
+        if (parserLog.resolutionStatus == VoiceResolutionStatus.Ambiguous) {
+            ClarificationButtons(
+                candidates = parserLog.resolutionCandidates,
+                onClarifyTarget = onClarifyTarget
+            )
+        }
+        RatingPanel(onRate = onRate)
+    }
+}
+
+@Composable
+private fun ClarificationButtons(
+    candidates: List<DemoContactTarget>,
+    onClarifyTarget: (DemoContactTarget) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(HelloSpacing.Xs)) {
+        Text(
+            "Clarify target",
+            color = HelloColors.DarkTextMuted,
+            style = MaterialTheme.typography.labelMedium
+        )
+        candidates.forEach { candidate ->
+            OutlinedButton(
+                onClick = { onClarifyTarget(candidate) },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(candidate.displayName)
+            }
+        }
+    }
+}
+
+@Composable
+private fun RatingPanel(onRate: (Int) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(HelloSpacing.Xs)) {
+        Text(
+            "Rate parse",
+            color = HelloColors.DarkTextMuted,
+            style = MaterialTheme.typography.labelMedium
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(HelloSpacing.Xs)) {
+            (1..5).forEach { rating ->
+                TextButton(onClick = { onRate(rating) }) {
+                    Text(
+                        "★".repeat(rating),
+                        color = HelloColors.DarkAccentStrong,
+                        style = MaterialTheme.typography.bodyMedium,
+                        maxLines = 1
+                    )
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun FeedbackLogPanel(feedbackLog: List<VoiceParseFeedback>) {
+    Text(
+        "Local feedback",
+        color = HelloColors.DarkText,
+        style = MaterialTheme.typography.titleSmall,
+        fontWeight = FontWeight.Bold
+    )
+    if (feedbackLog.isEmpty()) {
+        Text("Ratings are stored in Compose memory for this session.", color = HelloColors.DarkTextMuted)
+        return
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(HelloSpacing.Xs)) {
+        feedbackLog.forEach { feedback ->
+            Surface(
+                color = Color.White.copy(alpha = 0.05f),
+                shape = RoundedCornerShape(12.dp),
+                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    text = "${feedback.rating}/5 at ${feedback.timestampLabel()} | route=${feedback.route} | " +
+                        "alias=${feedback.targetAlias.ifBlank { "none" }} | " +
+                        "target=${feedback.resolvedTarget ?: "none"}",
+                    color = HelloColors.DarkText,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(HelloSpacing.Md)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun RecentCommandsPanel(history: List<String>) {
+    Text(
+        "Recent commands",
+        color = HelloColors.DarkText,
+        style = MaterialTheme.typography.titleSmall,
+        fontWeight = FontWeight.Bold
+    )
+    if (history.isEmpty()) {
+        Text("Recognized commands will appear here.", color = HelloColors.DarkTextMuted)
+    } else {
+        Column(verticalArrangement = Arrangement.spacedBy(HelloSpacing.Xs)) {
+            history.forEach { item ->
+                Surface(
+                    color = Color.White.copy(alpha = 0.05f),
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        item,
+                        color = HelloColors.DarkText,
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(HelloSpacing.Md)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ParserLogRow(label: String, value: String) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(label, color = HelloColors.DarkTextMuted, style = MaterialTheme.typography.labelMedium)
+        Text(value.ifBlank { "Not detected" }, color = HelloColors.DarkText, style = MaterialTheme.typography.bodyMedium)
     }
 }
 
@@ -677,7 +1017,10 @@ private fun recognizerIntent(language: DemoLanguage): Intent {
     return Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
         putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
         putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-        putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
+        putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, MAX_RECOGNITION_RESULTS)
+        putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, COMPLETE_SILENCE_MS)
+        putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, POSSIBLY_COMPLETE_SILENCE_MS)
+        putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, MINIMUM_SPEECH_LENGTH_MS)
         putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak now")
         language.recognizerLanguage?.let {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, it)
@@ -686,19 +1029,28 @@ private fun recognizerIntent(language: DemoLanguage): Intent {
     }
 }
 
-private fun Bundle?.bestSpeechResult(): String {
-    val matches = this
+private fun Bundle?.speechResults(): List<String> {
+    return this
         ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
         .orEmpty()
-    return matches.firstOrNull().orEmpty().trim()
+        .map { it.trim() }
+        .filter { it.isNotBlank() }
+}
+
+private fun Bundle?.bestSpeechResult(): String {
+    return speechResults().firstOrNull().orEmpty()
 }
 
 private fun String.isWakeWord(): Boolean {
-    val normalized = trim().lowercase(Locale.ROOT)
-    return normalized.contains("hello") ||
-        normalized.contains("hey hello") ||
-        normalized.contains("হ্যালো") ||
-        normalized.contains("হেলো")
+    val normalized = VoiceCommandParser.normalizeTranscript(this)
+    return normalized.contains("hello") || normalized.contains("hey hello")
+}
+
+private fun DemoLanguage.recognitionSettingsLog(): String {
+    return "recognizer language=${recognizerLanguage ?: "system-auto"}, " +
+        "sessionTimeoutMs=$SESSION_TIMEOUT_MS, minSpeechMs=$MINIMUM_SPEECH_LENGTH_MS, " +
+        "completeSilenceMs=$COMPLETE_SILENCE_MS, possibleSilenceMs=$POSSIBLY_COMPLETE_SILENCE_MS, " +
+        "maxResults=$MAX_RECOGNITION_RESULTS"
 }
 
 private fun phaseLabel(phase: DemoPhase): String {
@@ -719,6 +1071,10 @@ private fun phaseColor(phase: DemoPhase): Color {
         DemoPhase.Recognized -> HelloColors.DarkAccentStrong
         else -> HelloColors.DarkAccent
     }
+}
+
+private fun VoiceParseFeedback.timestampLabel(): String {
+    return SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(timestampMillis))
 }
 
 private fun speechErrorMessage(error: Int): String {
