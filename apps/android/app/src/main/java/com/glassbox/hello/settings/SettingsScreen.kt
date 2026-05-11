@@ -57,6 +57,7 @@ import com.glassbox.hello.core.AppConfig
 import com.glassbox.hello.core.ResultState
 import com.glassbox.hello.core.SessionManager
 import com.glassbox.hello.core.UrlResolver
+import com.glassbox.hello.demo.voice.VoiceAssistantDemoScreen
 import com.glassbox.hello.network.HelloApiClient
 import com.glassbox.hello.networkstatus.NetworkStatusScreen
 import com.glassbox.hello.people.PeopleScreen
@@ -77,7 +78,7 @@ import kotlinx.coroutines.launch
 import org.json.JSONObject
 
 private enum class SettingsPage {
-    Home, Profile, Appearance, ChatTheme, Notifications, FamilyNetwork, Privacy, StorageBackup, About, Diagnostics, People
+    Home, Profile, Appearance, ChatTheme, Notifications, FamilyNetwork, Privacy, StorageBackup, About, Diagnostics, People, VoiceDemo
 }
 
 @Composable
@@ -131,6 +132,9 @@ fun SettingsScreen(
                     PeopleScreen(currentUserId = currentUser.id, modifier = Modifier.fillMaxSize())
                 }
             }
+        }
+        SettingsPage.VoiceDemo -> SettingsSubpage("Voice assistant demo", onBack = { page = SettingsPage.Home }, modifier = modifier) {
+            VoiceAssistantDemoScreen(modifier = Modifier.fillMaxSize())
         }
     }
 }
@@ -193,7 +197,8 @@ private fun SettingsHome(
                     "Privacy" to SettingsPage.Privacy,
                     "Storage and backup" to SettingsPage.StorageBackup,
                     "About Hello" to SettingsPage.About,
-                    "Developer diagnostics" to SettingsPage.Diagnostics
+                    "Developer diagnostics" to SettingsPage.Diagnostics,
+                    "Voice assistant demo" to SettingsPage.VoiceDemo
                 )
                 rows.forEach { (label, target) ->
                     HelloSettingsRow(label, "Open $label", onClick = { onNavigate(target) })
