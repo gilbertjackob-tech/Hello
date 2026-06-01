@@ -10,19 +10,42 @@ class ChatRepository(
     private val cloudRepository: CloudChatRepository? = null
 ) {
 
-    suspend fun fetchUsers(query: String? = null): Result<List<User>> {
+    suspend fun fetchUsers(query: String? = null, cloudChatEnabled: Boolean = false): Result<List<User>> {
+        if (cloudChatEnabled && cloudRepository != null) {
+            return cloudRepository.fetchUsers(query)
+        }
         return api.fetchUsers(query)
     }
 
-    suspend fun createDirectChat(currentUserId: String, targetUserId: String): Result<Chat> {
+    suspend fun createDirectChat(
+        currentUserId: String,
+        targetUserId: String,
+        currentUserName: String,
+        cloudChatEnabled: Boolean = false
+    ): Result<Chat> {
+        if (cloudChatEnabled && cloudRepository != null) {
+            return cloudRepository.createDirectChat(currentUserId, targetUserId, currentUserName)
+        }
         return api.createDirectChat(currentUserId, targetUserId)
     }
 
-    suspend fun createGroupChat(name: String, members: List<String>): Result<Chat> {
+    suspend fun createGroupChat(
+        currentUserId: String,
+        currentUserName: String,
+        name: String,
+        members: List<String>,
+        cloudChatEnabled: Boolean = false
+    ): Result<Chat> {
+        if (cloudChatEnabled && cloudRepository != null) {
+            return cloudRepository.createGroupChat(currentUserId, currentUserName, name, members)
+        }
         return api.createChat(name, isGroup = true, members = members)
     }
 
-    suspend fun fetchChats(userId: String): Result<List<Chat>> {
+    suspend fun fetchChats(userId: String, cloudChatEnabled: Boolean = false): Result<List<Chat>> {
+        if (cloudChatEnabled && cloudRepository != null) {
+            return cloudRepository.fetchChats(userId)
+        }
         return api.fetchChats(userId)
     }
 
@@ -57,8 +80,7 @@ class ChatRepository(
             cloudChatEnabled &&
             cloudRepository != null &&
             chat != null &&
-            attachmentUrl == null &&
-            attachmentType == null &&
+            (attachmentUrl == null || attachmentUrl.startsWith("cloud:")) &&
             location == null
         ) {
             return cloudRepository.sendTextMessage(
@@ -66,7 +88,8 @@ class ChatRepository(
                 text = text,
                 senderId = senderId,
                 senderName = senderName,
-                senderAvatar = senderAvatar
+                senderAvatar = senderAvatar,
+                attachmentId = attachmentUrl?.takeIf { it.startsWith("cloud:") }?.removePrefix("cloud:")
             )
         }
         return api.sendMessage(
@@ -86,6 +109,10 @@ class ChatRepository(
 
     suspend fun uploadFile(fileName: String, mimeType: String, bytes: ByteArray, uploaderId: String) =
         api.uploadFile(fileName, mimeType, bytes, uploaderId)
+
+    suspend fun uploadCloudAttachment(fileName: String, mimeType: String, bytes: ByteArray): Result<ChatModels.UploadedFile> =
+        cloudRepository?.uploadAttachment(fileName, mimeType, bytes)
+            ?: Result.failure(IllegalStateException("Cloud chat is not configured"))
 
     suspend fun reactToMessage(chatId: String, messageId: String, emoji: String, userId: String) =
         api.reactToMessage(chatId, messageId, emoji, userId)

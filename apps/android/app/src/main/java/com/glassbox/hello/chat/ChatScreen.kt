@@ -18,6 +18,7 @@ import com.glassbox.hello.attachments.SharedFilesScreen
 import com.glassbox.hello.attachments.SharedLinksScreen
 import com.glassbox.hello.attachments.SharedMediaScreen
 import com.glassbox.hello.auth.AuthScreen
+import com.glassbox.hello.auth.CloudSessionManager
 import com.glassbox.hello.calls.CallViewModel
 import com.glassbox.hello.core.SessionManager
 import com.glassbox.hello.core.User
@@ -33,11 +34,13 @@ fun ChatScreen(
     onOpenSettings: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    var currentUser by remember { mutableStateOf<User?>(sessionManager.getCurrentUser()) }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val cloudSessionManager = remember { CloudSessionManager(context) }
+    var currentUser by remember { mutableStateOf<User?>(sessionManager.getCurrentUser() ?: cloudSessionManager.cachedUser()) }
     var route by remember { mutableStateOf<ChatRoute>(ChatRoute.List) }
 
     LaunchedEffect(logoutToken) {
-        currentUser = sessionManager.getCurrentUser()
+        currentUser = sessionManager.getCurrentUser() ?: cloudSessionManager.cachedUser()
         route = ChatRoute.List
     }
 
@@ -50,6 +53,7 @@ fun ChatScreen(
         AuthScreen(
             onAuthSuccess = { authenticated ->
                 sessionManager.saveCurrentUser(authenticated)
+                cloudSessionManager.save(authenticated)
                 currentUser = authenticated
                 route = ChatRoute.List
             },
@@ -62,6 +66,7 @@ fun ChatScreen(
         ChatRoute.List -> {
             ChatListScreen(
                 currentUserId = user.id,
+                currentUserName = user.name,
                 onOpenSettings = onOpenSettings,
                 onChatSelected = { chat -> route = ChatRoute.Room(chat) },
                 modifier = modifier

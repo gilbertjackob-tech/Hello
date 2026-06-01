@@ -24,5 +24,6 @@ object AppConfig {
     const val HELLO_STATUS_URL = "$SERVER_ORIGIN/api/hello/status"
     const val HELLO_HEALTH_URL = "$SERVER_ORIGIN/hello/api/health"
     const val HELLO_WEB_URL = "$SERVER_ORIGIN/hello"
+    const val ENABLE_PC_CALL_SIGNALING = false
     val WEBRTC_FORCE_RELAY: Boolean = BuildConfig.WEBRTC_FORCE_RELAY
 }

@@ -18,6 +18,7 @@ object UrlResolver {
             else -> "/hello/uploads/$value"
         }
         val origin = when {
+            path.startsWith("/api/chat/") -> AppConfig.CHAT_CLOUD_BASE_URL
             path.startsWith("/hello/api/drive/") -> AppConfig.DRIVE_SERVER_ORIGIN
             else -> AppConfig.CHAT_SERVER_ORIGIN
         }

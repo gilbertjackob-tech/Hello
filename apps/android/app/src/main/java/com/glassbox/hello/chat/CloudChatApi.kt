@@ -59,6 +59,22 @@ class CloudChatApi {
         gson.fromJson(response, type)
     }
 
+    suspend fun fetchUsers(query: String? = null): Result<List<ChatModels.User>> = safeCloudCall {
+        val path = if (query.isNullOrBlank()) {
+            "/api/users"
+        } else {
+            "/api/users?q=${encode(query)}"
+        }
+        val response = getWithFallback(path)
+        val type = object : TypeToken<List<ChatModels.User>>() {}.type
+        gson.fromJson(response, type)
+    }
+
+    suspend fun fetchUser(userId: String): Result<ChatModels.User> = safeCloudCall {
+        val response = getWithFallback("/api/users/${encode(userId)}")
+        gson.fromJson(response, ChatModels.User::class.java)
+    }
+
     suspend fun fetchMessages(conversationId: String, limit: Int? = null, offset: Int? = null): Result<List<ChatModels.Message>> = safeCloudCall {
         val query = buildString {
             if (limit != null || offset != null) {
@@ -80,7 +96,8 @@ class CloudChatApi {
         text: String,
         senderId: String,
         senderName: String,
-        senderAvatar: String?
+        senderAvatar: String?,
+        attachmentId: String? = null
     ): Result<ChatModels.Message> = safeCloudCall {
         val response = postWithFallback(
             "/api/chat/conversations/${encode(conversationId)}/messages",
@@ -88,7 +105,8 @@ class CloudChatApi {
                 "text" to text,
                 "senderId" to senderId,
                 "senderName" to senderName,
-                "senderAvatar" to senderAvatar
+                "senderAvatar" to senderAvatar,
+                "attachmentId" to attachmentId
             ).filterValues { it != null }
         )
         gson.fromJson(response, ChatModels.Message::class.java)

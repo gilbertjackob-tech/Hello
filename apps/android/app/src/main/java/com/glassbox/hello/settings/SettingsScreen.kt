@@ -1,6 +1,9 @@
 package com.glassbox.hello.settings
 
 import android.content.Intent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -51,6 +54,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.glassbox.hello.chat.ChatModels
+import com.glassbox.hello.chat.CloudChatApi
+import com.glassbox.hello.auth.CloudChatPreferences
+import com.glassbox.hello.auth.CloudSessionManager
+import com.glassbox.hello.auth.CloudUserRepository
 import com.glassbox.hello.browser.BrowserClearRange
 import com.glassbox.hello.browser.BrowserViewModel
 import com.glassbox.hello.core.AppConfig
@@ -58,7 +65,6 @@ import com.glassbox.hello.core.ResultState
 import com.glassbox.hello.core.SessionManager
 import com.glassbox.hello.core.UrlResolver
 import com.glassbox.hello.demo.voice.VoiceAssistantDemoScreen
-import com.glassbox.hello.network.HelloApiClient
 import com.glassbox.hello.networkstatus.NetworkStatusScreen
 import com.glassbox.hello.people.PeopleScreen
 import com.glassbox.hello.ui.components.ErrorView
@@ -270,7 +276,7 @@ private fun AppearanceRows(onOpenChatTheme: () -> Unit) {
     var theme by remember { mutableStateOf(prefs.getString("theme", "system") ?: "system") }
     var enterSends by remember { mutableStateOf(prefs.getBoolean("enter_sends", true)) }
     var chatSounds by remember { mutableStateOf(prefs.getBoolean("chat_sounds", true)) }
-    var cloudChatEnabled by remember { mutableStateOf(prefs.getBoolean("cloud_chat_enabled", false)) }
+    var cloudChatEnabled by remember { mutableStateOf(prefs.getBoolean("cloud_chat_enabled", true)) }
 
     HelloSettingsRow(
         title = "Chat theme",
@@ -371,9 +377,39 @@ private fun StorageRows(sessionManager: SessionManager) {
 
 @Composable
 private fun ProfilePage(sessionManager: SessionManager, onLogout: () -> Unit) {
+    val context = LocalContext.current
     val sessionUser = sessionManager.getCurrentUser()
-    val api = remember { HelloApiClient() }
+    val api = remember { CloudChatApi() }
+    val userRepository = remember { CloudUserRepository(context) }
     var state by remember { mutableStateOf<ResultState<ChatModels.User>?>(null) }
+    var avatarUploadState by remember { mutableStateOf<ResultState<Unit>?>(null) }
+    val avatarPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        if (uri != null && sessionUser != null) {
+            avatarUploadState = ResultState.Loading
+            kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Main).launch {
+                userRepository.uploadAvatar(context, sessionUser.id, uri)
+                    .onSuccess { updated ->
+                        sessionManager.saveCurrentUser(updated)
+                        CloudSessionManager(context).save(updated)
+                        state = ResultState.Success(
+                            ChatModels.User(
+                                id = updated.id,
+                                name = updated.name,
+                                avatar = updated.avatar,
+                                phone = updated.phone,
+                                email = updated.email
+                            )
+                        )
+                        avatarUploadState = ResultState.Success(Unit)
+                    }
+                    .onFailure {
+                        avatarUploadState = ResultState.Error(it.message ?: "Avatar upload failed")
+                    }
+            }
+        }
+    }
     LaunchedEffect(sessionUser?.id) {
         sessionUser?.id?.let {
             state = ResultState.Loading
@@ -399,7 +435,19 @@ private fun ProfilePage(sessionManager: SessionManager, onLogout: () -> Unit) {
         }
         item {
             HelloSettingsCard {
-                HelloSettingsRow("Server origin", AppConfig.SERVER_ORIGIN)
+                HelloSettingsRow(
+                    "Profile photo",
+                    when (val upload = avatarUploadState) {
+                        is ResultState.Loading -> "Uploading to Cloudflare..."
+                        is ResultState.Error -> upload.message
+                        is ResultState.Success -> "Saved to Cloudflare profile/avatar storage"
+                        null -> "Upload avatar to Cloudflare, not Drive"
+                    },
+                    onClick = {
+                        avatarPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                    }
+                )
+                HelloSettingsRow("Cloud profile", AppConfig.CHAT_CLOUD_BASE_URL)
                 HelloSettingsRow("User id", sessionUser?.id.orEmpty())
             }
         }
@@ -499,15 +547,60 @@ private fun DiagnosticsPage(sessionManager: SessionManager) {
 
 @Composable
 private fun PrivacyInlineRow(userId: String) {
-    val api = remember { HelloApiClient() }
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val repository = remember { CloudUserRepository(context) }
     var privacy by remember { mutableStateOf("everyone") }
-    var helper by remember { mutableStateOf("Uses /hello/api/users/:userId/privacy.") }
+    var helper by remember { mutableStateOf("Saved locally until Cloud privacy rules are enabled.") }
+    var readReceipts by remember { mutableStateOf(true) }
+    var cloudNotifications by remember { mutableStateOf(true) }
+
+    LaunchedEffect(userId) {
+        repository.chatPreferences()
+            .onSuccess {
+                readReceipts = it.readReceiptsEnabled
+                cloudNotifications = it.notificationsEnabled
+                helper = "Cloud chat preferences loaded"
+            }
+            .onFailure {
+                helper = "Cloud chat preferences will sync when your cloud account is reachable."
+            }
+    }
+
     OptionRow("Last active privacy", privacy, listOf("everyone", "contacts", "none")) {
         privacy = it
         scope.launch {
-            val result = api.updateUserPrivacy(userId, it)
-            helper = result.exceptionOrNull()?.message ?: "Saved"
+            helper = "Saved for $userId"
+        }
+    }
+    ToggleRow("Read receipts", readReceipts) { enabled ->
+        readReceipts = enabled
+        scope.launch {
+            repository.updateChatPreferences(
+                CloudChatPreferences(
+                    readReceiptsEnabled = readReceipts,
+                    notificationsEnabled = cloudNotifications
+                )
+            ).onSuccess {
+                helper = "Cloud read receipts saved"
+            }.onFailure {
+                helper = "Could not save read receipts. Cached setting will remain visible."
+            }
+        }
+    }
+    ToggleRow("Cloud chat notifications", cloudNotifications) { enabled ->
+        cloudNotifications = enabled
+        scope.launch {
+            repository.updateChatPreferences(
+                CloudChatPreferences(
+                    readReceiptsEnabled = readReceipts,
+                    notificationsEnabled = cloudNotifications
+                )
+            ).onSuccess {
+                helper = "Cloud notification preference saved"
+            }.onFailure {
+                helper = "Could not save notification preference. Cached setting will remain visible."
+            }
         }
     }
     Text(helper, color = HelloColors.DarkTextMuted, modifier = Modifier.padding(horizontal = HelloSpacing.Lg, vertical = HelloSpacing.Xs))

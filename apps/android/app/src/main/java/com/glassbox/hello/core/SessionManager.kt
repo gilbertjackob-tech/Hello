@@ -12,7 +12,8 @@ data class User(
     val phone: String? = null,
     val email: String? = null,
     val securityQuestion: String? = null,
-    val securityAnswer: String? = null
+    val securityAnswer: String? = null,
+    val sessionToken: String? = null
 )
 
 /**

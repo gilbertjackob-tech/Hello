@@ -21,6 +21,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -30,7 +31,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
+import com.glassbox.hello.auth.CloudAuthApi
+import com.glassbox.hello.auth.CloudSessionManager
 import com.glassbox.hello.core.AppConfig
+import com.glassbox.hello.familydrive.FamilyDrivePendingStore
 import com.glassbox.hello.ui.components.HelloIconButton
 import com.glassbox.hello.ui.components.HelloPanel
 import com.glassbox.hello.ui.components.HelloPill
@@ -66,7 +70,10 @@ fun NetworkStatusScreen(
     var checkedUrl by remember { mutableStateOf(AppConfig.HELLO_STATUS_URL) }
     var diagnosticText by remember { mutableStateOf("Not checked yet") }
     var cloudChatDiagnostic by remember { mutableStateOf("Cloud chat not checked yet") }
+    var cloudChatOnline by remember { mutableStateOf(false) }
+    var cloudAccountStatus by remember { mutableStateOf("Checking") }
     var vpnToggleMessage by remember { mutableStateOf<String?>(null) }
+    val pendingUploads by FamilyDrivePendingStore.getInstance(context).observeActive().collectAsState(initial = emptyList())
 
     fun checkNetworkStatus() {
         coroutineScope.launch {
@@ -74,16 +81,27 @@ fun NetworkStatusScreen(
             checkedUrl = AppConfig.HELLO_STATUS_URL
             diagnosticText = "Checking..."
             cloudChatDiagnostic = "Checking cloud chat..."
+            cloudAccountStatus = "Checking"
             try {
                 val result = withContext(Dispatchers.IO) { checkHelloStatus() }
                 val cloudResult = withContext(Dispatchers.IO) { checkCloudChatNetwork() }
+                val token = CloudSessionManager(context).token()
+                val cloudAccountResult = if (token.isNullOrBlank()) {
+                    "Cached only"
+                } else {
+                    CloudAuthApi().me(token)
+                        .fold(onSuccess = { "Online: ${it.name}" }, onFailure = { "Offline: cached session" })
+                }
                 checkedUrl = result.checkedUrl
                 diagnosticText = result.detail
                 cloudChatDiagnostic = "${cloudResult.detail}\n${cloudResult.checkedUrl}"
+                cloudChatOnline = cloudResult.status == NetworkStatus.Connected || cloudResult.status == NetworkStatus.HelloApiReachable
+                cloudAccountStatus = cloudAccountResult
                 networkStatus = result.status
             } catch (e: Exception) {
                 checkedUrl = AppConfig.HELLO_STATUS_URL
                 diagnosticText = e.message ?: "Unknown error"
+                cloudAccountStatus = "Offline: cached session"
                 networkStatus = NetworkStatus.Offline
             }
         }
@@ -119,7 +137,7 @@ fun NetworkStatusScreen(
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         HelloTopBar(
-            eyebrow = "FAMILY NETWORK",
+            eyebrow = "SERVICE STATUS",
             title = "Network",
             modifier = Modifier.padding(top = HelloSpacing.Sm, bottom = HelloSpacing.Md)
         ) {
@@ -152,13 +170,7 @@ fun NetworkStatusScreen(
                     tint = if (networkStatus == NetworkStatus.Offline || networkStatus == NetworkStatus.Error) HelloColors.DarkDanger else HelloColors.DarkAccent
                 )
                 Text(
-                    text = when (networkStatus) {
-                        NetworkStatus.Checking -> "Checking..."
-                        NetworkStatus.Connected -> "Family Network Connected"
-                        NetworkStatus.HelloApiReachable -> "Hello API Reachable"
-                        NetworkStatus.Offline -> "Family Network Off / Server Unreachable"
-                        NetworkStatus.Error -> "Server Unreachable"
-                    },
+                    text = "Cloud Account: $cloudAccountStatus\nCloud Chat: ${if (cloudChatOnline) "Online" else "Offline"}\nPC Drive: ${pcDriveLabel(networkStatus, pendingUploads.size)}",
                     color = HelloColors.DarkText,
                     textAlign = TextAlign.Center
                 )
@@ -183,8 +195,8 @@ fun NetworkStatusScreen(
 
         HelloSettingsCard {
             HelloSettingsRow(
-                title = "Device VPN switch",
-                subtitle = "Turn Tailscale on or off from inside Hello.",
+                title = "PC Drive network",
+                subtitle = "Optional. Chat and app startup do not depend on this.",
                 onClick = {
                     requestVpnStateChange(networkStatus != NetworkStatus.Connected && networkStatus != NetworkStatus.HelloApiReachable)
                 },
@@ -214,15 +226,16 @@ fun NetworkStatusScreen(
             )
             HelloSettingsRow(
                 title = "Open Tailscale app",
-                subtitle = "Open the official app if Android requires confirmation.",
+                subtitle = "Only needed for PC Drive uploads while away from home.",
                 onClick = { TailscaleHelper.openTailscale(context) }
             )
-            HelloSettingsRow(title = "Server origin", subtitle = AppConfig.SERVER_ORIGIN)
-            HelloSettingsRow(title = "Status endpoint", subtitle = AppConfig.HELLO_STATUS_URL)
-            HelloSettingsRow(title = "Health endpoint", subtitle = AppConfig.HELLO_HEALTH_URL)
-            HelloSettingsRow(title = "Cloud chat", subtitle = AppConfig.CHAT_CLOUD_BASE_URL)
+            HelloSettingsRow(title = "Cloud Chat", subtitle = if (cloudChatOnline) "Online" else "Offline")
+            HelloSettingsRow(title = "Cloud Account", subtitle = cloudAccountStatus)
             HelloSettingsRow(title = "Cloud chat health", subtitle = cloudChatDiagnostic)
             HelloSettingsRow(title = "Cloud chat fallback", subtitle = AppConfig.CHAT_CLOUD_FALLBACK_URL)
+            HelloSettingsRow(title = "PC Drive", subtitle = pcDriveLabel(networkStatus, pendingUploads.size))
+            HelloSettingsRow(title = "PC Drive backend", subtitle = AppConfig.DRIVE_SERVER_ORIGIN)
+            HelloSettingsRow(title = "PC Drive health", subtitle = AppConfig.HELLO_HEALTH_URL)
         }
     }
 
@@ -262,6 +275,15 @@ private fun checkHelloStatus(): ProbeResult {
         checkedUrl = "${AppConfig.HELLO_STATUS_URL}\n${AppConfig.HELLO_HEALTH_URL}",
         detail = "Status failed: ${statusProbe.detail}\nHealth failed: ${healthProbe.detail}"
     )
+}
+
+private fun pcDriveLabel(status: NetworkStatus, pendingCount: Int): String {
+    val base = when (status) {
+        NetworkStatus.Checking -> "Checking"
+        NetworkStatus.Connected, NetworkStatus.HelloApiReachable -> "Online"
+        else -> "Offline"
+    }
+    return if (pendingCount > 0) "$base / $pendingCount pending uploads" else base
 }
 
 private fun probeJsonOk(urlText: String): ProbeResult {

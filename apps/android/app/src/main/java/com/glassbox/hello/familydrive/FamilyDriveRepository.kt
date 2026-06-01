@@ -4,8 +4,6 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.provider.OpenableColumns
-import com.glassbox.hello.network.HelloApi
-import com.glassbox.hello.network.HelloApiClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
@@ -14,7 +12,7 @@ import java.util.Date
 import java.util.Locale
 
 class FamilyDriveRepository(
-    private val api: HelloApi = HelloApiClient()
+    private val api: DrivePcApi = DrivePcApiClient()
 ) {
     suspend fun fetchItems(limit: Int = 60, before: Long? = null): Result<DriveItemsResponse> {
         return api.fetchDriveItems(limit = limit, before = before)

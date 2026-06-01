@@ -69,6 +69,7 @@ object ChatModels {
     )
 
     data class UploadedFile(
+        @SerializedName("id") val id: String? = null,
         @SerializedName("url") val url: String,
         @SerializedName("mimeType") val mimeType: String,
         @SerializedName("originalName") val originalName: String,

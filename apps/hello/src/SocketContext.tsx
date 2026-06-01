@@ -5,6 +5,7 @@ import { User } from './types';
 const env = (import.meta as any).env || {};
 const CHAT_SOCKET_ORIGIN = env.VITE_CHAT_SOCKET_ORIGIN || window.location.origin;
 const CHAT_SOCKET_PATH = env.VITE_CHAT_SOCKET_PATH || "/hello/socket.io";
+const ENABLE_PC_SOCKET = env.VITE_ENABLE_PC_SOCKET === "true";
 
 interface SocketContextType {
   socket: Socket | null;
@@ -20,6 +21,12 @@ export const SocketProvider = ({ children, currentUser }: { children: ReactNode;
   const [isConnected, setIsConnected] = useState(false);
 
   useEffect(() => {
+    if (!ENABLE_PC_SOCKET) {
+      setSocket(null);
+      setIsConnected(false);
+      return;
+    }
+
     const socketInstance = io(CHAT_SOCKET_ORIGIN, {
         path: CHAT_SOCKET_PATH,
         transports: ["websocket", "polling"],

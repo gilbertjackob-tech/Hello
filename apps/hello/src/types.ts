@@ -13,6 +13,7 @@ export interface User {
   lastActive?: number;
   securityQuestion?: string;
   securityAnswer?: string;
+  sessionToken?: string;
 }
 
 export interface Contact {

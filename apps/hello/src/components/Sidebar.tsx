@@ -39,8 +39,11 @@ import {
   fetchStarredMessages,
   fetchUsers,
   createDirectChat,
-  CHAT_API_BASE,
   CALL_API_BASE,
+  upsertCloudChatUser,
+  uploadCloudUserAvatar,
+  fetchCloudContacts,
+  addCloudContact,
 } from "../api";
 import { cn, formatLastActive } from "../lib/utils";
 import { useTheme } from "../ThemeContext";
@@ -194,6 +197,27 @@ export function Sidebar({
   useEffect(() => {
     localStorage.setItem("whatsclone_contacts", JSON.stringify(contacts));
   }, [contacts]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchCloudContacts()
+      .then((cloudContacts) => {
+        if (cancelled) return;
+        setContacts(cloudContacts.map((user) => ({
+          id: user.id,
+          name: user.name,
+          avatar: user.avatar,
+          phone: user.phone,
+          isBlocked: false,
+        })));
+      })
+      .catch((err) => {
+        console.warn("Using cached local contacts", err);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUser.id]);
 
   useEffect(() => {
     localStorage.setItem(
@@ -369,18 +393,31 @@ export function Sidebar({
     }
   };
 
-  const handleCreateContact = (e: FormEvent) => {
+  const handleCreateContact = async (e: FormEvent) => {
     e.preventDefault();
     if (newContactName.trim() && newContactPhone.trim()) {
-      setContacts([
-        ...contacts,
-        {
-          id: "c" + Date.now(),
-          name: newContactName,
-          phone: newContactPhone,
-          isBlocked: false,
-        },
-      ]);
+      const localContact = {
+        id: "c" + Date.now(),
+        name: newContactName,
+        phone: newContactPhone,
+        isBlocked: false,
+      };
+      try {
+        const cloudContact = await addCloudContact({ name: newContactName });
+        setContacts([
+          ...contacts,
+          {
+            id: cloudContact.id,
+            name: cloudContact.name,
+            avatar: cloudContact.avatar,
+            phone: cloudContact.phone || newContactPhone,
+            isBlocked: false,
+          },
+        ]);
+      } catch (err) {
+        console.warn("Contact saved locally until cloud user exists", err);
+        setContacts([...contacts, localContact]);
+      }
       setShowAddContact(false);
       setNewContactName("");
       setNewContactPhone("");
@@ -732,29 +769,8 @@ export function Sidebar({
     setIsSavingAvatar(true);
     try {
       const croppedFile = await buildCroppedAvatarFile();
-      const { uploadFile } = await import("../api");
-      const data = await uploadFile(croppedFile, currentUser.id);
-      const newAvatarUrl = data.url;
-
-      const res = await fetch(`${CHAT_API_BASE}/users/${currentUser.id}/profile`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ avatar: newAvatarUrl }),
-      });
-      if (res.status === 404) {
-        localStorage.removeItem("whatsclone_user_real");
-        pushToast({
-          title: "This local profile no longer exists",
-          description: "Register again to continue.",
-          tone: "warning",
-          durationMs: 4200,
-        });
-        onUpdateUser(null);
-        return;
-      }
-      if (!res.ok) throw new Error("Failed to update profile avatar on server");
-
-      const updatedUser = await res.json();
+      const updatedUser = await uploadCloudUserAvatar(currentUser.id, croppedFile);
+      const newAvatarUrl = updatedUser.avatar;
       const nextUser = { ...currentUser, ...updatedUser, avatar: newAvatarUrl };
       localStorage.setItem("whatsclone_user_real", JSON.stringify(nextUser));
       onUpdateUser(nextUser);
@@ -1119,29 +1135,8 @@ export function Sidebar({
                 }
                 onBlur={async (e) => {
                    try {
-                     const res = await fetch(`${CHAT_API_BASE}/users/${currentUser.id}/profile`, {
-                        method: "PUT",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ name: e.target.value })
-                     });
-                     if (res.status === 404) {
-                       localStorage.removeItem("whatsclone_user_real");
-                       pushToast({
-                         title: "This local profile no longer exists",
-                         description: "Register again to continue.",
-                         tone: "warning",
-                       });
-                       onUpdateUser(null);
-                     } else if (!res.ok) {
-                       console.error("Failed to update name on server");
-                       pushToast({
-                         title: "Profile name update failed",
-                         description: "Please try again.",
-                         tone: "error",
-                       });
-                     } else {
-                       pushToast({ title: "Profile name updated", tone: "success" });
-                     }
+                     await upsertCloudChatUser({ ...currentUser, name: e.target.value });
+                     pushToast({ title: "Profile name updated", tone: "success" });
                    } catch (err) {
                      console.error("Failed to update name", err);
                      pushToast({

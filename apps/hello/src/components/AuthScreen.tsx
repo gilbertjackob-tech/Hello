@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { User } from "../types";
+import { fetchCloudUserQuestion, loginCloudUser, registerCloudUser } from "../api";
 
 interface AuthScreenProps {
   onAuthSuccess: (user: User) => void;
@@ -43,19 +44,13 @@ export function AuthScreen({ onAuthSuccess }: AuthScreenProps) {
     setLoading(true);
 
     try {
-      const res = await fetch(
-        `/hello/api/user-question?name=${encodeURIComponent(name)}`,
-      );
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || "User not found");
-      }
-      setFetchedQuestion(data.securityQuestion);
+      const question = await fetchCloudUserQuestion(name);
+      setFetchedQuestion(question);
       setStep("question");
       localStorage.setItem("whatsclone_last_username", name);
     } catch (err: any) {
       setError(err.message);
-      if (err.message === "User not found") {
+      if (err.message === "User not found" || err.message === "User needs registration") {
         setMode("register");
       }
     } finally {
@@ -69,13 +64,7 @@ export function AuthScreen({ onAuthSuccess }: AuthScreenProps) {
     setLoading(true);
 
     try {
-      const res = await fetch("/hello/api/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, securityAnswer }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Login failed");
+      const data = await loginCloudUser({ name, securityAnswer });
       onAuthSuccess(data);
     } catch (err: any) {
       setError(err.message);
@@ -90,13 +79,7 @@ export function AuthScreen({ onAuthSuccess }: AuthScreenProps) {
     setLoading(true);
 
     try {
-      const res = await fetch("/hello/api/register", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, securityQuestion, securityAnswer }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Registration failed");
+      const data = await registerCloudUser({ name, securityQuestion, securityAnswer });
       localStorage.setItem("whatsclone_last_username", name.trim());
       onAuthSuccess(data);
     } catch (err: any) {

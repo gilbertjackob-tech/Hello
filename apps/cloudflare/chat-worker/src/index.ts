@@ -11,6 +11,7 @@ type JsonObject = { [key: string]: JsonValue };
 const ATTACHMENT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const PENDING_ATTACHMENT_USER_ID = "system_attachment_upload";
 const PENDING_ATTACHMENT_CONVERSATION_ID = "system_attachment_uploads";
+let cloudSchemaReady: Promise<void> | null = null;
 
 function json(body: JsonValue, init: ResponseInit = {}): Response {
   const headers = new Headers(init.headers);
@@ -50,10 +51,310 @@ function asStringList(value: JsonValue | undefined): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
 
-async function userFor(env: Env, userId: string): Promise<any> {
+function asBoolean(value: JsonValue | undefined, fallback = false): boolean {
+  return typeof value === "boolean" ? value : fallback;
+}
+
+function bearerToken(request: Request): string {
+  const header = request.headers.get("authorization") || "";
+  const match = header.match(/^Bearer\s+(.+)$/i);
+  return match?.[1]?.trim() || "";
+}
+
+function normalizeSecurityAnswer(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+async function sha256Hex(value: string): Promise<string> {
+  const data = new TextEncoder().encode(value);
+  const digest = await crypto.subtle.digest("SHA-256", data);
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function randomToken(): string {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+async function hashSecurityAnswer(answer: string, salt = randomToken()): Promise<{ hash: string; salt: string }> {
+  return {
+    salt,
+    hash: await sha256Hex(`${salt}:${normalizeSecurityAnswer(answer)}`),
+  };
+}
+
+function publicUser(row: any): JsonObject {
+  const name = row.displayName || row.name || row.display_name || row.id;
+  const avatar = row.avatarUrl || row.avatar || row.avatar_url || null;
+  return {
+    id: row.id,
+    name,
+    displayName: name,
+    username: row.username || null,
+    phone: row.phone || null,
+    email: row.email || null,
+    avatar,
+    avatarUrl: avatar,
+    about: row.about || null,
+    status: row.profileStatus || row.profile_status || null,
+    updatedAt: row.updatedAt || row.updated_at || null,
+    online: false,
+  };
+}
+
+async function userProfileFor(env: Env, userId: string): Promise<any> {
   return env.DB.prepare(
-    "SELECT id, display_name AS name, avatar_url AS avatar FROM users WHERE id = ?",
-  ).bind(userId).first();
+    `
+      SELECT u.id,
+        COALESCE(p.display_name, u.display_name) AS displayName,
+        p.username,
+        p.phone,
+        p.email,
+        COALESCE(p.avatar_url, u.avatar_url) AS avatarUrl,
+        p.about,
+        p.profile_status AS profileStatus,
+        COALESCE(p.updated_at, u.updated_at) AS updatedAt
+      FROM users u
+      LEFT JOIN user_profiles p ON p.user_id = u.id
+      WHERE u.id = ?
+    `,
+  ).bind(userId).first<any>();
+}
+
+async function ensureUserProfile(env: Env, userId: string, displayName: string, avatarUrl?: string | null): Promise<void> {
+  const now = Date.now();
+  await env.DB.prepare(
+    `
+      INSERT INTO user_profiles (user_id, display_name, avatar_url, updated_at)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(user_id) DO UPDATE SET
+        display_name = COALESCE(excluded.display_name, user_profiles.display_name),
+        avatar_url = COALESCE(excluded.avatar_url, user_profiles.avatar_url),
+        updated_at = excluded.updated_at
+    `,
+  ).bind(userId, displayName || null, avatarUrl || null, now).run();
+}
+
+async function createSession(env: Env, userId: string, body: JsonObject = {}): Promise<{ token: string; session: JsonObject }> {
+  const now = Date.now();
+  const token = randomToken();
+  const sessionId = randomId("sess");
+  const device = body.device && typeof body.device === "object" && !Array.isArray(body.device)
+    ? body.device as JsonObject
+    : {};
+  const deviceId = asString(body.deviceId || device.id) || randomId("dev");
+  const deviceName = asString(body.deviceName || device.name, "");
+  const platform = asString(body.platform || device.platform, "");
+  const expiresAt = now + 90 * 24 * 60 * 60 * 1000;
+  await env.DB.prepare(
+    `
+      INSERT INTO devices (id, user_id, name, platform, created_at, last_seen_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        user_id = excluded.user_id,
+        name = COALESCE(NULLIF(excluded.name, ''), devices.name),
+        platform = COALESCE(NULLIF(excluded.platform, ''), devices.platform),
+        last_seen_at = excluded.last_seen_at
+    `,
+  ).bind(deviceId, userId, deviceName || null, platform || null, now, now).run();
+  await env.DB.prepare(
+    `
+      INSERT INTO sessions (id, user_id, token_hash, device_id, created_at, expires_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `,
+  ).bind(sessionId, userId, await sha256Hex(token), deviceId, now, expiresAt).run();
+  return {
+    token,
+    session: { id: sessionId, userId, deviceId, createdAt: now, expiresAt },
+  };
+}
+
+async function authenticatedUser(env: Env, request: Request): Promise<{ userId: string; sessionId: string } | null> {
+  const token = bearerToken(request);
+  if (!token) return null;
+  const now = Date.now();
+  const row = await env.DB.prepare(
+    `
+      SELECT id, user_id AS userId
+      FROM sessions
+      WHERE token_hash = ?
+        AND revoked_at IS NULL
+        AND (expires_at IS NULL OR expires_at > ?)
+    `,
+  ).bind(await sha256Hex(token), now).first<any>();
+  return row ? { userId: row.userId, sessionId: row.id } : null;
+}
+
+async function requireAuth(env: Env, request: Request): Promise<{ userId: string; sessionId: string } | Response> {
+  const auth = await authenticatedUser(env, request);
+  return auth || json({ ok: false, error: "Unauthorized" }, { status: 401 });
+}
+
+async function ensureColumn(env: Env, table: string, column: string, definition: string): Promise<void> {
+  const info = await env.DB.prepare(`PRAGMA table_info(${table})`).all<any>();
+  const hasColumn = (info.results || []).some((row: any) => row.name === column);
+  if (!hasColumn) {
+    await env.DB.prepare(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`).run();
+  }
+}
+
+async function ensureCloudAccountSchema(env: Env): Promise<void> {
+  if (!cloudSchemaReady) {
+    cloudSchemaReady = (async () => {
+      await ensureColumn(env, "users", "security_question", "TEXT").catch(() => undefined);
+      await ensureColumn(env, "users", "security_answer", "TEXT").catch(() => undefined);
+      await ensureColumn(env, "users", "security_answer_hash", "TEXT").catch(() => undefined);
+      await ensureColumn(env, "users", "security_answer_salt", "TEXT").catch(() => undefined);
+      await env.DB.prepare(
+        `
+          CREATE TABLE IF NOT EXISTS sessions (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            token_hash TEXT NOT NULL UNIQUE,
+            device_id TEXT,
+            created_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
+            expires_at INTEGER,
+            revoked_at INTEGER
+          )
+        `,
+      ).run();
+      await env.DB.prepare(
+        `
+          CREATE TABLE IF NOT EXISTS devices (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            name TEXT,
+            platform TEXT,
+            created_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
+            last_seen_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
+          )
+        `,
+      ).run();
+      await env.DB.prepare(
+        `
+          CREATE TABLE IF NOT EXISTS contacts (
+            owner_user_id TEXT NOT NULL,
+            contact_user_id TEXT NOT NULL,
+            alias TEXT,
+            created_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
+            updated_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
+            PRIMARY KEY (owner_user_id, contact_user_id)
+          )
+        `,
+      ).run();
+      await env.DB.prepare(
+        `
+          CREATE TABLE IF NOT EXISTS user_profiles (
+            user_id TEXT PRIMARY KEY,
+            display_name TEXT,
+            username TEXT,
+            phone TEXT,
+            email TEXT,
+            avatar_url TEXT,
+            about TEXT,
+            profile_status TEXT,
+            updated_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
+          )
+        `,
+      ).run();
+      await env.DB.prepare(
+        `
+          CREATE TABLE IF NOT EXISTS user_chat_preferences (
+            user_id TEXT PRIMARY KEY,
+            read_receipts_enabled INTEGER NOT NULL DEFAULT 1,
+            notifications_enabled INTEGER NOT NULL DEFAULT 1,
+            updated_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
+          )
+        `,
+      ).run();
+      await env.DB.prepare(
+        `
+          CREATE TABLE IF NOT EXISTS conversation_preferences (
+            user_id TEXT NOT NULL,
+            conversation_id TEXT NOT NULL,
+            muted_until INTEGER,
+            pinned INTEGER NOT NULL DEFAULT 0,
+            archived INTEGER NOT NULL DEFAULT 0,
+            updated_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
+            PRIMARY KEY (user_id, conversation_id)
+          )
+        `,
+      ).run();
+    })();
+  }
+  return cloudSchemaReady;
+}
+
+async function userFor(env: Env, userId: string): Promise<any> {
+  const row = await userProfileFor(env, userId);
+  return row ? publicUser(row) : null;
+}
+
+async function getChatUser(env: Env, userId: string): Promise<Response> {
+  const user = await userFor(env, userId);
+  if (!user) return json({ ok: false, error: "User not found" }, { status: 404 });
+  return json({
+    ...user,
+    online: false,
+    privacy: "everyone",
+  });
+}
+
+async function uploadUserAvatar(env: Env, request: Request, pathUserId = ""): Promise<Response> {
+  const authenticated = await authenticatedUser(env, request);
+  const form = await request.formData();
+  const userId = (pathUserId || asString((form.get("userId") as string | null) || "")).trim();
+  const fileEntry = form.get("file");
+  if (!userId) return badRequest("userId is required");
+  if (authenticated && authenticated.userId !== userId) {
+    return json({ ok: false, error: "Cannot update another user avatar" }, { status: 403 });
+  }
+  if (!fileEntry || typeof fileEntry === "string") return badRequest("file is required");
+
+  const file = fileEntry as File;
+  if (!file.type.startsWith("image/")) return badRequest("avatar must be an image");
+
+  const extension = file.name.includes(".") ? file.name.split(".").pop() : "jpg";
+  const key = `avatars/${userId}/profile.${extension}`;
+  await env.TEMP_FILES.put(key, file.stream(), {
+    httpMetadata: { contentType: file.type || "image/jpeg" },
+  });
+
+  const url = new URL(request.url);
+  const avatarUrl = `${url.origin}/api/users/${encodeURIComponent(userId)}/avatar`;
+  const now = Date.now();
+  await env.DB.prepare(
+    `
+      UPDATE users
+      SET avatar_url = ?, updated_at = ?
+      WHERE id = ?
+    `,
+  ).bind(avatarUrl, now, userId).run();
+  await ensureUserProfile(env, userId, "", avatarUrl);
+
+  const user = await userFor(env, userId);
+  if (!user) return json({ ok: false, error: "User not found" }, { status: 404 });
+  return json({
+    id: user.id,
+    name: user.name,
+    avatar: avatarUrl,
+    avatarUrl,
+  });
+}
+
+async function fetchUserAvatar(env: Env, userId: string): Promise<Response> {
+  const prefix = `avatars/${userId}/`;
+  const listed = await env.TEMP_FILES.list({ prefix, limit: 1 });
+  const key = listed.objects[0]?.key;
+  if (!key) return notFound(`/api/chat/users/${userId}/avatar`);
+  const object = await env.TEMP_FILES.get(key);
+  if (!object) return notFound(`/api/chat/users/${userId}/avatar`);
+  const headers = new Headers();
+  object.writeHttpMetadata(headers);
+  headers.set("cache-control", "public, max-age=3600");
+  headers.set("access-control-allow-origin", "*");
+  return new Response(object.body, { headers });
 }
 
 async function conversationFor(env: Env, conversationId: string, viewerId?: string): Promise<JsonObject | null> {
@@ -175,7 +476,348 @@ async function upsertUser(env: Env, body: JsonObject): Promise<Response> {
         updated_at = excluded.updated_at
     `,
   ).bind(id, name, avatar || null, now, now).run();
-  return json({ id, name, displayName: name, avatar: avatar || null, avatarUrl: avatar || null });
+  await ensureUserProfile(env, id, name, avatar || null);
+  const user = await userFor(env, id);
+  return json(user || { id, name, displayName: name, avatar: avatar || null, avatarUrl: avatar || null });
+}
+
+async function registerUser(env: Env, body: JsonObject, request?: Request): Promise<Response> {
+  const name = asString(body.name).trim();
+  const securityQuestion = asString(body.securityQuestion).trim();
+  const securityAnswer = asString(body.securityAnswer).trim();
+  if (!name || !securityQuestion || !securityAnswer) return badRequest("Missing fields");
+
+  const existing = await env.DB.prepare(
+    `
+      SELECT id, security_answer AS securityAnswer, security_answer_hash AS securityAnswerHash
+      FROM users
+      WHERE LOWER(display_name) = LOWER(?)
+    `,
+  ).bind(name).first();
+
+  if (existing && (asString((existing as any).securityAnswer) || asString((existing as any).securityAnswerHash))) {
+    return json({ ok: false, error: "Username taken" }, { status: 400 });
+  }
+
+  const id = existing ? asString((existing as any).id) : randomId("usr");
+  const avatar = `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(name)}`;
+  const now = Date.now();
+  const answerHash = await hashSecurityAnswer(securityAnswer);
+  if (existing) {
+    await env.DB.prepare(
+      `
+        UPDATE users
+        SET display_name = ?, avatar_url = COALESCE(avatar_url, ?),
+          security_question = ?, security_answer = NULL,
+          security_answer_hash = ?, security_answer_salt = ?, updated_at = ?
+        WHERE id = ?
+      `,
+    ).bind(name, avatar, securityQuestion, answerHash.hash, answerHash.salt, now, id).run();
+  } else {
+    await env.DB.prepare(
+      `
+        INSERT INTO users (
+          id, display_name, avatar_url, security_question, security_answer,
+          security_answer_hash, security_answer_salt, created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?)
+      `,
+    ).bind(id, name, avatar, securityQuestion, answerHash.hash, answerHash.salt, now, now).run();
+  }
+  await ensureUserProfile(env, id, name, avatar);
+
+  const user = await userFor(env, id);
+  const session = await createSession(env, id, body);
+  return json({ user, token: session.token, session: session.session, ...(user || {}) }, { status: 201 });
+}
+
+async function getUserQuestion(env: Env, url: URL): Promise<Response> {
+  const name = (url.searchParams.get("name") || "").trim();
+  if (!name) return badRequest("Username required");
+  const user = await env.DB.prepare(
+    "SELECT security_question AS securityQuestion FROM users WHERE LOWER(display_name) = LOWER(?)",
+  ).bind(name).first<any>();
+  if (!user) return json({ ok: false, error: "User not found" }, { status: 404 });
+  if (!asString(user.securityQuestion).trim()) {
+    return json({ ok: false, error: "User needs registration" }, { status: 404 });
+  }
+  return json({ securityQuestion: user.securityQuestion });
+}
+
+async function loginUser(env: Env, body: JsonObject): Promise<Response> {
+  const name = asString(body.name).trim();
+  const securityAnswer = asString(body.securityAnswer).trim();
+  if (!name || !securityAnswer) return badRequest("Missing fields");
+  const user = await env.DB.prepare(
+    `
+      SELECT id, display_name AS name, avatar_url AS avatar, security_question AS securityQuestion,
+        security_answer AS securityAnswer,
+        security_answer_hash AS securityAnswerHash,
+        security_answer_salt AS securityAnswerSalt
+      FROM users
+      WHERE LOWER(display_name) = LOWER(?)
+    `,
+  ).bind(name).first<any>();
+  if (!user) return json({ ok: false, error: "User not found" }, { status: 404 });
+
+  let verified = false;
+  if (asString(user.securityAnswerHash) && asString(user.securityAnswerSalt)) {
+    const candidate = await hashSecurityAnswer(securityAnswer, asString(user.securityAnswerSalt));
+    verified = candidate.hash === asString(user.securityAnswerHash);
+  } else if (asString(user.securityAnswer)) {
+    verified = normalizeSecurityAnswer(asString(user.securityAnswer)) === normalizeSecurityAnswer(securityAnswer);
+    if (verified) {
+      const upgraded = await hashSecurityAnswer(securityAnswer);
+      await env.DB.prepare(
+        `
+          UPDATE users
+          SET security_answer = NULL, security_answer_hash = ?, security_answer_salt = ?, updated_at = ?
+          WHERE id = ?
+        `,
+      ).bind(upgraded.hash, upgraded.salt, Date.now(), user.id).run();
+    }
+  }
+  if (!verified) return json({ ok: false, error: "Incorrect answer" }, { status: 401 });
+
+  const publicProfile = await userFor(env, user.id);
+  const session = await createSession(env, user.id, body);
+  return json({ user: publicProfile, token: session.token, session: session.session, ...(publicProfile || {}) });
+}
+
+async function listUsers(env: Env, url: URL): Promise<Response> {
+  const query = (url.searchParams.get("q") || "").trim();
+  const statement = query
+    ? env.DB.prepare(
+        `
+          SELECT u.id, COALESCE(p.display_name, u.display_name) AS displayName,
+            p.username, p.phone, p.email, COALESCE(p.avatar_url, u.avatar_url) AS avatarUrl,
+            p.about, p.profile_status AS profileStatus, COALESCE(p.updated_at, u.updated_at) AS updatedAt
+          FROM users u
+          LEFT JOIN user_profiles p ON p.user_id = u.id
+          WHERE LOWER(COALESCE(p.display_name, u.display_name)) LIKE LOWER(?)
+             OR LOWER(COALESCE(p.username, '')) LIKE LOWER(?)
+          ORDER BY COALESCE(p.display_name, u.display_name) ASC
+          LIMIT 50
+        `,
+      ).bind(`%${query}%`, `%${query}%`)
+    : env.DB.prepare(
+        `
+          SELECT u.id, COALESCE(p.display_name, u.display_name) AS displayName,
+            p.username, p.phone, p.email, COALESCE(p.avatar_url, u.avatar_url) AS avatarUrl,
+            p.about, p.profile_status AS profileStatus, COALESCE(p.updated_at, u.updated_at) AS updatedAt
+          FROM users u
+          LEFT JOIN user_profiles p ON p.user_id = u.id
+          ORDER BY COALESCE(p.display_name, u.display_name) ASC
+          LIMIT 50
+        `,
+      );
+  const rows = await statement.all<any>();
+  return json((rows.results || []).map(publicUser));
+}
+
+async function logoutUser(env: Env, request: Request): Promise<Response> {
+  const auth = await requireAuth(env, request);
+  if (auth instanceof Response) return auth;
+  await env.DB.prepare("UPDATE sessions SET revoked_at = ? WHERE id = ?").bind(Date.now(), auth.sessionId).run();
+  return json({ ok: true });
+}
+
+async function currentUser(env: Env, request: Request): Promise<Response> {
+  const auth = await requireAuth(env, request);
+  if (auth instanceof Response) return auth;
+  const user = await userFor(env, auth.userId);
+  if (!user) return json({ ok: false, error: "User not found" }, { status: 404 });
+  return json({ user, session: { id: auth.sessionId, userId: auth.userId }, ...user });
+}
+
+async function updateUserProfile(env: Env, request: Request, userId: string): Promise<Response> {
+  const auth = await requireAuth(env, request);
+  if (auth instanceof Response) return auth;
+  if (auth.userId !== userId) return json({ ok: false, error: "Cannot update another user" }, { status: 403 });
+  const body = await readJson(request);
+  const current = await userFor(env, userId);
+  if (!current) return json({ ok: false, error: "User not found" }, { status: 404 });
+  const now = Date.now();
+  const displayName = asString(body.displayName || body.name, asString(current.name));
+  const username = asString(body.username, "");
+  const phone = asString(body.phone, "");
+  const email = asString(body.email, "");
+  const avatarUrl = asString(body.avatarUrl || body.avatar, "");
+  const about = asString(body.about, "");
+  const profileStatus = asString(body.status || body.profileStatus, "");
+  await env.DB.prepare(
+    `
+      UPDATE users
+      SET display_name = ?, avatar_url = COALESCE(NULLIF(?, ''), avatar_url), updated_at = ?
+      WHERE id = ?
+    `,
+  ).bind(displayName, avatarUrl, now, userId).run();
+  await env.DB.prepare(
+    `
+      INSERT INTO user_profiles (
+        user_id, display_name, username, phone, email, avatar_url, about, profile_status, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(user_id) DO UPDATE SET
+        display_name = excluded.display_name,
+        username = COALESCE(NULLIF(excluded.username, ''), user_profiles.username),
+        phone = COALESCE(NULLIF(excluded.phone, ''), user_profiles.phone),
+        email = COALESCE(NULLIF(excluded.email, ''), user_profiles.email),
+        avatar_url = COALESCE(NULLIF(excluded.avatar_url, ''), user_profiles.avatar_url),
+        about = COALESCE(NULLIF(excluded.about, ''), user_profiles.about),
+        profile_status = COALESCE(NULLIF(excluded.profile_status, ''), user_profiles.profile_status),
+        updated_at = excluded.updated_at
+    `,
+  ).bind(
+    userId,
+    displayName,
+    username,
+    phone,
+    email,
+    avatarUrl,
+    about,
+    profileStatus,
+    now,
+  ).run();
+  return json(await userFor(env, userId));
+}
+
+async function listContacts(env: Env, request: Request): Promise<Response> {
+  const auth = await requireAuth(env, request);
+  if (auth instanceof Response) return auth;
+  const rows = await env.DB.prepare(
+    `
+      SELECT c.alias, c.created_at AS createdAt, c.updated_at AS updatedAt,
+        u.id, COALESCE(p.display_name, u.display_name) AS displayName,
+        p.username, p.phone, p.email, COALESCE(p.avatar_url, u.avatar_url) AS avatarUrl,
+        p.about, p.profile_status AS profileStatus
+      FROM contacts c
+      JOIN users u ON u.id = c.contact_user_id
+      LEFT JOIN user_profiles p ON p.user_id = u.id
+      WHERE c.owner_user_id = ?
+      ORDER BY COALESCE(c.alias, p.display_name, u.display_name) ASC
+    `,
+  ).bind(auth.userId).all<any>();
+  return json((rows.results || []).map((row: any) => ({
+    ...publicUser(row),
+    alias: row.alias || null,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  })));
+}
+
+async function addContact(env: Env, request: Request): Promise<Response> {
+  const auth = await requireAuth(env, request);
+  if (auth instanceof Response) return auth;
+  const body = await readJson(request);
+  const byId = asString(body.contactUserId || body.userId || body.id, "");
+  const byName = asString(body.name || body.username, "");
+  const contact = byId
+    ? await userProfileFor(env, byId)
+    : await env.DB.prepare(
+        `
+          SELECT u.id, COALESCE(p.display_name, u.display_name) AS displayName,
+            p.username, p.phone, p.email, COALESCE(p.avatar_url, u.avatar_url) AS avatarUrl,
+            p.about, p.profile_status AS profileStatus, COALESCE(p.updated_at, u.updated_at) AS updatedAt
+          FROM users u
+          LEFT JOIN user_profiles p ON p.user_id = u.id
+          WHERE LOWER(COALESCE(p.display_name, u.display_name)) = LOWER(?)
+             OR LOWER(COALESCE(p.username, '')) = LOWER(?)
+        `,
+      ).bind(byName, byName).first<any>();
+  if (!contact) return json({ ok: false, error: "Contact user not found" }, { status: 404 });
+  if (contact.id === auth.userId) return badRequest("Cannot add yourself as a contact");
+  const now = Date.now();
+  await env.DB.prepare(
+    `
+      INSERT INTO contacts (owner_user_id, contact_user_id, alias, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(owner_user_id, contact_user_id) DO UPDATE SET
+        alias = COALESCE(excluded.alias, contacts.alias),
+        updated_at = excluded.updated_at
+    `,
+  ).bind(auth.userId, contact.id, asString(body.alias, "") || null, now, now).run();
+  return json(publicUser(contact), { status: 201 });
+}
+
+async function getChatPreferences(env: Env, request: Request): Promise<Response> {
+  const auth = await requireAuth(env, request);
+  if (auth instanceof Response) return auth;
+  const userPrefs = await env.DB.prepare(
+    `
+      SELECT read_receipts_enabled AS readReceiptsEnabled,
+        notifications_enabled AS notificationsEnabled,
+        updated_at AS updatedAt
+      FROM user_chat_preferences
+      WHERE user_id = ?
+    `,
+  ).bind(auth.userId).first<any>();
+  const conversationPrefs = await env.DB.prepare(
+    `
+      SELECT conversation_id AS conversationId, muted_until AS mutedUntil,
+        pinned, archived, updated_at AS updatedAt
+      FROM conversation_preferences
+      WHERE user_id = ?
+    `,
+  ).bind(auth.userId).all<any>();
+  return json({
+    readReceiptsEnabled: userPrefs ? userPrefs.readReceiptsEnabled === 1 : true,
+    notificationsEnabled: userPrefs ? userPrefs.notificationsEnabled === 1 : true,
+    updatedAt: userPrefs?.updatedAt || null,
+    conversations: (conversationPrefs.results || []).map((row: any) => ({
+      conversationId: row.conversationId,
+      mutedUntil: row.mutedUntil || null,
+      pinned: row.pinned === 1,
+      archived: row.archived === 1,
+      updatedAt: row.updatedAt,
+    })),
+  });
+}
+
+async function updateChatPreferences(env: Env, request: Request): Promise<Response> {
+  const auth = await requireAuth(env, request);
+  if (auth instanceof Response) return auth;
+  const body = await readJson(request);
+  const now = Date.now();
+  const readReceiptsEnabled = asBoolean(body.readReceiptsEnabled, true) ? 1 : 0;
+  const notificationsEnabled = asBoolean(body.notificationsEnabled, true) ? 1 : 0;
+  await env.DB.prepare(
+    `
+      INSERT INTO user_chat_preferences (user_id, read_receipts_enabled, notifications_enabled, updated_at)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(user_id) DO UPDATE SET
+        read_receipts_enabled = excluded.read_receipts_enabled,
+        notifications_enabled = excluded.notifications_enabled,
+        updated_at = excluded.updated_at
+    `,
+  ).bind(auth.userId, readReceiptsEnabled, notificationsEnabled, now).run();
+  const conversation = body.conversation && typeof body.conversation === "object" && !Array.isArray(body.conversation)
+    ? body.conversation as JsonObject
+    : null;
+  if (conversation) {
+    const conversationId = asString(conversation.conversationId || conversation.id, "");
+    if (conversationId) {
+      await env.DB.prepare(
+        `
+          INSERT INTO conversation_preferences (user_id, conversation_id, muted_until, pinned, archived, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?)
+          ON CONFLICT(user_id, conversation_id) DO UPDATE SET
+            muted_until = excluded.muted_until,
+            pinned = excluded.pinned,
+            archived = excluded.archived,
+            updated_at = excluded.updated_at
+        `,
+      ).bind(
+        auth.userId,
+        conversationId,
+        Number(conversation.mutedUntil || 0) || null,
+        asBoolean(conversation.pinned, false) ? 1 : 0,
+        asBoolean(conversation.archived, false) ? 1 : 0,
+        now,
+      ).run();
+    }
+  }
+  return getChatPreferences(env, request);
 }
 
 async function listConversations(env: Env, url: URL): Promise<Response> {
@@ -488,8 +1130,101 @@ export default {
       return env.REALTIME_ROOM.get(roomId).fetch(request);
     }
 
+    if (url.pathname.startsWith("/api/")) {
+      await ensureCloudAccountSchema(env);
+    }
+
     if (url.pathname === "/api/chat/users/upsert" && request.method === "POST") {
       return upsertUser(env, await readJson(request));
+    }
+
+    if (url.pathname === "/api/auth/register" && request.method === "POST") {
+      return registerUser(env, await readJson(request), request);
+    }
+
+    if (url.pathname === "/api/auth/login" && request.method === "POST") {
+      return loginUser(env, await readJson(request));
+    }
+
+    if (url.pathname === "/api/auth/logout" && request.method === "POST") {
+      return logoutUser(env, request);
+    }
+
+    if (url.pathname === "/api/auth/me" && request.method === "GET") {
+      return currentUser(env, request);
+    }
+
+    if (url.pathname === "/api/register" && request.method === "POST") {
+      return registerUser(env, await readJson(request), request);
+    }
+
+    if (url.pathname === "/api/user-question" && request.method === "GET") {
+      return getUserQuestion(env, url);
+    }
+
+    if (url.pathname === "/api/login" && request.method === "POST") {
+      return loginUser(env, await readJson(request));
+    }
+
+    if (url.pathname === "/api/users" && request.method === "GET") {
+      return listUsers(env, url);
+    }
+
+    const cloudProfileMatch = url.pathname.match(/^\/api\/users\/([^/]+)\/profile$/);
+    if (cloudProfileMatch && request.method === "PATCH") {
+      return updateUserProfile(env, request, decodeURIComponent(cloudProfileMatch[1]));
+    }
+
+    const cloudUserMatch = url.pathname.match(/^\/api\/users\/([^/]+)$/);
+    if (cloudUserMatch && request.method === "GET") {
+      return getChatUser(env, decodeURIComponent(cloudUserMatch[1]));
+    }
+
+    if (cloudUserMatch && request.method === "PATCH") {
+      return updateUserProfile(env, request, decodeURIComponent(cloudUserMatch[1]));
+    }
+
+    const cloudAvatarMatch = url.pathname.match(/^\/api\/users\/([^/]+)\/avatar$/);
+    if (cloudAvatarMatch && request.method === "POST") {
+      return uploadUserAvatar(env, request, decodeURIComponent(cloudAvatarMatch[1]));
+    }
+
+    if (cloudAvatarMatch && request.method === "GET") {
+      return fetchUserAvatar(env, decodeURIComponent(cloudAvatarMatch[1]));
+    }
+
+    if (url.pathname === "/api/contacts" && request.method === "GET") {
+      return listContacts(env, request);
+    }
+
+    if (url.pathname === "/api/contacts" && request.method === "POST") {
+      return addContact(env, request);
+    }
+
+    if (url.pathname === "/api/preferences/chat" && request.method === "GET") {
+      return getChatPreferences(env, request);
+    }
+
+    if (url.pathname === "/api/preferences/chat" && request.method === "PATCH") {
+      return updateChatPreferences(env, request);
+    }
+
+    if (url.pathname === "/api/chat/users" && request.method === "GET") {
+      return listUsers(env, url);
+    }
+
+    const userMatch = url.pathname.match(/^\/api\/chat\/users\/([^/]+)$/);
+    if (userMatch && request.method === "GET") {
+      return getChatUser(env, decodeURIComponent(userMatch[1]));
+    }
+
+    if (url.pathname === "/api/chat/users/avatar" && request.method === "POST") {
+      return uploadUserAvatar(env, request);
+    }
+
+    const avatarMatch = url.pathname.match(/^\/api\/chat\/users\/([^/]+)\/avatar$/);
+    if (avatarMatch && request.method === "GET") {
+      return fetchUserAvatar(env, decodeURIComponent(avatarMatch[1]));
     }
 
     if (url.pathname === "/api/chat/conversations" && request.method === "GET") {

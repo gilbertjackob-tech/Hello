@@ -4,14 +4,12 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.glassbox.hello.core.ResultState
 import com.glassbox.hello.core.User
-import com.glassbox.hello.network.HelloApiClient
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 
 class AuthViewModel : ViewModel() {
-    private val api = HelloApiClient()
-    private val repository = AuthRepository(api)
+    private val repository = AuthRepository()
 
     private val _authState = MutableStateFlow<ResultState<User?>>(ResultState.Success(null))
     val authState: StateFlow<ResultState<User?>> = _authState

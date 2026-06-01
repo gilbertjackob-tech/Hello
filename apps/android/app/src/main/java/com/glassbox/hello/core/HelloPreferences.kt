@@ -14,7 +14,7 @@ data class HelloSettingsState(
     val wallpaper: String = "default",
     val wallpaperOpacity: Int = 100,
     val chatSounds: Boolean = true,
-    val cloudChatEnabled: Boolean = false
+    val cloudChatEnabled: Boolean = true
 )
 
 object HelloPreferences {
@@ -37,7 +37,7 @@ object HelloPreferences {
             wallpaper = prefs.getString(KEY_WALLPAPER, "default") ?: "default",
             wallpaperOpacity = prefs.getInt(KEY_WALLPAPER_OPACITY, 100),
             chatSounds = prefs.getBoolean(KEY_CHAT_SOUNDS, true),
-            cloudChatEnabled = prefs.getBoolean(KEY_CLOUD_CHAT_ENABLED, false)
+            cloudChatEnabled = prefs.getBoolean(KEY_CLOUD_CHAT_ENABLED, true)
         )
     }
 

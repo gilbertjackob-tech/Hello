@@ -70,11 +70,7 @@ class FamilyDriveUploadWorker(
                 return
             }
 
-            val body = if (uploadedCount == 1) {
-                "Pending upload completed. Your photo/video is saved to PC."
-            } else {
-                "$uploadedCount pending uploads completed. Your photos/videos are saved to PC."
-            }
+            val body = "Pending uploads completed. Your photos/videos are saved to PC."
             val notification = NotificationCompat.Builder(appContext, CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.stat_sys_upload_done)
                 .setContentTitle("Family Drive")

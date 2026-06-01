@@ -91,6 +91,7 @@ fun AuthScreen(
     LaunchedEffect(authState) {
         val state = authState
         if (state is ResultState.Success && state.data != null) {
+            CloudSessionManager(context).save(state.data)
             onAuthSuccess(state.data)
         }
     }
@@ -102,7 +103,8 @@ fun AuthScreen(
             saveLastUsername(context, name.trim())
         } else if (
             questionState is ResultState.Error &&
-            (questionState as ResultState.Error).message == "User not found"
+            ((questionState as ResultState.Error).message == "User not found" ||
+                (questionState as ResultState.Error).message == "User needs registration")
         ) {
             mode = AuthMode.Register
         }

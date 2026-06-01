@@ -27,10 +27,12 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.glassbox.hello.activities.BrowserActivity
 import com.glassbox.hello.auth.AuthScreen
+import com.glassbox.hello.auth.CloudSessionManager
 import com.glassbox.hello.calls.CallViewModel
 import com.glassbox.hello.familydrive.FamilyDriveScreen
 import com.glassbox.hello.calls.GlobalCallOverlay
 import com.glassbox.hello.chat.ChatScreen
+import com.glassbox.hello.core.AppConfig
 import com.glassbox.hello.core.SessionManager
 import com.glassbox.hello.core.User
 import com.glassbox.hello.settings.SettingsScreen
@@ -53,7 +55,8 @@ private enum class MainTab(val label: String, val icon: ImageVector) {
 fun HelloApp(darkTheme: Boolean = true) {
     val context = LocalContext.current
     val sessionManager = remember { SessionManager(context) }
-    val currentUser = remember { mutableStateOf<User?>(sessionManager.getCurrentUser()) }
+    val cloudSessionManager = remember { CloudSessionManager(context) }
+    val currentUser = remember { mutableStateOf<User?>(sessionManager.getCurrentUser() ?: cloudSessionManager.cachedUser()) }
     val selectedTab = remember { mutableIntStateOf(0) }
     val logoutToken = remember { mutableIntStateOf(0) }
     val isChatRoomVisible = remember { mutableStateOf(false) }
@@ -69,6 +72,7 @@ fun HelloApp(darkTheme: Boolean = true) {
         AuthScreen(
             onAuthSuccess = { user ->
                 sessionManager.saveCurrentUser(user)
+                cloudSessionManager.save(user)
                 currentUser.value = user
                 selectedTab.intValue = MainTab.Chats.ordinal
             },
@@ -79,7 +83,9 @@ fun HelloApp(darkTheme: Boolean = true) {
 
     val callViewModel: CallViewModel = viewModel(key = "hello-global-call")
     LaunchedEffect(currentUser.value?.id) {
-        currentUser.value?.let { callViewModel.connect(it) }
+        if (AppConfig.ENABLE_PC_CALL_SIGNALING) {
+            currentUser.value?.let { callViewModel.connect(it) }
+        }
     }
 
     HelloScreenBackground(modifier = Modifier.fillMaxSize(), dark = darkTheme) {
@@ -112,6 +118,7 @@ fun HelloApp(darkTheme: Boolean = true) {
                         onDetailVisibilityChanged = { isSettingsDetailVisible.value = it },
                         onLogout = {
                             sessionManager.clearSession()
+                            cloudSessionManager.clear()
                             currentUser.value = null
                             logoutToken.intValue += 1
                             selectedTab.intValue = MainTab.Chats.ordinal

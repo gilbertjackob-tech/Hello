@@ -55,10 +55,10 @@ class ChatViewModel : ViewModel() {
         repository = ChatRepository(api, CloudChatRepository(context.applicationContext))
     }
 
-    fun loadUsers(currentUserId: String, query: String? = null) {
+    fun loadUsers(currentUserId: String, query: String? = null, cloudChatEnabled: Boolean = false) {
         _usersState.value = ResultState.Loading
         viewModelScope.launch {
-            val result = repository.fetchUsers(query)
+            val result = repository.fetchUsers(query, cloudChatEnabled)
             _usersState.value = when {
                 result.isSuccess -> {
                     val users = result.getOrNull()
@@ -73,10 +73,15 @@ class ChatViewModel : ViewModel() {
         }
     }
 
-    fun startDirectChat(currentUserId: String, targetUserId: String) {
+    fun startDirectChat(
+        currentUserId: String,
+        currentUserName: String,
+        targetUserId: String,
+        cloudChatEnabled: Boolean = false
+    ) {
         _createChatState.value = ResultState.Loading
         viewModelScope.launch {
-            val result = repository.createDirectChat(currentUserId, targetUserId)
+            val result = repository.createDirectChat(currentUserId, targetUserId, currentUserName, cloudChatEnabled)
             _createChatState.value = when {
                 result.isSuccess -> ResultState.Success(result.getOrNull()!!)
                 result.isFailure -> ResultState.Error(result.exceptionOrNull()?.message ?: "Failed to start chat")
@@ -85,11 +90,17 @@ class ChatViewModel : ViewModel() {
         }
     }
 
-    fun createGroupChat(currentUserId: String, name: String, memberIds: List<String>) {
+    fun createGroupChat(
+        currentUserId: String,
+        currentUserName: String,
+        name: String,
+        memberIds: List<String>,
+        cloudChatEnabled: Boolean = false
+    ) {
         _createChatState.value = ResultState.Loading
         viewModelScope.launch {
             val members = (memberIds + currentUserId).distinct()
-            val result = repository.createGroupChat(name, members)
+            val result = repository.createGroupChat(currentUserId, currentUserName, name, members, cloudChatEnabled)
             _createChatState.value = when {
                 result.isSuccess -> ResultState.Success(result.getOrNull()!!)
                 result.isFailure -> ResultState.Error(result.exceptionOrNull()?.message ?: "Failed to create group")
@@ -98,7 +109,7 @@ class ChatViewModel : ViewModel() {
         }
     }
 
-    fun loadChats(userId: String) {
+    fun loadChats(userId: String, cloudChatEnabled: Boolean = false) {
         val hasCached = _chatsState.value is ResultState.Success
         if (!hasCached) {
             _chatsState.value = ResultState.Loading
@@ -106,7 +117,7 @@ class ChatViewModel : ViewModel() {
             _chatsRefreshing.value = true
         }
         viewModelScope.launch {
-            val result = repository.fetchChats(userId)
+            val result = repository.fetchChats(userId, cloudChatEnabled)
             if (result.isSuccess) {
                 _chatsState.value = ResultState.Success(result.getOrNull() ?: emptyList())
             } else if (!hasCached) {
@@ -365,11 +376,17 @@ class ChatViewModel : ViewModel() {
         senderAvatar: String? = null,
         caption: String = "",
         replyTo: ChatModels.ReplyTo? = null,
-        optimisticTempId: String? = null
+        optimisticTempId: String? = null,
+        cloudChatEnabled: Boolean = false,
+        chat: Chat? = null
     ) {
         _uploadState.value = ResultState.Loading
         viewModelScope.launch {
-            val upload = repository.uploadFile(fileName, mimeType, bytes, senderId)
+            val upload = if (cloudChatEnabled && chat != null) {
+                repository.uploadCloudAttachment(fileName, mimeType, bytes)
+            } else {
+                repository.uploadFile(fileName, mimeType, bytes, senderId)
+            }
             if (upload.isFailure) {
                 optimisticTempId?.let { markMessageFailed(it) }
                 _uploadState.value = ResultState.Error(upload.exceptionOrNull()?.message ?: "Failed to upload file")
@@ -383,12 +400,14 @@ class ChatViewModel : ViewModel() {
                 senderId = senderId,
                 senderName = senderName,
                 senderAvatar = senderAvatar,
-                attachmentUrl = file.url,
+                attachmentUrl = if (cloudChatEnabled && chat != null) "cloud:${file.id ?: file.url}" else file.url,
                 attachmentType = classifyAttachment(file.mimeType),
                 attachmentName = file.originalName,
                 attachmentSize = file.size,
                 replyTo = replyTo,
-                optimisticTempId = optimisticTempId
+                optimisticTempId = optimisticTempId,
+                cloudChatEnabled = cloudChatEnabled,
+                chat = chat
             )
         }
     }
@@ -400,7 +419,9 @@ class ChatViewModel : ViewModel() {
         senderName: String,
         senderAvatar: String? = null,
         caption: String = "",
-        replyTo: ChatModels.ReplyTo? = null
+        replyTo: ChatModels.ReplyTo? = null,
+        cloudChatEnabled: Boolean = false,
+        chat: Chat? = null
     ) {
         if (attachments.isEmpty()) return
 
@@ -424,7 +445,11 @@ class ChatViewModel : ViewModel() {
                 )
                 addOptimisticMessage(optimistic.message)
 
-                val upload = repository.uploadFile(attachment.name, attachment.mimeType, attachment.bytes, senderId)
+                val upload = if (cloudChatEnabled && chat != null) {
+                    repository.uploadCloudAttachment(attachment.name, attachment.mimeType, attachment.bytes)
+                } else {
+                    repository.uploadFile(attachment.name, attachment.mimeType, attachment.bytes, senderId)
+                }
                 if (upload.isFailure) {
                     markMessageFailed(optimistic.tempId)
                     firstError = firstError ?: (upload.exceptionOrNull()?.message ?: "Failed to upload file")
@@ -440,11 +465,13 @@ class ChatViewModel : ViewModel() {
                     senderId = senderId,
                     senderName = senderName,
                     senderAvatar = senderAvatar,
-                    attachmentUrl = file.url,
+                    attachmentUrl = if (cloudChatEnabled && chat != null) "cloud:${file.id ?: file.url}" else file.url,
                     attachmentType = classifyAttachment(file.mimeType),
                     attachmentName = file.originalName,
                     attachmentSize = file.size,
-                    replyTo = replyTo
+                    replyTo = replyTo,
+                    cloudChatEnabled = cloudChatEnabled,
+                    chat = chat
                 )
 
                 if (result.isSuccess) {

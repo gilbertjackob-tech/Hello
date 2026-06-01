@@ -56,9 +56,11 @@ import com.glassbox.hello.attachments.SharedLinksScreen
 import com.glassbox.hello.attachments.SharedMediaScreen
 import com.glassbox.hello.chat.ChatModels.Chat
 import com.glassbox.hello.chat.ChatModels.User
+import com.glassbox.hello.core.HelloPreferences
 import com.glassbox.hello.core.ResultState
 import com.glassbox.hello.networkstatus.NetworkStatus
 import com.glassbox.hello.networkstatus.TailscaleHelper
+import com.glassbox.hello.networkstatus.checkCloudChatNetwork
 import com.glassbox.hello.networkstatus.checkHelloNetwork
 import com.glassbox.hello.ui.components.ErrorView
 import com.glassbox.hello.ui.components.HelloAvatar
@@ -95,6 +97,7 @@ private enum class ChatFilter(val label: String) {
 @Composable
 fun ChatListScreen(
     currentUserId: String,
+    currentUserName: String,
     onChatSelected: (Chat) -> Unit,
     onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier
@@ -106,6 +109,7 @@ fun ChatListScreen(
     val createChatState by viewModel.createChatState.collectAsState()
     val context = LocalContext.current
     val coroutineScope = androidx.compose.runtime.rememberCoroutineScope()
+    val cloudChatEnabled = HelloPreferences.read(context).cloudChatEnabled
 
     var showNewChat by remember { mutableStateOf(false) }
     var showGroupChat by remember { mutableStateOf(false) }
@@ -121,22 +125,28 @@ fun ChatListScreen(
     var selectedFilter by remember { mutableStateOf(ChatFilter.All) }
     var vpnEnabled by remember { mutableStateOf(false) }
     var vpnChecking by remember { mutableStateOf(false) }
-    var vpnDetail by remember { mutableStateOf("Not checked yet") }
+    var vpnDetail by remember { mutableStateOf("PC Drive not checked yet") }
+    var cloudChatOnline by remember { mutableStateOf(false) }
+    var cloudChatDetail by remember { mutableStateOf("Cloud Chat not checked yet") }
     var vpnActionMessage by remember { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(currentUserId) {
-        viewModel.loadChats(currentUserId)
+    LaunchedEffect(currentUserId, cloudChatEnabled) {
+        viewModel.configureCloudChat(context)
+        viewModel.loadChats(currentUserId, cloudChatEnabled = cloudChatEnabled)
         vpnChecking = true
-        val probe = withContext(Dispatchers.IO) { checkHelloNetwork() }
-        vpnEnabled = probe.status == NetworkStatus.Connected || probe.status == NetworkStatus.HelloApiReachable
-        vpnDetail = probe.detail
+        val cloudProbe = withContext(Dispatchers.IO) { checkCloudChatNetwork() }
+        val pcProbe = withContext(Dispatchers.IO) { checkHelloNetwork() }
+        cloudChatOnline = cloudProbe.status == NetworkStatus.Connected || cloudProbe.status == NetworkStatus.HelloApiReachable
+        cloudChatDetail = cloudProbe.detail
+        vpnEnabled = pcProbe.status == NetworkStatus.Connected || pcProbe.status == NetworkStatus.HelloApiReachable
+        vpnDetail = pcProbe.detail
         vpnChecking = false
     }
 
     LaunchedEffect(showNewChat, showGroupChat, userSearchQuery, groupSearchQuery) {
         when {
-            showNewChat -> viewModel.loadUsers(currentUserId, userSearchQuery)
-            showGroupChat -> viewModel.loadUsers(currentUserId, groupSearchQuery)
+            showNewChat -> viewModel.loadUsers(currentUserId, userSearchQuery, cloudChatEnabled = cloudChatEnabled)
+            showGroupChat -> viewModel.loadUsers(currentUserId, groupSearchQuery, cloudChatEnabled = cloudChatEnabled)
         }
     }
 
@@ -146,7 +156,7 @@ fun ChatListScreen(
             showNewChat = false
             showGroupChat = false
             viewModel.resetCreateChatState()
-            viewModel.loadChats(currentUserId)
+            viewModel.loadChats(currentUserId, cloudChatEnabled = cloudChatEnabled)
             onChatSelected(state.data)
         }
     }
@@ -154,9 +164,12 @@ fun ChatListScreen(
     fun refreshNetworkStatus() {
         vpnChecking = true
         coroutineScope.launch {
-            val probe = withContext(Dispatchers.IO) { checkHelloNetwork() }
-            vpnEnabled = probe.status == NetworkStatus.Connected || probe.status == NetworkStatus.HelloApiReachable
-            vpnDetail = probe.detail
+            val cloudProbe = withContext(Dispatchers.IO) { checkCloudChatNetwork() }
+            val pcProbe = withContext(Dispatchers.IO) { checkHelloNetwork() }
+            cloudChatOnline = cloudProbe.status == NetworkStatus.Connected || cloudProbe.status == NetworkStatus.HelloApiReachable
+            cloudChatDetail = cloudProbe.detail
+            vpnEnabled = pcProbe.status == NetworkStatus.Connected || pcProbe.status == NetworkStatus.HelloApiReachable
+            vpnDetail = pcProbe.detail
             vpnChecking = false
             if (showNetworkDiagnostics) {
                 showNetworkDiagnostics = true
@@ -223,15 +236,18 @@ fun ChatListScreen(
                         overflow = TextOverflow.Ellipsis
                     )
                 }
-                CompactNetworkSwitch(
+                ServiceHealthPills(
                     checking = vpnChecking,
-                    connected = vpnEnabled,
-                    onCheckedChange = { requestVpnStateChange(it) }
+                    cloudOnline = cloudChatOnline,
+                    pcOnline = vpnEnabled
                 )
                 HelloIconButton(onClick = { showNewChat = true }) {
                     Icon(Icons.Default.Add, contentDescription = "New chat", tint = HelloColors.DarkAccent)
                 }
-                HelloIconButton(onClick = { refreshNetworkStatus() }) {
+                HelloIconButton(onClick = {
+                    refreshNetworkStatus()
+                    viewModel.loadChats(currentUserId, cloudChatEnabled = cloudChatEnabled)
+                }) {
                     Icon(Icons.Default.Refresh, contentDescription = "Refresh chats", tint = HelloColors.DarkTextMuted)
                 }
                 if (chatsRefreshing) {
@@ -313,7 +329,7 @@ fun ChatListScreen(
                 is ResultState.Loading -> LoadingView(modifier = Modifier.weight(1f))
                 is ResultState.Error -> ErrorView(
                     message = (chatsState as ResultState.Error).message,
-                    onRetry = { viewModel.loadChats(currentUserId) },
+                    onRetry = { viewModel.loadChats(currentUserId, cloudChatEnabled = cloudChatEnabled) },
                     modifier = Modifier.weight(1f)
                 )
                 is ResultState.Success -> {
@@ -395,7 +411,7 @@ fun ChatListScreen(
                     viewModel.resetCreateChatState()
                 },
                 onUserSelected = { user ->
-                    viewModel.startDirectChat(currentUserId, user.id)
+                    viewModel.startDirectChat(currentUserId, currentUserName, user.id, cloudChatEnabled)
                 }
             )
         }
@@ -424,7 +440,7 @@ fun ChatListScreen(
                     viewModel.resetCreateChatState()
                 },
                 onCreate = {
-                    viewModel.createGroupChat(currentUserId, groupName.trim(), selectedMemberIds.toList())
+                    viewModel.createGroupChat(currentUserId, currentUserName, groupName.trim(), selectedMemberIds.toList(), cloudChatEnabled)
                 }
             )
         }
@@ -434,6 +450,7 @@ fun ChatListScreen(
                 checking = vpnChecking,
                 enabled = vpnEnabled,
                 detail = vpnDetail,
+                cloudDetail = cloudChatDetail,
                 onRetry = { refreshNetworkStatus() },
                 onToggleVpn = { requestVpnStateChange(it) },
                 onOpenTailscale = { TailscaleHelper.openTailscale(context) },
@@ -511,10 +528,10 @@ private enum class SharedContentMode {
 }
 
 @Composable
-private fun CompactNetworkSwitch(
+private fun ServiceHealthPills(
     checking: Boolean,
-    connected: Boolean,
-    onCheckedChange: (Boolean) -> Unit
+    cloudOnline: Boolean,
+    pcOnline: Boolean
 ) {
     Row(
         modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
@@ -522,27 +539,20 @@ private fun CompactNetworkSwitch(
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         Text(
-            text = when {
-                checking -> "Checking"
-                connected -> "VPN On"
-                else -> "VPN Off"
-            },
-            color = if (connected) HelloColors.DarkAccentStrong else HelloColors.DarkTextMuted,
+            text = if (checking) "Checking" else if (cloudOnline) "Cloud On" else "Cloud Off",
+            color = if (cloudOnline) HelloColors.DarkAccentStrong else HelloColors.DarkTextMuted,
             style = MaterialTheme.typography.labelMedium,
             fontWeight = FontWeight.Bold,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
-        Switch(
-            checked = connected,
-            enabled = !checking,
-            onCheckedChange = onCheckedChange,
-            colors = SwitchDefaults.colors(
-                checkedThumbColor = HelloColors.DarkAccent,
-                checkedTrackColor = HelloColors.DarkAccentSoft,
-                uncheckedThumbColor = HelloColors.DarkTextMuted,
-                uncheckedTrackColor = HelloColors.DarkPanelMuted
-            )
+        Text(
+            text = if (pcOnline) "PC On" else "PC Off",
+            color = if (pcOnline) HelloColors.DarkAccentStrong else HelloColors.DarkTextMuted,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
         )
     }
 }
@@ -755,6 +765,7 @@ private fun NetworkDiagnosticsDialog(
     checking: Boolean,
     enabled: Boolean,
     detail: String,
+    cloudDetail: String,
     onRetry: () -> Unit,
     onToggleVpn: (Boolean) -> Unit,
     onOpenTailscale: () -> Unit,
@@ -770,10 +781,11 @@ private fun NetworkDiagnosticsDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(HelloSpacing.Sm)) {
                 Text(
-                    text = if (checking) "Checking..." else if (enabled) "Family Network connected" else "Family Network offline",
+                    text = if (checking) "Checking..." else if (enabled) "PC Drive online" else "PC Drive offline",
                     color = if (enabled) HelloColors.DarkAccent else HelloColors.DarkDanger,
                     fontWeight = FontWeight.Bold
                 )
+                Text(text = "Cloud Chat:\n$cloudDetail", color = HelloColors.DarkTextMuted)
                 Text(text = detail, color = HelloColors.DarkTextMuted)
                 Row(
                     modifier = Modifier.fillMaxWidth(),

@@ -14,7 +14,7 @@ import { ThemeProvider } from "./ThemeContext";
 import { NotificationProvider } from "./NotificationContext";
 import { ToastProvider } from "./ToastContext";
 import { cn } from "./lib/utils";
-import { CHAT_API_BASE } from "./api";
+import { fetchCloudCurrentUser, fetchUser } from "./api";
 import {
   Menu,
   ArrowLeft,
@@ -90,23 +90,15 @@ export default function App() {
 
     async function validateCurrentUser() {
       try {
-        const res = await fetch(`${CHAT_API_BASE}/users/${currentUser.id}`);
+        const cloudUser = await fetchCloudCurrentUser().catch(() => fetchUser(currentUser.id));
 
         if (cancelled) return;
-
-        if (res.status === 404) {
-          localStorage.removeItem("whatsclone_user_real");
-          setCurrentUser(null);
-          return;
+        if (cloudUser?.id) {
+          setCurrentUser((existing) => existing ? { ...existing, ...cloudUser } : cloudUser);
         }
-
-        if (!res.ok) {
-          console.error("Failed to validate current user", res.status);
-        }
-      } catch (err) {
-        if (!cancelled) {
-          console.error("Failed to validate current user", err);
-        }
+      } catch (err: any) {
+        if (cancelled) return;
+        console.error("Failed to validate current user", err);
       }
     }
 

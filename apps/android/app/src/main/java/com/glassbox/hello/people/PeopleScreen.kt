@@ -28,6 +28,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.glassbox.hello.chat.ChatModels.User
@@ -55,6 +56,7 @@ fun PeopleScreen(
     currentUserId: String,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
     val viewModel: ChatViewModel = viewModel()
     val usersState by viewModel.usersState.collectAsState()
     val createChatState by viewModel.createChatState.collectAsState()
@@ -63,7 +65,8 @@ fun PeopleScreen(
     var selectedMemberIds by remember { mutableStateOf(setOf<String>()) }
 
     LaunchedEffect(currentUserId, query) {
-        viewModel.loadUsers(currentUserId, query)
+        viewModel.configureCloudChat(context)
+        viewModel.loadUsers(currentUserId, query, cloudChatEnabled = true)
     }
 
     Column(
@@ -101,8 +104,10 @@ fun PeopleScreen(
                     onClick = {
                         viewModel.createGroupChat(
                             currentUserId = currentUserId,
+                            currentUserName = currentUserId,
                             name = groupName.trim(),
-                            memberIds = selectedMemberIds.toList()
+                            memberIds = selectedMemberIds.toList(),
+                            cloudChatEnabled = true
                         )
                         groupName = ""
                         selectedMemberIds = emptySet()
@@ -123,7 +128,7 @@ fun PeopleScreen(
             is ResultState.Loading -> LoadingView(modifier = Modifier.weight(1f))
             is ResultState.Error -> ErrorView(
                 message = (usersState as ResultState.Error).message,
-                onRetry = { viewModel.loadUsers(currentUserId, query) },
+                onRetry = { viewModel.loadUsers(currentUserId, query, cloudChatEnabled = true) },
                 modifier = Modifier.weight(1f)
             )
             is ResultState.Success -> {
@@ -167,7 +172,7 @@ fun PeopleScreen(
                                                 },
                                                 colors = CheckboxDefaults.colors(checkedColor = HelloColors.DarkAccent)
                                             )
-                                            HelloIconButton(onClick = { viewModel.startDirectChat(currentUserId, user.id) }) {
+                                            HelloIconButton(onClick = { viewModel.startDirectChat(currentUserId, currentUserId, user.id, cloudChatEnabled = true) }) {
                                                 Icon(Icons.Default.GroupAdd, contentDescription = "Start chat", tint = HelloColors.DarkAccent)
                                             }
                                         }

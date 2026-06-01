@@ -23,8 +23,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import com.glassbox.hello.chat.ChatModels
+import com.glassbox.hello.chat.CloudChatApi
 import com.glassbox.hello.core.ResultState
-import com.glassbox.hello.network.HelloApiClient
 import com.glassbox.hello.ui.components.ErrorView
 import com.glassbox.hello.ui.components.HelloEmptyState
 import com.glassbox.hello.ui.components.HelloFileCard
@@ -91,12 +91,16 @@ private fun SharedAttachmentList(
         return
     }
 
-    val api = remember { HelloApiClient() }
+    val api = remember { CloudChatApi() }
     var state by remember { mutableStateOf<ResultState<List<ChatModels.AttachmentItem>>>(ResultState.Loading) }
 
     LaunchedEffect(chatId) {
-        val result = api.fetchChatAttachments(chatId)
-        state = if (result.isSuccess) ResultState.Success(selector(result.getOrNull() ?: ChatModels.ChatAttachments())) else ResultState.Error(result.exceptionOrNull()?.message ?: "Failed to load shared content")
+        val result = api.fetchMessages(chatId)
+        state = if (result.isSuccess) {
+            ResultState.Success(selector(attachmentsFromMessages(result.getOrNull().orEmpty())))
+        } else {
+            ResultState.Error(result.exceptionOrNull()?.message ?: "Failed to load shared content")
+        }
     }
 
     when (val current = state) {
@@ -114,6 +118,41 @@ private fun SharedAttachmentList(
             }
         }
     }
+}
+
+private fun attachmentsFromMessages(messages: List<ChatModels.Message>): ChatModels.ChatAttachments {
+    val items = messages.mapNotNull { message ->
+        val url = message.attachmentUrl ?: return@mapNotNull null
+        ChatModels.AttachmentItem(
+            id = message.id,
+            messageId = message.id,
+            fileName = message.attachmentName,
+            mimeType = message.attachmentType,
+            size = message.attachmentSize,
+            url = url,
+            text = message.text,
+            senderId = message.senderId,
+            senderName = message.senderName,
+            createdAt = message.timestamp
+        )
+    }
+    return ChatModels.ChatAttachments(
+        media = items.filter { it.mimeType == "image" || it.mimeType?.startsWith("video/") == true },
+        files = items.filter { it.mimeType != "image" && it.mimeType?.startsWith("video/") != true },
+        links = messages
+            .filter { it.text.startsWith("http://") || it.text.startsWith("https://") }
+            .map {
+                ChatModels.AttachmentItem(
+                    id = it.id,
+                    messageId = it.id,
+                    url = it.text,
+                    text = it.text,
+                    senderId = it.senderId,
+                    senderName = it.senderName,
+                    createdAt = it.timestamp
+                )
+            }
+    )
 }
 
 @Composable

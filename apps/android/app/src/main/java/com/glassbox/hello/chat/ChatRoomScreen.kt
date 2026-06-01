@@ -438,7 +438,9 @@ fun ChatRoomScreen(
                 senderName = currentUserName,
                 senderAvatar = currentUserAvatar,
                 caption = "",
-                optimisticTempId = optimistic.tempId
+                optimisticTempId = optimistic.tempId,
+                cloudChatEnabled = settingsState.cloudChatEnabled,
+                chat = chat
             )
         }
     }
@@ -471,7 +473,9 @@ fun ChatRoomScreen(
                 senderName = currentUserName,
                 senderAvatar = currentUserAvatar,
                 caption = trimmed,
-                replyTo = replySnapshot
+                replyTo = replySnapshot,
+                cloudChatEnabled = settingsState.cloudChatEnabled,
+                chat = chat
             )
             return
         }
