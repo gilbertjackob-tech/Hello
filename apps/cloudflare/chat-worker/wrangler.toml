@@ -11,9 +11,7 @@ compatibility_date = "2026-06-01"
 [[d1_databases]]
 binding = "DB"
 database_name = "hello_chat_db"
-# Replace this after running:
-# npx wrangler d1 create hello_chat_db
-database_id = "REPLACE_WITH_HELLO_CHAT_DB_ID"
+database_id = "7ee40d96-ef90-4e4d-b28d-a6cb9ee47408"
 
 [[r2_buckets]]
 binding = "TEMP_FILES"

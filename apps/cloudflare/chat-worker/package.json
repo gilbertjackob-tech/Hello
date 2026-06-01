@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
+    "migrations:apply": "wrangler d1 migrations apply hello_chat_db --remote",
     "types": "wrangler types"
   },
   "devDependencies": {

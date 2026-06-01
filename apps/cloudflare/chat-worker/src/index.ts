@@ -19,6 +19,58 @@ function notFound(pathname: string): Response {
   return json({ ok: false, error: "not_found", path: pathname }, { status: 404 });
 }
 
+async function getBindingDebug(env: Env): Promise<Response> {
+  const d1 = {
+    binding: "DB",
+    database: "hello_chat_db",
+    available: !!env.DB,
+    queryOk: false,
+  };
+  const r2 = {
+    binding: "TEMP_FILES",
+    bucket: "hello-chat-temp",
+    available: !!env.TEMP_FILES,
+    listOk: false,
+  };
+  const durableObject = {
+    binding: "REALTIME_ROOM",
+    available: !!env.REALTIME_ROOM,
+    idCreated: false,
+  };
+
+  try {
+    const result = await env.DB.prepare("SELECT 1 AS ok").first<{ ok: number }>();
+    d1.queryOk = result?.ok === 1;
+  } catch {
+    d1.queryOk = false;
+  }
+
+  try {
+    await env.TEMP_FILES.list({ limit: 1 });
+    r2.listOk = true;
+  } catch {
+    r2.listOk = false;
+  }
+
+  try {
+    env.REALTIME_ROOM.idFromName("debug");
+    durableObject.idCreated = true;
+  } catch {
+    durableObject.idCreated = false;
+  }
+
+  return json({
+    ok: true,
+    service: "hello-chat-worker",
+    bindings: {
+      d1,
+      r2,
+      durableObject,
+    },
+    note: "No secrets, tokens, object keys, or database contents are returned.",
+  });
+}
+
 export class RealtimeRoom {
   constructor(
     private readonly state: DurableObjectState,
@@ -62,6 +114,7 @@ export default {
       return json({
         ok: true,
         service: "hello-chat-worker",
+        status: "running",
         bindings: {
           d1: "hello_chat_db",
           r2: "hello-chat-temp",
@@ -69,6 +122,10 @@ export default {
         },
         note: "Drive media remains on the PC backend and is not stored in this Worker.",
       });
+    }
+
+    if (url.pathname === "/debug/bindings") {
+      return getBindingDebug(env);
     }
 
     if (url.pathname.startsWith("/rooms/")) {
