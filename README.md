@@ -167,6 +167,8 @@ Current frontend path rules:
 
 ```text
 Default local API:      API_BASE = "/hello/api"
+Cloud chat URL:         CHAT_CLOUD_BASE_URL = VITE_CHAT_CLOUD_BASE_URL || "https://chat.bookhelloctg.com"
+Cloud chat fallback:    CHAT_CLOUD_FALLBACK_URL = VITE_CHAT_CLOUD_FALLBACK_URL || "https://hello-chat-worker.gilbert-jackob3.workers.dev"
 Chat API client:        CHAT_API_BASE = VITE_CHAT_API_BASE || API_BASE
 Call API client:        CALL_API_BASE = VITE_CALL_API_BASE || CHAT_API_BASE
 Drive API client:       DRIVE_API_BASE = VITE_DRIVE_API_BASE || API_BASE
@@ -413,7 +415,9 @@ Drive:
 Chat:
   Target domain: chat.bookhelloctg.com
   Web env:       VITE_CHAT_API_BASE, VITE_CHAT_SOCKET_ORIGIN, VITE_CHAT_SOCKET_PATH
-  Android:       AppConfig.CHAT_API_BASE, AppConfig.CHAT_SOCKET_ORIGIN, AppConfig.CHAT_SOCKET_PATH
+  Cloud health:  https://chat.bookhelloctg.com/health
+  Fallback:      https://hello-chat-worker.gilbert-jackob3.workers.dev
+  Android:       AppConfig.CHAT_CLOUD_BASE_URL, AppConfig.CHAT_API_BASE, AppConfig.CHAT_SOCKET_ORIGIN, AppConfig.CHAT_SOCKET_PATH
   Storage goal:  Cloudflare Worker + D1 metadata + Durable Objects/WebSockets + temporary R2 attachments
 
 Calling:
@@ -424,6 +428,8 @@ Calling:
 ```
 
 Until those Cloudflare services are deployed, these targets intentionally default to the existing `/hello/api` and `/hello/socket.io` backend so web and native builds remain runnable.
+
+The deployed Cloudflare Worker exposes `/health` for production checks. `/debug/bindings` is disabled unless `ENABLE_DEBUG_BINDINGS` is explicitly set to `"true"` in the Worker environment.
 
 ## Data And Persistence
 

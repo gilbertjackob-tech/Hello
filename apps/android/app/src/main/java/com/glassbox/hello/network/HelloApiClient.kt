@@ -16,6 +16,7 @@ import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONObject
 import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 
@@ -300,6 +301,11 @@ class HelloApiClient : HelloApi {
     override suspend fun deleteDriveItem(itemId: String): Result<Unit> = safeApiCall {
         delete("$driveBaseUrl/drive/items/${encodePathValue(itemId)}", emptyMap())
         Unit
+    }
+
+    override suspend fun checkCloudChatHealth(useFallback: Boolean): Result<Boolean> = safeApiCall {
+        val url = if (useFallback) AppConfig.CHAT_CLOUD_FALLBACK_HEALTH_URL else AppConfig.CHAT_CLOUD_HEALTH_URL
+        JSONObject(get(url)).optBoolean("ok", false)
     }
 
     private suspend fun get(url: String): String = request(Request.Builder().url(url).get().build())

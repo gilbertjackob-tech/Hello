@@ -65,6 +65,7 @@ fun NetworkStatusScreen(
     var networkStatus by remember { mutableStateOf<NetworkStatus>(NetworkStatus.Checking) }
     var checkedUrl by remember { mutableStateOf(AppConfig.HELLO_STATUS_URL) }
     var diagnosticText by remember { mutableStateOf("Not checked yet") }
+    var cloudChatDiagnostic by remember { mutableStateOf("Cloud chat not checked yet") }
     var vpnToggleMessage by remember { mutableStateOf<String?>(null) }
 
     fun checkNetworkStatus() {
@@ -72,10 +73,13 @@ fun NetworkStatusScreen(
             networkStatus = NetworkStatus.Checking
             checkedUrl = AppConfig.HELLO_STATUS_URL
             diagnosticText = "Checking..."
+            cloudChatDiagnostic = "Checking cloud chat..."
             try {
                 val result = withContext(Dispatchers.IO) { checkHelloStatus() }
+                val cloudResult = withContext(Dispatchers.IO) { checkCloudChatNetwork() }
                 checkedUrl = result.checkedUrl
                 diagnosticText = result.detail
+                cloudChatDiagnostic = "${cloudResult.detail}\n${cloudResult.checkedUrl}"
                 networkStatus = result.status
             } catch (e: Exception) {
                 checkedUrl = AppConfig.HELLO_STATUS_URL
@@ -216,6 +220,9 @@ fun NetworkStatusScreen(
             HelloSettingsRow(title = "Server origin", subtitle = AppConfig.SERVER_ORIGIN)
             HelloSettingsRow(title = "Status endpoint", subtitle = AppConfig.HELLO_STATUS_URL)
             HelloSettingsRow(title = "Health endpoint", subtitle = AppConfig.HELLO_HEALTH_URL)
+            HelloSettingsRow(title = "Cloud chat", subtitle = AppConfig.CHAT_CLOUD_BASE_URL)
+            HelloSettingsRow(title = "Cloud chat health", subtitle = cloudChatDiagnostic)
+            HelloSettingsRow(title = "Cloud chat fallback", subtitle = AppConfig.CHAT_CLOUD_FALLBACK_URL)
         }
     }
 

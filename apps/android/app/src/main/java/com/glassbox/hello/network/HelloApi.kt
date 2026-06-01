@@ -60,6 +60,7 @@ interface HelloApi {
     suspend fun fetchDriveItems(limit: Int = 60, before: Long? = null): Result<DriveItemsResponse>
     suspend fun uploadDriveFile(fileName: String, mimeType: String, bytes: ByteArray, uploaderId: String): Result<DriveUploadResponse>
     suspend fun deleteDriveItem(itemId: String): Result<Unit>
+    suspend fun checkCloudChatHealth(useFallback: Boolean = false): Result<Boolean>
     suspend fun sendMessage(
         chatId: String,
         text: String,

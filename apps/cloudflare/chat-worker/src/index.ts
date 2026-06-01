@@ -2,6 +2,7 @@ export interface Env {
   DB: D1Database;
   TEMP_FILES: R2Bucket;
   REALTIME_ROOM: DurableObjectNamespace;
+  ENABLE_DEBUG_BINDINGS?: string;
 }
 
 type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
@@ -124,7 +125,7 @@ export default {
       });
     }
 
-    if (url.pathname === "/debug/bindings") {
+    if (url.pathname === "/debug/bindings" && env.ENABLE_DEBUG_BINDINGS === "true") {
       return getBindingDebug(env);
     }
 

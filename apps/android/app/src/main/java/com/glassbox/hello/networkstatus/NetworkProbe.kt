@@ -32,6 +32,14 @@ fun checkHelloNetwork(): NetworkProbeResult {
     )
 }
 
+fun checkCloudChatNetwork(useFallback: Boolean = false): NetworkProbeResult {
+    val url = if (useFallback) AppConfig.CHAT_CLOUD_FALLBACK_HEALTH_URL else AppConfig.CHAT_CLOUD_HEALTH_URL
+    val probe = probeJsonOk(url)
+    return probe.copy(
+        detail = "${probe.detail}\n${if (useFallback) "Cloud chat fallback" else "Cloud chat production"}"
+    )
+}
+
 private fun probeJsonOk(urlText: String): NetworkProbeResult {
     var connection: HttpURLConnection? = null
     return try {

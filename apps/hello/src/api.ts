@@ -3,9 +3,22 @@ import { Chat, DriveItemsResponse, DriveUploadResponse, Message, User } from "./
 const env = (import.meta as any).env || {};
 
 export const API_BASE = env.VITE_HELLO_API_BASE || "/hello/api";
+export const CHAT_CLOUD_BASE_URL = env.VITE_CHAT_CLOUD_BASE_URL || "https://chat.bookhelloctg.com";
+export const CHAT_CLOUD_FALLBACK_URL = env.VITE_CHAT_CLOUD_FALLBACK_URL || "https://hello-chat-worker.gilbert-jackob3.workers.dev";
 export const CHAT_API_BASE = env.VITE_CHAT_API_BASE || API_BASE;
 export const CALL_API_BASE = env.VITE_CALL_API_BASE || CHAT_API_BASE;
 export const DRIVE_API_BASE = env.VITE_DRIVE_API_BASE || API_BASE;
+
+export async function checkChatCloudHealth(useFallback = false): Promise<{
+  ok: boolean;
+  service?: string;
+  status?: string;
+}> {
+  const baseUrl = useFallback ? CHAT_CLOUD_FALLBACK_URL : CHAT_CLOUD_BASE_URL;
+  const res = await fetch(`${baseUrl}/health`);
+  if (!res.ok) throw new Error("Cloud chat health check failed");
+  return res.json();
+}
 
 export async function updateUserPrivacy(
   userId: string,

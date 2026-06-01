@@ -2,6 +2,9 @@ name = "hello-chat-worker"
 main = "src/index.ts"
 compatibility_date = "2026-06-01"
 
+[vars]
+ENABLE_DEBUG_BINDINGS = "false"
+
 # Keep Cloudflare Git Deploy root set to:
 # apps/cloudflare/chat-worker
 #
