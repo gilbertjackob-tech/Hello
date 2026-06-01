@@ -1,4 +1,4 @@
-import { Chat, Message, User } from "./types";
+import { Chat, DriveItemsResponse, DriveUploadResponse, Message, User } from "./types";
 
 export const API_BASE = "/hello/api";
 
@@ -94,6 +94,39 @@ export async function uploadFile(
     body: formData,
   });
   if (!res.ok) throw new Error("Failed to upload file");
+  return res.json();
+}
+
+export async function fetchDriveItems(
+  limit = 60,
+  before?: number | null,
+): Promise<DriveItemsResponse> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (before) params.set("before", String(before));
+  const res = await fetch(`${API_BASE}/drive/items?${params.toString()}`);
+  if (!res.ok) throw new Error("Failed to fetch Drive items");
+  return res.json();
+}
+
+export async function uploadDriveFiles(
+  files: File[],
+  uploaderId: string,
+): Promise<DriveUploadResponse> {
+  const formData = new FormData();
+  formData.append("uploaderId", uploaderId);
+  files.forEach((file) => formData.append("files", file));
+
+  const res = await fetch(`${API_BASE}/drive/upload`, {
+    method: "POST",
+    body: formData,
+  });
+  if (!res.ok) {
+    const message = await res
+      .json()
+      .then((body) => body?.error)
+      .catch(() => null);
+    throw new Error(message || "Failed to upload Drive files");
+  }
   return res.json();
 }
 

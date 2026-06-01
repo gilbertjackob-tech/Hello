@@ -4,6 +4,8 @@ import com.glassbox.hello.chat.ChatModels
 import com.glassbox.hello.calls.CallIceServer
 import com.glassbox.hello.calls.CallRoom
 import com.glassbox.hello.core.User
+import com.glassbox.hello.familydrive.DriveItemsResponse
+import com.glassbox.hello.familydrive.DriveUploadResponse
 
 interface HelloApi {
     suspend fun register(name: String, securityQuestion: String, securityAnswer: String): Result<User>
@@ -55,6 +57,8 @@ interface HelloApi {
     suspend fun clearChat(chatId: String, userId: String): Result<Unit>
     suspend fun deleteChat(chatId: String, userId: String): Result<Unit>
     suspend fun uploadFile(fileName: String, mimeType: String, bytes: ByteArray, uploaderId: String): Result<ChatModels.UploadedFile>
+    suspend fun fetchDriveItems(limit: Int = 60, before: Long? = null): Result<DriveItemsResponse>
+    suspend fun uploadDriveFile(fileName: String, mimeType: String, bytes: ByteArray, uploaderId: String): Result<DriveUploadResponse>
     suspend fun sendMessage(
         chatId: String,
         text: String,

@@ -12,9 +12,11 @@ coverage/
 data/**/*.db
 data/**/*.sqlite
 data/**/uploads/*
+data/**/family-drive/*
 data/**/cache/*
 data/**/logs/*
 !data/**/uploads/.gitkeep
+!data/**/family-drive/.gitkeep
 !data/**/cache/.gitkeep
 !data/**/logs/.gitkeep
 
@@ -22,6 +24,7 @@ apps/browser/debug/
 apps/hello/data/
 apps/hello/data_backup/
 apps/hello/uploads/
+apps/hello/family-drive/
 
 .idea/
 apps/.idea/
@@ -31,3 +34,9 @@ apps/android/.idea/
 .env
 .env.local
 *.log
+plan.md
+
+# Local task bundles and design references
+hello-family-drive-*.zip
+hello-family-drive-*.patch
+figma images of drive sub-tabs.png

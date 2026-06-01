@@ -11,7 +11,9 @@ object UrlResolver {
             value.startsWith("hello/uploads/") -> "/$value"
             value.startsWith("uploads/") -> "/hello/$value"
             value.startsWith("api/files/") -> "/hello/$value"
+            value.startsWith("api/drive/") -> "/hello/$value"
             value.startsWith("hello/api/files/") -> "/$value"
+            value.startsWith("hello/api/drive/") -> "/$value"
             value.startsWith("file_") -> "/hello/uploads/$value"
             else -> "/hello/uploads/$value"
         }

@@ -19,7 +19,7 @@ import {
   Menu,
   ArrowLeft,
   MessageSquare,
-  Phone,
+  Cloud,
   CircleDashed,
   Users,
   Settings,
@@ -32,6 +32,7 @@ const ACTIVE_CHAT_STORAGE_PREFIX = "whatsclone_active_chat";
 const ACTIVE_RAIL_TAB_STORAGE_KEY = "whatsclone_active_rail_tab";
 const VALID_RAIL_TABS = new Set([
   "chats",
+  "drive",
   "calls",
   "status",
   "contacts",
@@ -174,15 +175,19 @@ export default function App() {
               </button>
 
               <button
-                onClick={() => setActiveRailTab("calls")}
+                onClick={() => {
+                  setActiveRailTab("drive");
+                  selectChat(null);
+                }}
                 className={cn(
                   "rounded-full p-2.5 transition-colors",
-                  activeRailTab === "calls"
+                  activeRailTab === "drive"
                     ? "bg-[var(--hello-accent-soft)] text-[var(--hello-accent)]"
                     : "hover:bg-black/5 dark:hover:bg-white/5",
                 )}
+                title="Drive"
               >
-                <Phone className="w-5 sm:w-6 h-5 sm:h-6" />
+                <Cloud className="w-5 sm:w-6 h-5 sm:h-6" />
               </button>
 
               <button

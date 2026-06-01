@@ -8,7 +8,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
-import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Circle
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Settings
@@ -28,7 +28,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.glassbox.hello.activities.BrowserActivity
 import com.glassbox.hello.auth.AuthScreen
 import com.glassbox.hello.calls.CallViewModel
-import com.glassbox.hello.calls.CallsScreen
+import com.glassbox.hello.familydrive.FamilyDriveScreen
 import com.glassbox.hello.calls.GlobalCallOverlay
 import com.glassbox.hello.chat.ChatScreen
 import com.glassbox.hello.core.SessionManager
@@ -43,7 +43,7 @@ import androidx.compose.runtime.LaunchedEffect
 
 private enum class MainTab(val label: String, val icon: ImageVector) {
     Chats("Chats", Icons.AutoMirrored.Filled.Chat),
-    Calls("Calls", Icons.Default.Call),
+    Drive("Drive", Icons.Default.Cloud),
     Status("Status", Icons.Default.Circle),
     Browser("Browser", Icons.Default.Public),
     Settings("Settings", Icons.Default.Settings)
@@ -101,9 +101,8 @@ fun HelloApp(darkTheme: Boolean = true) {
                         onOpenSettings = { selectedTab.intValue = MainTab.Settings.ordinal },
                         modifier = Modifier.fillMaxSize()
                     )
-                    MainTab.Calls -> CallsScreen(
+                    MainTab.Drive -> FamilyDriveScreen(
                         currentUserId = currentUser.value!!.id,
-                        callViewModel = callViewModel,
                         modifier = Modifier.fillMaxSize()
                     )
                     MainTab.Status -> StatusScreen(currentUserId = currentUser.value!!.id, modifier = Modifier.fillMaxSize())

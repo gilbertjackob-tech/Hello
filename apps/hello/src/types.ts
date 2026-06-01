@@ -143,6 +143,32 @@ export interface CallHistoryItem {
   otherUser: User;
 }
 
+export interface DriveItem {
+  id: string;
+  url: string;
+  thumbnailUrl?: string;
+  originalName?: string;
+  mimeType?: string;
+  type: "image" | "video" | string;
+  size: number;
+  uploaderId?: string;
+  createdAt: number;
+  monthKey?: string;
+  monthLabel?: string;
+}
+
+export interface DriveItemsResponse {
+  items: DriveItem[];
+  nextCursor: number | null;
+  hasMore: boolean;
+  total: number;
+}
+
+export interface DriveUploadResponse {
+  items: DriveItem[];
+  count: number;
+}
+
 export interface LocationData {
   lat: number;
   lng: number;

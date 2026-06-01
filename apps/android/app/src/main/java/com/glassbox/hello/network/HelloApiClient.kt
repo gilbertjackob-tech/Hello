@@ -5,6 +5,8 @@ import com.glassbox.hello.calls.CallIceServer
 import com.glassbox.hello.calls.CallRoom
 import com.glassbox.hello.core.AppConfig
 import com.glassbox.hello.core.User
+import com.glassbox.hello.familydrive.DriveItemsResponse
+import com.glassbox.hello.familydrive.DriveUploadResponse
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.Dispatchers
@@ -20,9 +22,10 @@ import java.util.concurrent.TimeUnit
 class HelloApiClient : HelloApi {
     companion object {
         private val sharedClient = OkHttpClient.Builder()
-            .connectTimeout(30, TimeUnit.SECONDS)
-            .readTimeout(30, TimeUnit.SECONDS)
-            .writeTimeout(45, TimeUnit.SECONDS)
+            .connectTimeout(20, TimeUnit.SECONDS)
+            .readTimeout(120, TimeUnit.SECONDS)
+            .writeTimeout(300, TimeUnit.SECONDS)
+            .callTimeout(600, TimeUnit.SECONDS)
             .build()
     }
 
@@ -271,6 +274,25 @@ class HelloApiClient : HelloApi {
             .build()
         val response = request(Request.Builder().url("$baseUrl/files/upload").post(body).build())
         gson.fromJson(response, ChatModels.UploadedFile::class.java)
+    }
+
+    override suspend fun fetchDriveItems(limit: Int, before: Long?): Result<DriveItemsResponse> = safeApiCall {
+        val url = buildString {
+            append("$baseUrl/drive/items?limit=$limit")
+            if (before != null) append("&before=$before")
+        }
+        val response = get(url)
+        gson.fromJson(response, DriveItemsResponse::class.java)
+    }
+
+    override suspend fun uploadDriveFile(fileName: String, mimeType: String, bytes: ByteArray, uploaderId: String): Result<DriveUploadResponse> = safeApiCall {
+        val body = MultipartBody.Builder()
+            .setType(MultipartBody.FORM)
+            .addFormDataPart("uploaderId", uploaderId)
+            .addFormDataPart("files", fileName, bytes.toRequestBody(mimeType.toMediaType()))
+            .build()
+        val response = request(Request.Builder().url("$baseUrl/drive/upload").post(body).build())
+        gson.fromJson(response, DriveUploadResponse::class.java)
     }
 
     private suspend fun get(url: String): String = request(Request.Builder().url(url).get().build())

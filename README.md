@@ -58,6 +58,7 @@ apps/hello/src/mediaPermissions.ts Camera/mic preflight and error diagnostics
 apps/hello/src/components/        Hello UI components
 apps/hello/src/components/CallOverlay.tsx WebRTC call UI and signaling logic
 apps/hello/src/components/ChatWindow.tsx Chat body, message send, voice note capture
+apps/hello/src/components/FamilyDrivePane.tsx Web Family Drive media library
 apps/hello/src/components/Sidebar.tsx Chats, profile, settings, calls, contacts
 apps/hello/dist/                  Built Hello frontend output
 
@@ -65,6 +66,7 @@ data/browser/                     GlassBox runtime data
 data/hello/                       Hello runtime data
 data/hello/hello.db               Hello SQLite database used by integrated app
 data/hello/uploads/               Hello uploaded files and avatars
+data/hello/family-drive/          Family Drive photos/videos by YYYY/MM
 data/hello/cache/                 Hello cache directory
 data/hello/logs/                  Hello logs directory
 ```
@@ -115,6 +117,8 @@ Important integrated routes:
 /hello                    Hello UI
 /hello/api/...            Hello REST API
 /hello/api/files/:fileId  Hello file/avatar download route
+/hello/api/drive/items    Family Drive paginated media listing
+/hello/api/drive/upload   Family Drive photo/video upload route
 /hello/socket.io          Hello Socket.IO endpoint
 /hello/uploads/...        Hello static upload directory
 ```
@@ -150,6 +154,7 @@ Hello API client:       API_BASE = "/hello/api"
 Hello Socket.IO client: io(window.location.origin, { path: "/hello/socket.io" })
 Hello call REST paths:  "/hello/api/calls", "/hello/api/call-rooms"
 Hello file uploads:     upload response URL from server, currently under "/hello/api/files/:fileId"
+Hello Drive paths:      "/hello/api/drive/items", "/hello/api/drive/upload"
 ```
 
 Avoid hardcoding:
@@ -320,6 +325,37 @@ Invoke-WebRequest -UseBasicParsing http://127.0.0.1:3000/hello/api/files/file_ww
 
 Both should return `200` with an image content type when the file exists in `data/hello/uploads`.
 
+## Family Drive
+
+Family Drive is a central family photo/video library for Hello mobile and web. It intentionally avoids folders, sub-folders, passwords, recent sections, and shared-folder logic. All media is shown latest-to-oldest and grouped by month.
+
+Backend:
+
+```text
+apps/hello/server.ts
+POST /hello/api/drive/upload
+GET  /hello/api/drive/items?limit=60
+GET  /hello/api/drive/items/:itemId/file
+```
+
+Storage:
+
+```text
+data/hello/family-drive/YYYY/MM/
+```
+
+The upload endpoint accepts `multipart/form-data` field `files` with images/videos and `uploaderId`. The server stores file metadata in SQLite table `drive_items`, returns month metadata, and uses cursor pagination via the `before` query parameter.
+
+Frontend surfaces:
+
+```text
+apps/hello/src/components/FamilyDrivePane.tsx
+apps/hello/src/api.ts
+apps/android/app/src/main/java/com/glassbox/hello/familydrive/
+```
+
+The web rail shows Drive as the visible second tab. The Android bottom navigation replaces the visible Calls tab with Drive. Existing call code remains in the codebase for active call overlays and call-related flows.
+
 ## Data And Persistence
 
 Runtime data is local and should be handled carefully during merges:
@@ -328,6 +364,7 @@ Runtime data is local and should be handled carefully during merges:
 data/browser/              GlassBox browser data
 data/hello/hello.db        Hello SQLite database
 data/hello/uploads/        Uploaded files and avatars
+data/hello/family-drive/   Family Drive media files
 data/hello/cache/          Cache
 data/hello/logs/           Logs
 ```
@@ -495,7 +532,7 @@ Recommended source-only staging pattern:
 
 ```powershell
 git status -sb
-git add -- README.md apps/browser/src/App.tsx apps/browser/src/main/main.ts apps/browser/src/server/tabManager.ts apps/hello/server.ts apps/hello/src/App.tsx apps/hello/src/CallContext.tsx apps/hello/src/SocketContext.tsx apps/hello/src/components/CallOverlay.tsx apps/hello/src/components/ChatWindow.tsx apps/hello/src/components/PermissionsModal.tsx apps/hello/src/components/Sidebar.tsx apps/hello/src/mediaPermissions.ts
+git add -- README.md apps/browser/src/App.tsx apps/browser/src/main/main.ts apps/browser/src/server/tabManager.ts apps/hello/server.ts apps/hello/src/App.tsx apps/hello/src/api.ts apps/hello/src/types.ts apps/hello/src/CallContext.tsx apps/hello/src/SocketContext.tsx apps/hello/src/components/CallOverlay.tsx apps/hello/src/components/ChatWindow.tsx apps/hello/src/components/FamilyDrivePane.tsx apps/hello/src/components/PermissionsModal.tsx apps/hello/src/components/Sidebar.tsx apps/hello/src/mediaPermissions.ts apps/android/app/src/main/java/com/glassbox/hello/familydrive
 git commit -m "fix hello media permissions and document integration"
 git push origin main
 ```
