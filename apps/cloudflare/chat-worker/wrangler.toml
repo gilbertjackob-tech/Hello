@@ -24,4 +24,4 @@ bindings = [
 
 [[migrations]]
 tag = "v1"
-new_classes = ["RealtimeRoom"]
+new_sqlite_classes = ["RealtimeRoom"]
