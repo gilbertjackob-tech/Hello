@@ -10,6 +10,22 @@ Run these commands from the repository root:
 cd p:\Hasnat\mirror_browser
 npm run install:all
 npm run dev
+tailscale serve --bg 3000
+```
+
+`npm run dev` starts the integrated PC backend and web app on `127.0.0.1:3000`. `tailscale serve --bg 3000` publishes the same local server through Tailscale HTTPS, so Hello is available at `/hello`.
+
+Android release install from `apps/android`:
+
+```powershell
+adb devices
+.\gradlew.bat clean assembleRelease --no-daemon; if ($LASTEXITCODE -eq 0) { adb install -r app\build\outputs\apk\release\app-release.apk }
+```
+
+Release APK output:
+
+```text
+apps/android/app/build/outputs/apk/release/
 ```
 
 Common commands:
@@ -336,6 +352,7 @@ apps/hello/server.ts
 POST /hello/api/drive/upload
 GET  /hello/api/drive/items?limit=60
 GET  /hello/api/drive/items/:itemId/file
+DELETE /hello/api/drive/items/:itemId
 ```
 
 Storage:
@@ -343,6 +360,8 @@ Storage:
 ```text
 data/hello/family-drive/YYYY/MM/
 ```
+
+Uploaded Drive media is physically stored on the PC under `data/hello/family-drive/YYYY/MM/`. The SQLite metadata row lives in `data/hello/hello.db` table `drive_items`. Deleting an item from Drive removes the database entry from the visible library and deletes the stored file from disk when it still exists.
 
 The upload endpoint accepts `multipart/form-data` field `files` with images/videos and `uploaderId`. The server stores file metadata in SQLite table `drive_items`, returns month metadata, and uses cursor pagination via the `before` query parameter.
 
@@ -355,6 +374,25 @@ apps/android/app/src/main/java/com/glassbox/hello/familydrive/
 ```
 
 The web rail shows Drive as the visible second tab. The Android bottom navigation replaces the visible Calls tab with Drive. Existing call code remains in the codebase for active call overlays and call-related flows.
+
+Current Drive features:
+
+```text
+Web and Android:
+  Upload photos/videos
+  Latest-to-oldest month grouping
+  Full-screen media viewer
+  Favorite heart overlay
+  Download action
+  Delete action
+
+Android native:
+  If the PC/server is offline, selected uploads are saved to a local pending queue.
+  Pending items stay visible in the grid using their local URI.
+  The top-right sync badge retries pending uploads.
+  WorkManager retries pending uploads when network connectivity is available.
+  A Family Drive notification is shown after pending uploads complete.
+```
 
 ## Data And Persistence
 

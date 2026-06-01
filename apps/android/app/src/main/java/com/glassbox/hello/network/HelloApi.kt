@@ -59,6 +59,7 @@ interface HelloApi {
     suspend fun uploadFile(fileName: String, mimeType: String, bytes: ByteArray, uploaderId: String): Result<ChatModels.UploadedFile>
     suspend fun fetchDriveItems(limit: Int = 60, before: Long? = null): Result<DriveItemsResponse>
     suspend fun uploadDriveFile(fileName: String, mimeType: String, bytes: ByteArray, uploaderId: String): Result<DriveUploadResponse>
+    suspend fun deleteDriveItem(itemId: String): Result<Unit>
     suspend fun sendMessage(
         chatId: String,
         text: String,

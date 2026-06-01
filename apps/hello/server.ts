@@ -1410,7 +1410,22 @@ export async function mountHello(
   });
 
   app.delete("/api/drive/items/:itemId", (req, res) => {
+    const item = db
+      .prepare("SELECT * FROM drive_items WHERE id = ? AND deletedAt IS NULL")
+      .get(req.params.itemId) as any;
+    if (!item) {
+      res.status(404).json({ error: "Drive item not found" });
+      return;
+    }
+
     db.prepare("UPDATE drive_items SET deletedAt = ? WHERE id = ?").run(Date.now(), req.params.itemId);
+    if (item.path && fs.existsSync(item.path)) {
+      try {
+        fs.unlinkSync(item.path);
+      } catch (error) {
+        console.warn("[DRIVE_DELETE_FILE_FAILED]", error);
+      }
+    }
     res.json({ ok: true });
   });
 

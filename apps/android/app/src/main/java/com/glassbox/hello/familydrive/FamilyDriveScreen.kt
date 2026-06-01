@@ -1,6 +1,7 @@
 package com.glassbox.hello.familydrive
 
 import android.content.Intent
+import android.content.Context
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -31,10 +32,14 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.CloudUpload
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -63,6 +68,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.SubcomposeAsyncImage
 import coil.request.ImageRequest
+import com.glassbox.hello.chat.components.downloadAttachment
 import com.glassbox.hello.core.UrlResolver
 import com.glassbox.hello.ui.components.HelloPanel
 import com.glassbox.hello.ui.theme.HelloColors
@@ -77,6 +83,24 @@ private enum class DriveMode {
     AllPhotos
 }
 
+private sealed class DriveGridItem {
+    abstract val id: String
+    abstract val createdAt: Long
+    abstract val monthLabel: String
+
+    data class Synced(val item: DriveItem) : DriveGridItem() {
+        override val id: String = item.id
+        override val createdAt: Long = item.createdAt
+        override val monthLabel: String = item.monthLabel ?: monthLabelFromTimestamp(item.createdAt)
+    }
+
+    data class Pending(val item: PendingDriveItem) : DriveGridItem() {
+        override val id: String = item.id
+        override val createdAt: Long = item.createdAt
+        override val monthLabel: String = item.monthLabel
+    }
+}
+
 @Composable
 fun FamilyDriveScreen(
     currentUserId: String,
@@ -86,7 +110,27 @@ fun FamilyDriveScreen(
     val context = LocalContext.current
     val state by viewModel.state.collectAsState()
     var selectedItem by remember { mutableStateOf<DriveItem?>(null) }
+    var deleteCandidate by remember { mutableStateOf<DriveItem?>(null) }
     var mode by remember { mutableStateOf(DriveMode.Home) }
+    val favoritesPrefs = remember(currentUserId) {
+        context.getSharedPreferences("family_drive_favorites_$currentUserId", Context.MODE_PRIVATE)
+    }
+    var favoriteIds by remember(currentUserId) {
+        mutableStateOf(favoritesPrefs.getStringSet("ids", emptySet())?.toSet().orEmpty())
+    }
+    fun toggleFavorite(itemId: String) {
+        val next = favoriteIds.toMutableSet().apply {
+            if (contains(itemId)) remove(itemId) else add(itemId)
+        }.toSet()
+        favoriteIds = next
+        favoritesPrefs.edit().putStringSet("ids", next).apply()
+    }
+    fun removeFavorite(itemId: String) {
+        if (!favoriteIds.contains(itemId)) return
+        val next = favoriteIds - itemId
+        favoriteIds = next
+        favoritesPrefs.edit().putStringSet("ids", next).apply()
+    }
 
     val mediaPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickMultipleVisualMedia(50)
@@ -97,17 +141,10 @@ fun FamilyDriveScreen(
         mediaPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo))
     }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(currentUserId) {
+        viewModel.startPendingObserver(context)
         viewModel.refresh()
-    }
-
-    selectedItem?.let { item ->
-        DriveMediaViewer(
-            item = item,
-            onClose = { selectedItem = null },
-            modifier = modifier.fillMaxSize()
-        )
-        return
+        viewModel.retryPending(context, currentUserId)
     }
 
     Box(modifier = modifier.fillMaxSize()) {
@@ -122,9 +159,25 @@ fun FamilyDriveScreen(
                 state = state,
                 onBack = { mode = DriveMode.Home },
                 onRefresh = { viewModel.refresh() },
+                onRetryPending = { viewModel.retryPending(context, currentUserId) },
                 onLoadMore = { viewModel.loadMore() },
                 onOpenItem = { selectedItem = it },
+                onOpenPending = { openLocalPendingMedia(context, it) },
+                favoriteIds = favoriteIds,
+                onToggleFavorite = { toggleFavorite(it) },
+                onRetryPendingItem = { viewModel.retryPending(context, currentUserId, it) },
                 onUploadClick = openPicker,
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+
+        selectedItem?.let { item ->
+            DriveMediaViewer(
+                item = item,
+                isFavorite = favoriteIds.contains(item.id),
+                onClose = { selectedItem = null },
+                onToggleFavorite = { toggleFavorite(item.id) },
+                onDelete = { deleteCandidate = item },
                 modifier = Modifier.fillMaxSize()
             )
         }
@@ -144,6 +197,31 @@ fun FamilyDriveScreen(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .padding(HelloSpacing.Lg)
+            )
+        }
+
+        state.infoMessage?.let { message ->
+            InfoBanner(
+                message = message,
+                onDismiss = { viewModel.clearInfoMessage() },
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(HelloSpacing.Lg)
+            )
+        }
+
+        deleteCandidate?.let { item ->
+            DeleteDriveItemDialog(
+                item = item,
+                isDeleting = state.deletingItemId == item.id,
+                onCancel = { deleteCandidate = null },
+                onConfirm = {
+                    viewModel.deleteItem(item.id) {
+                        removeFavorite(item.id)
+                        if (selectedItem?.id == item.id) selectedItem = null
+                        deleteCandidate = null
+                    }
+                }
             )
         }
     }
@@ -200,7 +278,7 @@ private fun DriveHomeContent(
 
         Spacer(modifier = Modifier.height(48.dp))
         AllPhotosCard(
-            total = state.total,
+            total = state.total + state.pendingItems.size,
             isLoading = state.isLoading,
             onClick = onOpenAllPhotos
         )
@@ -282,17 +360,27 @@ private fun AllPhotosContent(
     state: FamilyDriveUiState,
     onBack: () -> Unit,
     onRefresh: () -> Unit,
+    onRetryPending: () -> Unit,
     onLoadMore: () -> Unit,
     onOpenItem: (DriveItem) -> Unit,
+    onOpenPending: (PendingDriveItem) -> Unit,
+    favoriteIds: Set<String>,
+    onToggleFavorite: (String) -> Unit,
+    onRetryPendingItem: (String) -> Unit,
     onUploadClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val gridState = rememberLazyGridState()
-    val groupedItems = remember(state.items) {
-        state.items.groupBy { item -> item.monthLabel ?: monthLabelFromTimestamp(item.createdAt) }
+    val pendingCount = state.pendingItems.size
+    val gridItems = remember(state.items, state.pendingItems) {
+        (state.pendingItems.map { DriveGridItem.Pending(it) } + state.items.map { DriveGridItem.Synced(it) })
+            .sortedByDescending { it.createdAt }
+    }
+    val groupedItems = remember(gridItems) {
+        gridItems.groupBy { item -> item.monthLabel }
     }
 
-    LaunchedEffect(gridState, state.items.size, state.hasMore, state.isLoadingMore) {
+    LaunchedEffect(gridState, gridItems.size, state.hasMore, state.isLoadingMore) {
         snapshotFlow { gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0 }
             .collect { lastVisible ->
                 val total = gridState.layoutInfo.totalItemsCount
@@ -320,26 +408,54 @@ private fun AllPhotosContent(
                     maxLines = 1
                 )
                 Text(
-                    text = "${state.total} items",
+                    text = "${state.total + pendingCount} items",
                     color = HelloColors.DarkTextMuted,
                     style = MaterialTheme.typography.bodySmall
                 )
             }
-            TextButton(onClick = onRefresh, contentPadding = PaddingValues(horizontal = 0.dp)) {
-                Icon(Icons.Default.Refresh, contentDescription = "Refresh", tint = HelloColors.DarkText)
+            Box {
+                TextButton(
+                    onClick = {
+                        if (pendingCount > 0) onRetryPending() else onRefresh()
+                    },
+                    contentPadding = PaddingValues(horizontal = 0.dp)
+                ) {
+                    Icon(
+                        Icons.Default.Refresh,
+                        contentDescription = if (pendingCount > 0) "Sync pending uploads" else "Refresh",
+                        tint = if (pendingCount > 0) HelloColors.DarkAccent else HelloColors.DarkText
+                    )
+                }
+                if (pendingCount > 0) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .size(20.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFFFF3B5C)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = pendingCount.coerceAtMost(99).toString(),
+                            color = Color.White,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
             }
         }
         Spacer(modifier = Modifier.height(HelloSpacing.Sm))
         Text(
-            text = "Grouped by month",
+            text = if (pendingCount > 0) "Grouped by month - $pendingCount waiting for PC" else "Grouped by month",
             color = HelloColors.DarkTextMuted,
             style = MaterialTheme.typography.bodySmall
         )
         Spacer(modifier = Modifier.height(HelloSpacing.Md))
 
-        if (state.isLoading && state.items.isEmpty()) {
+        if (state.isLoading && gridItems.isEmpty()) {
             LoadingDrive(modifier = Modifier.weight(1f).fillMaxWidth())
-        } else if (state.items.isEmpty()) {
+        } else if (gridItems.isEmpty()) {
             EmptyDrive(onUploadClick = onUploadClick, modifier = Modifier.weight(1f).fillMaxWidth())
         } else {
             LazyVerticalGrid(
@@ -354,8 +470,24 @@ private fun AllPhotosContent(
                     item(span = { GridItemSpan(maxLineSpan) }) {
                         MonthHeader(monthLabel = monthLabel, count = itemsInMonth.size)
                     }
-                    items(itemsInMonth, key = { it.id }) { item ->
-                        DriveMediaCard(item = item, onClick = { onOpenItem(item) })
+                    items(itemsInMonth, key = { it.id }) { gridItem ->
+                        DriveMediaCard(
+                            item = gridItem,
+                            isFavorite = gridItem is DriveGridItem.Synced && favoriteIds.contains(gridItem.item.id),
+                            isRetrying = gridItem is DriveGridItem.Pending && state.retryingPendingId in setOf(gridItem.item.id, "all"),
+                            onToggleFavorite = {
+                                if (gridItem is DriveGridItem.Synced) onToggleFavorite(gridItem.item.id)
+                            },
+                            onRetryPending = {
+                                if (gridItem is DriveGridItem.Pending) onRetryPendingItem(gridItem.item.id)
+                            },
+                            onClick = {
+                                when (gridItem) {
+                                    is DriveGridItem.Synced -> onOpenItem(gridItem.item)
+                                    is DriveGridItem.Pending -> onOpenPending(gridItem.item)
+                                }
+                            }
+                        )
                     }
                 }
                 if (state.isLoadingMore) {
@@ -410,8 +542,27 @@ private fun MonthHeader(monthLabel: String, count: Int) {
 }
 
 @Composable
-private fun DriveMediaCard(item: DriveItem, onClick: () -> Unit) {
+private fun DriveMediaCard(
+    item: DriveGridItem,
+    isFavorite: Boolean,
+    isRetrying: Boolean,
+    onToggleFavorite: () -> Unit,
+    onRetryPending: () -> Unit,
+    onClick: () -> Unit
+) {
     val context = LocalContext.current
+    val isVideo = when (item) {
+        is DriveGridItem.Synced -> item.item.isVideo
+        is DriveGridItem.Pending -> item.item.isVideo
+    }
+    val imageData = when (item) {
+        is DriveGridItem.Synced -> UrlResolver.resolve(item.item.thumbnailUrl ?: item.item.url)
+        is DriveGridItem.Pending -> Uri.parse(item.item.localUri)
+    }
+    val displayName = when (item) {
+        is DriveGridItem.Synced -> item.item.originalName
+        is DriveGridItem.Pending -> item.item.displayName
+    }
     Box(
         modifier = Modifier
             .aspectRatio(1f)
@@ -419,7 +570,7 @@ private fun DriveMediaCard(item: DriveItem, onClick: () -> Unit) {
             .background(HelloColors.DarkPanelStrong)
             .clickable(onClick = onClick)
     ) {
-        if (item.isVideo) {
+        if (isVideo) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Icon(
                     Icons.Default.PlayArrow,
@@ -431,13 +582,13 @@ private fun DriveMediaCard(item: DriveItem, onClick: () -> Unit) {
         } else {
             SubcomposeAsyncImage(
                 model = ImageRequest.Builder(context)
-                    .data(UrlResolver.resolve(item.thumbnailUrl ?: item.url))
+                    .data(imageData)
                     .crossfade(false)
                     .allowHardware(true)
                     .memoryCacheKey(item.id)
                     .diskCacheKey(item.id)
                     .build(),
-                contentDescription = item.originalName,
+                contentDescription = displayName,
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop,
                 loading = {
@@ -452,7 +603,7 @@ private fun DriveMediaCard(item: DriveItem, onClick: () -> Unit) {
                 }
             )
         }
-        if (item.isVideo) {
+        if (isVideo) {
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
@@ -464,6 +615,88 @@ private fun DriveMediaCard(item: DriveItem, onClick: () -> Unit) {
                 Text("Video", color = Color.White, style = MaterialTheme.typography.labelSmall)
             }
         }
+        when (item) {
+            is DriveGridItem.Synced -> {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(5.dp)
+                        .clip(CircleShape)
+                        .background(Color.Black.copy(alpha = if (isFavorite) 0.62f else 0.34f))
+                        .clickable(onClick = onToggleFavorite)
+                        .padding(6.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        Icons.Default.Favorite,
+                        contentDescription = if (isFavorite) "Remove favorite" else "Favorite",
+                        tint = if (isFavorite) Color(0xFFFF3B5C) else Color.White.copy(alpha = 0.82f),
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
+            is DriveGridItem.Pending -> {
+                PendingUploadBadge(
+                    item = item.item,
+                    isRetrying = isRetrying,
+                    onRetry = onRetryPending,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(5.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PendingUploadBadge(
+    item: PendingDriveItem,
+    isRetrying: Boolean,
+    onRetry: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val tint = when (item.status) {
+        PendingDriveStatus.FAILED_RETRYABLE -> Color(0xFFFFC107)
+        PendingDriveStatus.UPLOADING -> HelloColors.DarkAccent
+        else -> Color.White
+    }
+    Box(
+        modifier = modifier
+            .clip(CircleShape)
+            .background(Color.Black.copy(alpha = 0.62f))
+            .clickable(onClick = onRetry)
+            .padding(6.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        if (isRetrying || item.status == PendingDriveStatus.UPLOADING) {
+            CircularProgressIndicator(color = HelloColors.DarkAccent, strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
+        } else {
+            Icon(
+                Icons.Default.CloudUpload,
+                contentDescription = "Sync pending upload",
+                tint = tint,
+                modifier = Modifier.size(16.dp)
+            )
+        }
+    }
+    Box(
+        modifier = modifier
+            .padding(top = 30.dp)
+            .clip(HelloShapes.Sm)
+            .background(Color.Black.copy(alpha = 0.58f))
+            .padding(horizontal = 6.dp, vertical = 2.dp)
+    ) {
+        Text(
+            text = when (item.status) {
+                PendingDriveStatus.FAILED_RETRYABLE -> "Retry"
+                PendingDriveStatus.UPLOADING -> "Syncing"
+                else -> "Pending"
+            },
+            color = Color.White,
+            style = MaterialTheme.typography.labelSmall,
+            maxLines = 1
+        )
     }
 }
 
@@ -503,7 +736,14 @@ private fun EmptyDrive(onUploadClick: () -> Unit, modifier: Modifier = Modifier)
 }
 
 @Composable
-private fun DriveMediaViewer(item: DriveItem, onClose: () -> Unit, modifier: Modifier = Modifier) {
+private fun DriveMediaViewer(
+    item: DriveItem,
+    isFavorite: Boolean,
+    onClose: () -> Unit,
+    onToggleFavorite: () -> Unit,
+    onDelete: () -> Unit,
+    modifier: Modifier = Modifier
+) {
     val context = LocalContext.current
     val resolvedUrl = UrlResolver.resolve(item.url)
     Box(
@@ -524,6 +764,13 @@ private fun DriveMediaViewer(item: DriveItem, onClose: () -> Unit, modifier: Mod
                     color = Color.White.copy(alpha = 0.74f),
                     style = MaterialTheme.typography.bodySmall
                 )
+                TextButton(onClick = onToggleFavorite) {
+                    Icon(
+                        Icons.Default.Favorite,
+                        contentDescription = if (isFavorite) "Remove favorite" else "Favorite",
+                        tint = if (isFavorite) Color(0xFFFF3B5C) else Color.White
+                    )
+                }
             }
             Box(
                 modifier = Modifier
@@ -585,8 +832,97 @@ private fun DriveMediaViewer(item: DriveItem, onClose: () -> Unit, modifier: Mod
                 color = Color.White.copy(alpha = 0.68f),
                 style = MaterialTheme.typography.bodySmall
             )
+            Spacer(modifier = Modifier.height(HelloSpacing.Md))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Button(
+                    onClick = onToggleFavorite,
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (isFavorite) Color(0xFFFF3B5C) else Color.White.copy(alpha = 0.12f),
+                        contentColor = Color.White
+                    ),
+                    shape = HelloShapes.Md,
+                    contentPadding = PaddingValues(vertical = 12.dp)
+                ) {
+                    Icon(Icons.Default.Favorite, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Favorite", fontWeight = FontWeight.Bold, maxLines = 1)
+                }
+                Button(
+                    onClick = {
+                        resolvedUrl?.let { downloadAttachment(context, it, item.originalName ?: "family-drive-media") }
+                    },
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color.White.copy(alpha = 0.12f),
+                        contentColor = Color.White
+                    ),
+                    shape = HelloShapes.Md,
+                    contentPadding = PaddingValues(vertical = 12.dp)
+                ) {
+                    Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Download", fontWeight = FontWeight.Bold, maxLines = 1)
+                }
+                Button(
+                    onClick = onDelete,
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = HelloColors.DarkDanger,
+                        contentColor = Color.White
+                    ),
+                    shape = HelloShapes.Md,
+                    contentPadding = PaddingValues(vertical = 12.dp)
+                ) {
+                    Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Delete", fontWeight = FontWeight.Bold, maxLines = 1)
+                }
+            }
         }
     }
+}
+
+@Composable
+private fun DeleteDriveItemDialog(
+    item: DriveItem,
+    isDeleting: Boolean,
+    onCancel: () -> Unit,
+    onConfirm: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = { if (!isDeleting) onCancel() },
+        containerColor = HelloColors.DarkPanelStrong,
+        titleContentColor = HelloColors.DarkText,
+        textContentColor = HelloColors.DarkTextMuted,
+        title = { Text("Delete from Drive?", fontWeight = FontWeight.Black) },
+        text = {
+            Text(
+                text = "This removes ${item.originalName ?: "this item"} from the central family library.",
+                style = MaterialTheme.typography.bodyMedium
+            )
+        },
+        confirmButton = {
+            Button(
+                onClick = onConfirm,
+                enabled = !isDeleting,
+                colors = ButtonDefaults.buttonColors(containerColor = HelloColors.DarkDanger),
+                shape = HelloShapes.Md
+            ) {
+                Icon(Icons.Default.Delete, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(if (isDeleting) "Deleting..." else "Delete", color = Color.White, fontWeight = FontWeight.Bold)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onCancel, enabled = !isDeleting) {
+                Text("Cancel", color = HelloColors.DarkAccent, fontWeight = FontWeight.Bold)
+            }
+        }
+    )
 }
 
 @Composable
@@ -632,6 +968,35 @@ private fun ErrorBanner(message: String, onDismiss: () -> Unit, modifier: Modifi
             }
         }
     }
+}
+
+@Composable
+private fun InfoBanner(message: String, onDismiss: () -> Unit, modifier: Modifier = Modifier) {
+    HelloPanel(modifier = modifier.fillMaxWidth(), strong = true, shape = HelloShapes.Lg) {
+        Row(modifier = Modifier.padding(HelloSpacing.Md), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Default.CloudUpload, contentDescription = null, tint = HelloColors.DarkAccent)
+            Spacer(modifier = Modifier.width(HelloSpacing.Sm))
+            Text(
+                text = message,
+                color = HelloColors.DarkText,
+                modifier = Modifier.weight(1f),
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis
+            )
+            TextButton(onClick = onDismiss) {
+                Text("OK", color = HelloColors.DarkAccent)
+            }
+        }
+    }
+}
+
+private fun openLocalPendingMedia(context: Context, item: PendingDriveItem) {
+    val intent = Intent(Intent.ACTION_VIEW).apply {
+        setDataAndType(Uri.parse(item.localUri), item.mimeType)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
+    runCatching { context.startActivity(intent) }
 }
 
 private fun monthLabelFromTimestamp(timestamp: Long): String {

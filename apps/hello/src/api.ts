@@ -130,6 +130,13 @@ export async function uploadDriveFiles(
   return res.json();
 }
 
+export async function deleteDriveItem(itemId: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/drive/items/${encodeURIComponent(itemId)}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) throw new Error("Failed to delete Drive item");
+}
+
 export async function sendMessage(
   chatId: string,
   text: string,

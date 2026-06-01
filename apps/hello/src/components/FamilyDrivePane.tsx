@@ -5,13 +5,15 @@ import {
   Cloud,
   CloudUpload,
   Download,
+  Heart,
   Image as ImageIcon,
   Lock,
   Play,
   RefreshCw,
+  Trash2,
   X,
 } from "lucide-react";
-import { fetchDriveItems, uploadDriveFiles } from "../api";
+import { deleteDriveItem, fetchDriveItems, uploadDriveFiles } from "../api";
 import { DriveItem, User } from "../types";
 import { cn } from "../lib/utils";
 import { EmptyState, SkeletonBlock } from "./HelloUi";
@@ -36,7 +38,29 @@ export function FamilyDrivePane({ currentUser, visible }: FamilyDrivePaneProps) 
   const [uploadProgress, setUploadProgress] = useState("");
   const [error, setError] = useState("");
   const [viewerItem, setViewerItem] = useState<DriveItem | null>(null);
+  const [deleteCandidate, setDeleteCandidate] = useState<DriveItem | null>(null);
+  const [deletingId, setDeletingId] = useState("");
   const [isDragging, setIsDragging] = useState(false);
+  const favoritesKey = `hello_drive_favorites_${currentUser.id}`;
+  const [favoriteIds, setFavoriteIds] = useState<Set<string>>(() => {
+    try {
+      return new Set(JSON.parse(localStorage.getItem(favoritesKey) || "[]"));
+    } catch {
+      return new Set();
+    }
+  });
+
+  useEffect(() => {
+    try {
+      setFavoriteIds(new Set(JSON.parse(localStorage.getItem(favoritesKey) || "[]")));
+    } catch {
+      setFavoriteIds(new Set());
+    }
+  }, [favoritesKey]);
+
+  useEffect(() => {
+    localStorage.setItem(favoritesKey, JSON.stringify(Array.from(favoriteIds)));
+  }, [favoriteIds, favoritesKey]);
 
   const loadItems = useCallback(async (mode: "refresh" | "more" = "refresh") => {
     if (mode === "more") {
@@ -115,6 +139,41 @@ export function FamilyDrivePane({ currentUser, visible }: FamilyDrivePaneProps) 
     }
   };
 
+  const toggleFavorite = (itemId: string) => {
+    setFavoriteIds((current) => {
+      const next = new Set(current);
+      if (next.has(itemId)) {
+        next.delete(itemId);
+      } else {
+        next.add(itemId);
+      }
+      return next;
+    });
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteCandidate || deletingId) return;
+
+    setDeletingId(deleteCandidate.id);
+    setError("");
+    try {
+      await deleteDriveItem(deleteCandidate.id);
+      setItems((current) => current.filter((item) => item.id !== deleteCandidate.id));
+      setTotal((current) => Math.max(0, current - 1));
+      setFavoriteIds((current) => {
+        const next = new Set(current);
+        next.delete(deleteCandidate.id);
+        return next;
+      });
+      if (viewerItem?.id === deleteCandidate.id) setViewerItem(null);
+      setDeleteCandidate(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Delete failed");
+    } finally {
+      setDeletingId("");
+    }
+  };
+
   return (
     <div
       className="relative flex h-full flex-col overflow-hidden bg-slate-50 text-slate-900 dark:bg-[#071219] dark:text-[#e9edef]"
@@ -156,6 +215,8 @@ export function FamilyDrivePane({ currentUser, visible }: FamilyDrivePaneProps) 
           onScroll={handleScroll}
           onOpenItem={setViewerItem}
           onUpload={() => fileInputRef.current?.click()}
+          favoriteIds={favoriteIds}
+          onToggleFavorite={toggleFavorite}
         />
       )}
 
@@ -168,7 +229,23 @@ export function FamilyDrivePane({ currentUser, visible }: FamilyDrivePaneProps) 
 
       {uploading ? <UploadOverlay text={uploadProgress} /> : null}
       {error ? <ErrorBanner message={error} onClose={() => setError("")} /> : null}
-      {viewerItem ? <DriveViewer item={viewerItem} onClose={() => setViewerItem(null)} /> : null}
+      {viewerItem ? (
+        <DriveViewer
+          item={viewerItem}
+          favorite={favoriteIds.has(viewerItem.id)}
+          onClose={() => setViewerItem(null)}
+          onToggleFavorite={() => toggleFavorite(viewerItem.id)}
+          onRequestDelete={() => setDeleteCandidate(viewerItem)}
+        />
+      ) : null}
+      {deleteCandidate ? (
+        <DeleteConfirmOverlay
+          item={deleteCandidate}
+          busy={deletingId === deleteCandidate.id}
+          onCancel={() => setDeleteCandidate(null)}
+          onConfirm={confirmDelete}
+        />
+      ) : null}
     </div>
   );
 }
@@ -240,6 +317,8 @@ function DriveLibrary({
   onScroll,
   onOpenItem,
   onUpload,
+  favoriteIds,
+  onToggleFavorite,
 }: {
   groups: Record<string, DriveItem[]>;
   total: number;
@@ -250,6 +329,8 @@ function DriveLibrary({
   onScroll: (event: UIEvent<HTMLDivElement>) => void;
   onOpenItem: (item: DriveItem) => void;
   onUpload: () => void;
+  favoriteIds: Set<string>;
+  onToggleFavorite: (itemId: string) => void;
 }) {
   const hasItems = Object.keys(groups).length > 0;
 
@@ -340,6 +421,22 @@ function DriveLibrary({
                           Video
                         </span>
                       ) : null}
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onToggleFavorite(item.id);
+                        }}
+                        className={cn(
+                          "absolute right-1.5 top-1.5 flex h-7 w-7 items-center justify-center rounded-full border border-white/20 bg-black/42 text-white opacity-0 shadow-lg backdrop-blur-md transition hover:scale-105 group-hover:opacity-100",
+                          favoriteIds.has(item.id) && "opacity-100 text-red-500",
+                        )}
+                        title={favoriteIds.has(item.id) ? "Remove favorite" : "Add favorite"}
+                      >
+                        <Heart
+                          className={cn("h-4 w-4", favoriteIds.has(item.id) && "fill-current")}
+                        />
+                      </button>
                     </button>
                   ))}
                 </div>
@@ -357,7 +454,19 @@ function DriveLibrary({
   );
 }
 
-function DriveViewer({ item, onClose }: { item: DriveItem; onClose: () => void }) {
+function DriveViewer({
+  item,
+  favorite,
+  onClose,
+  onToggleFavorite,
+  onRequestDelete,
+}: {
+  item: DriveItem;
+  favorite: boolean;
+  onClose: () => void;
+  onToggleFavorite: () => void;
+  onRequestDelete: () => void;
+}) {
   const url = resolveDriveUrl(item.url);
 
   return (
@@ -375,6 +484,17 @@ function DriveViewer({ item, onClose }: { item: DriveItem; onClose: () => void }
           <p className="truncate text-sm font-bold">{formatDateTime(item.createdAt)}</p>
           <p className="truncate text-xs text-white/60">{item.originalName || "Family Drive media"}</p>
         </div>
+        <button
+          type="button"
+          onClick={onToggleFavorite}
+          className={cn(
+            "flex h-10 w-10 items-center justify-center rounded-full transition hover:bg-white/10",
+            favorite && "text-red-500",
+          )}
+          title={favorite ? "Remove favorite" : "Favorite"}
+        >
+          <Heart className={cn("h-5 w-5", favorite && "fill-current")} />
+        </button>
         <a
           href={url}
           download={item.originalName || true}
@@ -383,6 +503,14 @@ function DriveViewer({ item, onClose }: { item: DriveItem; onClose: () => void }
         >
           <Download className="h-5 w-5" />
         </a>
+        <button
+          type="button"
+          onClick={onRequestDelete}
+          className="flex h-10 w-10 items-center justify-center rounded-full text-red-400 transition hover:bg-red-500/15 hover:text-red-300"
+          title="Delete"
+        >
+          <Trash2 className="h-5 w-5" />
+        </button>
       </div>
 
       <div className="flex min-h-0 flex-1 items-center justify-center px-3">
@@ -396,6 +524,83 @@ function DriveViewer({ item, onClose }: { item: DriveItem; onClose: () => void }
       <div className="flex-none border-t border-white/10 p-4">
         <p className="truncate text-sm font-bold">{item.originalName || "Family Drive media"}</p>
         <p className="mt-1 text-xs text-white/60">Saved in All Photos & Videos - {formatFileSize(item.size)}</p>
+        <div className="mt-4 grid grid-cols-3 gap-2 text-xs font-bold">
+          <button
+            type="button"
+            onClick={onToggleFavorite}
+            className={cn(
+              "flex items-center justify-center gap-2 rounded-[14px] border border-white/10 px-3 py-2.5 transition hover:bg-white/10",
+              favorite && "border-red-500/40 bg-red-500/10 text-red-300",
+            )}
+          >
+            <Heart className={cn("h-4 w-4", favorite && "fill-current")} />
+            Favorite
+          </button>
+          <a
+            href={url}
+            download={item.originalName || true}
+            className="flex items-center justify-center gap-2 rounded-[14px] border border-white/10 px-3 py-2.5 transition hover:bg-white/10"
+          >
+            <Download className="h-4 w-4" />
+            Download
+          </a>
+          <button
+            type="button"
+            onClick={onRequestDelete}
+            className="flex items-center justify-center gap-2 rounded-[14px] border border-red-500/30 px-3 py-2.5 text-red-300 transition hover:bg-red-500/15"
+          >
+            <Trash2 className="h-4 w-4" />
+            Delete
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DeleteConfirmOverlay({
+  item,
+  busy,
+  onCancel,
+  onConfirm,
+}: {
+  item: DriveItem;
+  busy: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div className="absolute inset-0 z-[60] flex items-center justify-center bg-black/68 p-5 backdrop-blur-sm">
+      <div className="w-full max-w-sm rounded-[28px] border border-white/12 bg-[#111b21] p-5 text-white shadow-2xl">
+        <div className="flex items-start gap-4">
+          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[18px] bg-red-500/15 text-red-300">
+            <Trash2 className="h-6 w-6" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <h2 className="text-base font-extrabold">Delete from Drive?</h2>
+            <p className="mt-2 text-sm leading-6 text-white/62">
+              This removes {item.originalName || "this item"} from the central family library.
+            </p>
+          </div>
+        </div>
+        <div className="mt-6 grid grid-cols-2 gap-3">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={busy}
+            className="rounded-[16px] border border-white/10 px-4 py-3 text-sm font-bold transition hover:bg-white/8 disabled:opacity-60"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={busy}
+            className="rounded-[16px] bg-red-500 px-4 py-3 text-sm font-bold text-white transition hover:bg-red-600 disabled:opacity-60"
+          >
+            {busy ? "Deleting..." : "Delete"}
+          </button>
+        </div>
       </div>
     </div>
   );

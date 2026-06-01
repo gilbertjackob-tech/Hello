@@ -295,6 +295,11 @@ class HelloApiClient : HelloApi {
         gson.fromJson(response, DriveUploadResponse::class.java)
     }
 
+    override suspend fun deleteDriveItem(itemId: String): Result<Unit> = safeApiCall {
+        delete("$baseUrl/drive/items/${encodePathValue(itemId)}", emptyMap())
+        Unit
+    }
+
     private suspend fun get(url: String): String = request(Request.Builder().url(url).get().build())
 
     private suspend fun post(url: String, body: Map<String, Any?>): String {
