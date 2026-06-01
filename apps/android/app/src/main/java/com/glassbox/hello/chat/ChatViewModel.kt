@@ -64,6 +64,7 @@ class ChatViewModel : ViewModel() {
                     val users = result.getOrNull()
                         .orEmpty()
                         .filter { it.id != currentUserId }
+                        .filter { query?.isNotBlank() == true || !it.isGeneratedIdentity() }
                         .sortedWith(compareByDescending<User> { it.online == true }.thenBy { it.name.lowercase() })
                     ResultState.Success(users)
                 }
@@ -119,7 +120,11 @@ class ChatViewModel : ViewModel() {
         viewModelScope.launch {
             val result = repository.fetchChats(userId, cloudChatEnabled)
             if (result.isSuccess) {
-                _chatsState.value = ResultState.Success(result.getOrNull() ?: emptyList())
+                _chatsState.value = ResultState.Success(
+                    result.getOrNull()
+                        .orEmpty()
+                        .filter { it.isProfessionalInboxItem(userId) }
+                )
             } else if (!hasCached) {
                 _chatsState.value = ResultState.Error(result.exceptionOrNull()?.message ?: "Failed to load chats")
             }

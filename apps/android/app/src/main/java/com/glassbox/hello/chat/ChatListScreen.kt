@@ -714,7 +714,7 @@ private fun GroupChatDialog(
                                             verticalAlignment = Alignment.CenterVertically,
                                             horizontalArrangement = Arrangement.spacedBy(HelloSpacing.Md)
                                         ) {
-                                            HelloAvatar(name = user.name, online = user.online == true, size = 44.dp)
+                                            HelloAvatar(name = user.name, online = user.online == true, size = 44.dp, imageUrl = user.avatar)
                                             Column(modifier = Modifier.weight(1f)) {
                                                 Text(
                                                     text = user.name,
@@ -724,7 +724,7 @@ private fun GroupChatDialog(
                                                     overflow = TextOverflow.Ellipsis
                                                 )
                                                 Text(
-                                                    text = if (user.online == true) "Online" else "Available in Hello",
+                                                    text = user.profileSubtitle(),
                                                     color = HelloColors.DarkTextMuted,
                                                     maxLines = 1,
                                                     overflow = TextOverflow.Ellipsis
@@ -838,7 +838,7 @@ private fun UserDiscoveryItem(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(HelloSpacing.Md)
         ) {
-            HelloAvatar(name = user.name, online = user.online == true, size = 44.dp)
+            HelloAvatar(name = user.name, online = user.online == true, size = 44.dp, imageUrl = user.avatar)
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = user.name,
@@ -848,12 +848,21 @@ private fun UserDiscoveryItem(
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    text = if (user.online == true) "Online" else "Available in Hello",
+                    text = user.profileSubtitle(),
                     color = HelloColors.DarkTextMuted,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
             }
         }
+    }
+}
+
+private fun User.profileSubtitle(): String {
+    return when {
+        online == true -> "Online"
+        !email.isNullOrBlank() -> email
+        !phone.isNullOrBlank() -> phone
+        else -> "Hello contact"
     }
 }

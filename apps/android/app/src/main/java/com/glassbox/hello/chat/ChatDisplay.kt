@@ -9,7 +9,13 @@ fun Chat.otherParticipant(currentUserId: String): User? {
 }
 
 fun Chat.displayName(currentUserId: String): String {
-    return otherParticipant(currentUserId)?.name ?: name
+    val other = otherParticipant(currentUserId)
+    return when {
+        other != null && !other.isGeneratedIdentity() -> other.name
+        isGroup && name.isNotBlank() -> name
+        !name.isGeneratedDisplayName() -> name
+        else -> "Contact"
+    }
 }
 
 fun Chat.displayAvatar(currentUserId: String): String? {
@@ -28,4 +34,27 @@ fun Chat.presenceSubtitle(currentUserId: String): String {
 
 fun String.avatarInitial(): String {
     return trim().firstOrNull()?.uppercase() ?: "?"
+}
+
+fun User.isGeneratedIdentity(): Boolean {
+    return name.isGeneratedDisplayName() || id.isGeneratedDisplayName()
+}
+
+fun Chat.isProfessionalInboxItem(currentUserId: String): Boolean {
+    if (isGroup) return name.isNotBlank() && !name.isGeneratedDisplayName()
+    val other = otherParticipant(currentUserId)
+    if (other != null) return !other.isGeneratedIdentity()
+    val title = name.ifBlank { id }
+    return !title.isGeneratedDisplayName()
+}
+
+private fun String?.isGeneratedDisplayName(): Boolean {
+    val value = this?.trim().orEmpty()
+    if (value.isBlank()) return true
+    val lower = value.lowercase()
+    return lower.startsWith("usr_") ||
+        lower.startsWith("user_") ||
+        lower.startsWith("direct_") ||
+        lower.startsWith("codex ") ||
+        lower.matches(Regex("""codex.*\d{8,}.*"""))
 }

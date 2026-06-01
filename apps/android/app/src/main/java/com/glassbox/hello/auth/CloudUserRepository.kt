@@ -1,6 +1,10 @@
 package com.glassbox.hello.auth
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.Paint
 import android.net.Uri
 import com.glassbox.hello.core.AppConfig
 import com.glassbox.hello.core.User
@@ -12,6 +16,7 @@ import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import java.io.ByteArrayOutputStream
 import java.util.concurrent.TimeUnit
 
 data class CloudChatPreferences(
@@ -82,16 +87,18 @@ class CloudUserRepository(context: Context) {
         gson.fromJson(response, CloudChatPreferences::class.java)
     }
 
-    suspend fun uploadAvatar(context: Context, userId: String, uri: Uri): Result<User> = safeCloudCall {
+    suspend fun uploadAvatar(context: Context, userId: String, uri: Uri, zoom: Float = 1f): Result<User> = safeCloudCall {
         val token = requireToken()
         val resolver = context.applicationContext.contentResolver
         val mimeType = resolver.getType(uri) ?: "image/jpeg"
         if (!mimeType.startsWith("image/")) throw Exception("Avatar must be an image")
-        val bytes = resolver.openInputStream(uri)?.use { it.readBytes() } ?: throw Exception("Could not read selected image")
-        val fileName = "profile.${mimeType.substringAfter("/", "jpeg")}"
+        val source = resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it) }
+            ?: throw Exception("Could not read selected image")
+        val bytes = source.toSquareAvatarBytes(zoom)
+        val fileName = "profile.jpg"
         val body = MultipartBody.Builder()
             .setType(MultipartBody.FORM)
-            .addFormDataPart("file", fileName, bytes.toRequestBody(mimeType.toMediaType()))
+            .addFormDataPart("file", fileName, bytes.toRequestBody("image/jpeg".toMediaType()))
             .build()
         val response = requestWithFallback { base ->
             Request.Builder()
@@ -131,4 +138,25 @@ class CloudUserRepository(context: Context) {
         } catch (error: Exception) {
             Result.failure(error)
         }
+
+    private fun Bitmap.toSquareAvatarBytes(zoom: Float): ByteArray {
+        val outputSize = 512
+        val safeZoom = zoom.coerceIn(1f, 3f)
+        val sourceSide = (minOf(width, height) / safeZoom).toInt().coerceAtLeast(1)
+        val left = ((width - sourceSide) / 2).coerceAtLeast(0)
+        val top = ((height - sourceSide) / 2).coerceAtLeast(0)
+        val cropped = Bitmap.createBitmap(this, left, top, sourceSide.coerceAtMost(width), sourceSide.coerceAtMost(height))
+        val output = Bitmap.createBitmap(outputSize, outputSize, Bitmap.Config.ARGB_8888)
+        Canvas(output).drawBitmap(
+            cropped,
+            null,
+            android.graphics.Rect(0, 0, outputSize, outputSize),
+            Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+        )
+        val stream = ByteArrayOutputStream()
+        output.compress(Bitmap.CompressFormat.JPEG, 92, stream)
+        if (cropped != this) cropped.recycle()
+        if (output != this) output.recycle()
+        return stream.toByteArray()
+    }
 }

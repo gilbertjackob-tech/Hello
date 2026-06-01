@@ -1,11 +1,13 @@
 package com.glassbox.hello.settings
 
 import android.content.Intent
+import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -17,11 +19,16 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.ui.draw.clip
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.BugReport
+import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Notifications
@@ -33,6 +40,7 @@ import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.VideoCall
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
@@ -47,12 +55,15 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import coil.compose.AsyncImage
 import com.glassbox.hello.chat.ChatModels
 import com.glassbox.hello.chat.CloudChatApi
 import com.glassbox.hello.auth.CloudChatPreferences
@@ -61,6 +72,7 @@ import com.glassbox.hello.auth.CloudUserRepository
 import com.glassbox.hello.browser.BrowserClearRange
 import com.glassbox.hello.browser.BrowserViewModel
 import com.glassbox.hello.core.AppConfig
+import com.glassbox.hello.core.HelloPreferences
 import com.glassbox.hello.core.ResultState
 import com.glassbox.hello.core.SessionManager
 import com.glassbox.hello.core.UrlResolver
@@ -272,11 +284,12 @@ private fun SettingsSectionCard(
 
 @Composable
 private fun AppearanceRows(onOpenChatTheme: () -> Unit) {
-    val prefs = LocalContext.current.getSharedPreferences("hello_settings", 0)
-    var theme by remember { mutableStateOf(prefs.getString("theme", "system") ?: "system") }
-    var enterSends by remember { mutableStateOf(prefs.getBoolean("enter_sends", true)) }
-    var chatSounds by remember { mutableStateOf(prefs.getBoolean("chat_sounds", true)) }
-    var cloudChatEnabled by remember { mutableStateOf(prefs.getBoolean("cloud_chat_enabled", true)) }
+    val context = LocalContext.current
+    val initial = remember(context) { HelloPreferences.read(context) }
+    var theme by remember { mutableStateOf(initial.themeMode) }
+    var enterSends by remember { mutableStateOf(initial.enterSends) }
+    var chatSounds by remember { mutableStateOf(initial.chatSounds) }
+    var cloudChatEnabled by remember { mutableStateOf(initial.cloudChatEnabled) }
 
     HelloSettingsRow(
         title = "Chat theme",
@@ -286,7 +299,7 @@ private fun AppearanceRows(onOpenChatTheme: () -> Unit) {
     )
     OptionRow("Theme", theme, listOf("system", "light", "dark")) {
         theme = it
-        prefs.edit().putString("theme", it).apply()
+        HelloPreferences.setThemeMode(context, it)
     }
     Text(
         "System, white, and dark mode now use the same shared palette path so the UI stays consistent instead of mixing hardcoded dark widgets.",
@@ -295,18 +308,18 @@ private fun AppearanceRows(onOpenChatTheme: () -> Unit) {
     )
     ToggleRow("Enter sends", enterSends) {
         enterSends = it
-        prefs.edit().putBoolean("enter_sends", it).apply()
+        HelloPreferences.setEnterSends(context, it)
     }
     ToggleRow("Chat sounds", chatSounds) {
         chatSounds = it
-        prefs.edit().putBoolean("chat_sounds", it).apply()
+        HelloPreferences.setChatSounds(context, it)
     }
-    ToggleRow("Cloud chat", cloudChatEnabled) {
+    ToggleRow("Chat sync", cloudChatEnabled) {
         cloudChatEnabled = it
-        prefs.edit().putBoolean("cloud_chat_enabled", it).apply()
+        HelloPreferences.setCloudChatEnabled(context, it)
     }
     Text(
-        "Cloud chat syncs plain text through Cloudflare. Drive photos and videos continue to use the PC backend.",
+        "Chat sync keeps conversations available across your signed-in devices. Drive photos and videos continue to use the PC backend.",
         color = HelloColors.DarkTextMuted,
         modifier = Modifier.padding(horizontal = HelloSpacing.Lg, vertical = HelloSpacing.Xs)
     )
@@ -378,36 +391,45 @@ private fun StorageRows(sessionManager: SessionManager) {
 @Composable
 private fun ProfilePage(sessionManager: SessionManager, onLogout: () -> Unit) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val sessionUser = sessionManager.getCurrentUser()
     val api = remember { CloudChatApi() }
     val userRepository = remember { CloudUserRepository(context) }
     var state by remember { mutableStateOf<ResultState<ChatModels.User>?>(null) }
     var avatarUploadState by remember { mutableStateOf<ResultState<Unit>?>(null) }
+    var pendingAvatarUri by remember { mutableStateOf<Uri?>(null) }
+    var avatarZoom by remember { mutableStateOf(1f) }
     val avatarPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
     ) { uri ->
         if (uri != null && sessionUser != null) {
-            avatarUploadState = ResultState.Loading
-            kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Main).launch {
-                userRepository.uploadAvatar(context, sessionUser.id, uri)
-                    .onSuccess { updated ->
-                        sessionManager.saveCurrentUser(updated)
-                        CloudSessionManager(context).save(updated)
-                        state = ResultState.Success(
-                            ChatModels.User(
-                                id = updated.id,
-                                name = updated.name,
-                                avatar = updated.avatar,
-                                phone = updated.phone,
-                                email = updated.email
-                            )
+            pendingAvatarUri = uri
+            avatarZoom = 1f
+        }
+    }
+    fun uploadSelectedAvatar(uri: Uri, zoom: Float) {
+        val user = sessionUser ?: return
+        avatarUploadState = ResultState.Loading
+        pendingAvatarUri = null
+        scope.launch {
+            userRepository.uploadAvatar(context, user.id, uri, zoom)
+                .onSuccess { updated ->
+                    sessionManager.saveCurrentUser(updated)
+                    CloudSessionManager(context).save(updated)
+                    state = ResultState.Success(
+                        ChatModels.User(
+                            id = updated.id,
+                            name = updated.name,
+                            avatar = updated.avatar,
+                            phone = updated.phone,
+                            email = updated.email
                         )
-                        avatarUploadState = ResultState.Success(Unit)
-                    }
-                    .onFailure {
-                        avatarUploadState = ResultState.Error(it.message ?: "Avatar upload failed")
-                    }
-            }
+                    )
+                    avatarUploadState = ResultState.Success(Unit)
+                }
+                .onFailure {
+                    avatarUploadState = ResultState.Error(it.message ?: "Profile photo update failed")
+                }
         }
     }
     LaunchedEffect(sessionUser?.id) {
@@ -427,46 +449,153 @@ private fun ProfilePage(sessionManager: SessionManager, onLogout: () -> Unit) {
             when (val s = state) {
                 is ResultState.Loading -> LoadingView()
                 is ResultState.Error -> ErrorView(message = s.message)
-                is ResultState.Success -> ProfileCard(s.data)
+                is ResultState.Success -> ProfileCard(
+                    user = s.data,
+                    uploadState = avatarUploadState,
+                    onChangePhoto = {
+                        avatarPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                    }
+                )
                 null -> sessionUser?.let {
-                    ProfileCard(ChatModels.User(id = it.id, name = it.name, avatar = it.avatar, phone = it.phone, email = it.email))
+                    ProfileCard(
+                        user = ChatModels.User(id = it.id, name = it.name, avatar = it.avatar, phone = it.phone, email = it.email),
+                        uploadState = avatarUploadState,
+                        onChangePhoto = {
+                            avatarPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                        }
+                    )
                 }
             }
         }
         item {
             HelloSettingsCard {
                 HelloSettingsRow(
-                    "Profile photo",
+                    "Change profile photo",
                     when (val upload = avatarUploadState) {
-                        is ResultState.Loading -> "Uploading to Cloudflare..."
+                        is ResultState.Loading -> "Uploading cropped photo..."
                         is ResultState.Error -> upload.message
-                        is ResultState.Success -> "Saved to Cloudflare profile/avatar storage"
-                        null -> "Upload avatar to Cloudflare, not Drive"
+                        is ResultState.Success -> "Profile photo updated"
+                        null -> "Choose a photo, crop it, and preview the avatar"
                     },
                     onClick = {
                         avatarPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-                    }
+                    },
+                    leading = { RowIcon(Icons.Default.CameraAlt) }
                 )
-                HelloSettingsRow("Cloud profile", AppConfig.CHAT_CLOUD_BASE_URL)
+                HelloSettingsRow("Account sync", "Signed in as ${sessionUser?.name.orEmpty()}")
                 HelloSettingsRow("User id", sessionUser?.id.orEmpty())
             }
         }
         item { HelloPrimaryButton(text = "Logout", onClick = onLogout) }
     }
+    pendingAvatarUri?.let { uri ->
+        AvatarCropDialog(
+            uri = uri,
+            zoom = avatarZoom,
+            onZoomChange = { avatarZoom = it },
+            onDismiss = { pendingAvatarUri = null },
+            onApply = { uploadSelectedAvatar(uri, avatarZoom) }
+        )
+    }
 }
 
 @Composable
-private fun ProfileCard(user: ChatModels.User) {
+private fun ProfileCard(
+    user: ChatModels.User,
+    uploadState: ResultState<Unit>?,
+    onChangePhoto: () -> Unit
+) {
     HelloPanel(modifier = Modifier.fillMaxWidth(), strong = true, shape = HelloShapes.Xl) {
         Column(modifier = Modifier.padding(HelloSpacing.Xxl), verticalArrangement = Arrangement.spacedBy(HelloSpacing.Md)) {
-            HelloAvatar(user.name, size = 76.dp, online = user.online == true, imageUrl = user.avatar)
+            Box {
+                HelloAvatar(user.name, size = 96.dp, online = user.online == true, imageUrl = user.avatar)
+                HelloIconButton(
+                    onClick = onChangePhoto,
+                    active = true,
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .size(34.dp)
+                ) {
+                    Icon(Icons.Default.Edit, contentDescription = "Change profile photo", tint = HelloColors.DarkAccent)
+                }
+            }
             Text(user.name, color = HelloColors.DarkText, fontWeight = FontWeight.Bold)
+            Text(
+                when (uploadState) {
+                    is ResultState.Loading -> "Updating profile photo..."
+                    is ResultState.Error -> uploadState.message
+                    is ResultState.Success -> "Profile photo updated"
+                    null -> "Tap the photo to change, crop, and resize your avatar."
+                },
+                color = HelloColors.DarkTextMuted
+            )
             Text("User id: ${user.id}", color = HelloColors.DarkTextMuted)
             Text(user.email ?: user.phone ?: "No phone/email on profile", color = HelloColors.DarkTextMuted)
             Text("Last active: ${user.lastActive?.let { formatSettingTime(it) } ?: "Unavailable"}", color = HelloColors.DarkTextMuted)
             Text("Privacy: ${user.privacy ?: user.lastActivePrivacy ?: "everyone"}", color = HelloColors.DarkTextMuted)
         }
     }
+}
+
+@Composable
+private fun AvatarCropDialog(
+    uri: Uri,
+    zoom: Float,
+    onZoomChange: (Float) -> Unit,
+    onDismiss: () -> Unit,
+    onApply: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = HelloColors.DarkPanelStrong,
+        title = { Text("Crop profile photo", color = HelloColors.DarkText, fontWeight = FontWeight.Bold) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(HelloSpacing.Md)) {
+                Box(
+                    modifier = Modifier.fillMaxWidth(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(168.dp)
+                            .clip(CircleShape)
+                    ) {
+                        AsyncImage(
+                            model = uri,
+                            contentDescription = "Profile photo preview",
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .graphicsLayer(
+                                    scaleX = zoom.coerceIn(1f, 3f),
+                                    scaleY = zoom.coerceIn(1f, 3f)
+                                )
+                        )
+                    }
+                }
+                Text("Zoom", color = HelloColors.DarkText, fontWeight = FontWeight.Bold)
+                Slider(
+                    value = zoom,
+                    onValueChange = onZoomChange,
+                    valueRange = 1f..3f
+                )
+                Text(
+                    "The uploaded avatar is saved as a square image, so the chat list, calls, and profile screen all use the same crop.",
+                    color = HelloColors.DarkTextMuted
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onApply) {
+                Text("Save photo", color = HelloColors.DarkAccent)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel", color = HelloColors.DarkTextMuted)
+            }
+        }
+    )
 }
 
 @Composable

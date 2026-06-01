@@ -161,8 +161,13 @@ fun PeopleScreen(
                             ) {
                                 HelloListItem(
                                     title = user.name,
-                                    subtitle = if (user.online == true) "Online" else "Available in Hello",
-                                    leading = { HelloAvatar(user.name, online = user.online == true) },
+                                    subtitle = when {
+                                        user.online == true -> "Online"
+                                        !user.email.isNullOrBlank() -> user.email
+                                        !user.phone.isNullOrBlank() -> user.phone
+                                        else -> "Hello contact"
+                                    },
+                                    leading = { HelloAvatar(user.name, online = user.online == true, imageUrl = user.avatar) },
                                     trailing = {
                                         androidx.compose.foundation.layout.Row {
                                             Checkbox(
