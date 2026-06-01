@@ -5,7 +5,10 @@ import com.glassbox.hello.chat.ChatModels.Message
 import com.glassbox.hello.chat.ChatModels.User
 import com.glassbox.hello.network.HelloApi
 
-class ChatRepository(private val api: HelloApi) {
+class ChatRepository(
+    private val api: HelloApi,
+    private val cloudRepository: CloudChatRepository? = null
+) {
 
     suspend fun fetchUsers(query: String? = null): Result<List<User>> {
         return api.fetchUsers(query)
@@ -23,7 +26,15 @@ class ChatRepository(private val api: HelloApi) {
         return api.fetchChats(userId)
     }
 
-    suspend fun fetchMessages(chatId: String, limit: Int? = null, offset: Int? = null): Result<List<Message>> {
+    suspend fun fetchMessages(
+        chatId: String,
+        limit: Int? = null,
+        offset: Int? = null,
+        cloudChatEnabled: Boolean = false
+    ): Result<List<Message>> {
+        if (cloudChatEnabled && cloudRepository != null) {
+            return cloudRepository.fetchMessages(chatId, limit, offset)
+        }
         return api.fetchMessages(chatId, limit, offset)
     }
 
@@ -38,8 +49,26 @@ class ChatRepository(private val api: HelloApi) {
         attachmentName: String? = null,
         attachmentSize: Long? = null,
         location: ChatModels.LocationData? = null,
-        replyTo: ChatModels.ReplyTo? = null
+        replyTo: ChatModels.ReplyTo? = null,
+        cloudChatEnabled: Boolean = false,
+        chat: Chat? = null
     ): Result<Message> {
+        if (
+            cloudChatEnabled &&
+            cloudRepository != null &&
+            chat != null &&
+            attachmentUrl == null &&
+            attachmentType == null &&
+            location == null
+        ) {
+            return cloudRepository.sendTextMessage(
+                chat = chat,
+                text = text,
+                senderId = senderId,
+                senderName = senderName,
+                senderAvatar = senderAvatar
+            )
+        }
         return api.sendMessage(
             chatId = chatId,
             text = text,

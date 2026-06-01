@@ -173,8 +173,12 @@ fun ChatRoomScreen(
         subtitle
     }
 
-    LaunchedEffect(chat.id) {
-        viewModel.loadMessages(chat.id)
+    LaunchedEffect(Unit) {
+        viewModel.configureCloudChat(context)
+    }
+
+    LaunchedEffect(chat.id, settingsState.cloudChatEnabled) {
+        viewModel.loadMessages(chat.id, cloudChatEnabled = settingsState.cloudChatEnabled)
     }
 
     LaunchedEffect(currentUserId, currentUserName, currentUserAvatar) {
@@ -207,7 +211,7 @@ fun ChatRoomScreen(
 
     LaunchedEffect(listState.firstVisibleItemIndex, hasMoreOlderMessages, hasAutoScrolledInitial, isLoadingOlderMessages) {
         if (hasAutoScrolledInitial && hasMoreOlderMessages && !isLoadingOlderMessages && listState.firstVisibleItemIndex <= 1) {
-            viewModel.loadOlderMessages(chat.id)
+            viewModel.loadOlderMessages(chat.id, cloudChatEnabled = settingsState.cloudChatEnabled)
         }
     }
 
@@ -493,7 +497,9 @@ fun ChatRoomScreen(
             senderName = currentUserName,
             senderAvatar = currentUserAvatar,
             replyTo = replySnapshot,
-            optimisticTempId = optimistic.tempId
+            optimisticTempId = optimistic.tempId,
+            cloudChatEnabled = settingsState.cloudChatEnabled,
+            chat = chat
         )
     }
 
@@ -528,7 +534,9 @@ fun ChatRoomScreen(
             senderName = currentUserName,
             senderAvatar = currentUserAvatar,
             replyTo = replySnapshot,
-            optimisticTempId = optimistic.tempId
+            optimisticTempId = optimistic.tempId,
+            cloudChatEnabled = settingsState.cloudChatEnabled,
+            chat = chat
         )
     }
 
@@ -625,7 +633,7 @@ fun ChatRoomScreen(
                         is ResultState.Loading -> LoadingView()
                         is ResultState.Error -> ErrorView(
                             message = (messagesState as ResultState.Error).message,
-                            onRetry = { viewModel.loadMessages(chat.id) }
+                            onRetry = { viewModel.loadMessages(chat.id, cloudChatEnabled = settingsState.cloudChatEnabled) }
                         )
                         is ResultState.Success -> {
                             if (visibleMessages.isEmpty()) {

@@ -20,6 +20,106 @@ export async function checkChatCloudHealth(useFallback = false): Promise<{
   return res.json();
 }
 
+async function fetchCloudChat(path: string, init?: RequestInit): Promise<Response> {
+  const primary = await fetch(`${CHAT_CLOUD_BASE_URL}${path}`, init).catch(() => null);
+  if (primary?.ok) return primary;
+  const fallback = await fetch(`${CHAT_CLOUD_FALLBACK_URL}${path}`, init);
+  if (!fallback.ok && primary) return primary;
+  return fallback;
+}
+
+export async function upsertCloudChatUser(user: {
+  id: string;
+  name: string;
+  avatar?: string | null;
+}): Promise<User> {
+  const res = await fetchCloudChat("/api/chat/users/upsert", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id: user.id, displayName: user.name, avatarUrl: user.avatar }),
+  });
+  if (!res.ok) throw new Error("Failed to upsert cloud chat user");
+  return res.json();
+}
+
+export async function fetchCloudConversations(userId: string): Promise<Chat[]> {
+  const res = await fetchCloudChat(`/api/chat/conversations?userId=${encodeURIComponent(userId)}`);
+  if (!res.ok) throw new Error("Failed to fetch cloud conversations");
+  return res.json();
+}
+
+export async function createCloudConversation(input: {
+  id?: string;
+  type?: "direct" | "group";
+  title?: string;
+  name?: string;
+  createdBy: string;
+  createdByName?: string;
+  memberIds: string[];
+}): Promise<Chat> {
+  const res = await fetchCloudChat("/api/chat/conversations", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) throw new Error("Failed to create cloud conversation");
+  return res.json();
+}
+
+export async function fetchCloudMessages(
+  conversationId: string,
+  limit = 50,
+  offset = 0,
+): Promise<Message[]> {
+  const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+  const res = await fetchCloudChat(
+    `/api/chat/conversations/${encodeURIComponent(conversationId)}/messages?${params.toString()}`,
+  );
+  if (!res.ok) throw new Error("Failed to fetch cloud messages");
+  return res.json();
+}
+
+export async function sendCloudMessage(
+  conversationId: string,
+  input: {
+    text: string;
+    senderId: string;
+    senderName: string;
+    senderAvatar?: string | null;
+    attachmentId?: string;
+  },
+): Promise<Message> {
+  const res = await fetchCloudChat(`/api/chat/conversations/${encodeURIComponent(conversationId)}/messages`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) throw new Error("Failed to send cloud message");
+  return res.json();
+}
+
+export async function markCloudMessageRead(messageId: string, userId: string): Promise<void> {
+  const res = await fetchCloudChat(`/api/chat/messages/${encodeURIComponent(messageId)}/read`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ userId }),
+  });
+  if (!res.ok) throw new Error("Failed to mark cloud message read");
+}
+
+export async function uploadCloudChatAttachment(
+  file: File,
+): Promise<{ id: string; url: string; mimeType: string; originalName: string; size: number; expiresAt: number }> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await fetchCloudChat("/api/chat/attachments/upload", {
+    method: "POST",
+    body: formData,
+  });
+  if (!res.ok) throw new Error("Failed to upload cloud chat attachment");
+  return res.json();
+}
+
 export async function updateUserPrivacy(
   userId: string,
   lastActivePrivacy: "none" | "contacts" | "everyone",

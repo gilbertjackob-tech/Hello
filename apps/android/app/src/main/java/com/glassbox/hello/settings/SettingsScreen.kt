@@ -270,6 +270,7 @@ private fun AppearanceRows(onOpenChatTheme: () -> Unit) {
     var theme by remember { mutableStateOf(prefs.getString("theme", "system") ?: "system") }
     var enterSends by remember { mutableStateOf(prefs.getBoolean("enter_sends", true)) }
     var chatSounds by remember { mutableStateOf(prefs.getBoolean("chat_sounds", true)) }
+    var cloudChatEnabled by remember { mutableStateOf(prefs.getBoolean("cloud_chat_enabled", false)) }
 
     HelloSettingsRow(
         title = "Chat theme",
@@ -294,6 +295,15 @@ private fun AppearanceRows(onOpenChatTheme: () -> Unit) {
         chatSounds = it
         prefs.edit().putBoolean("chat_sounds", it).apply()
     }
+    ToggleRow("Cloud chat", cloudChatEnabled) {
+        cloudChatEnabled = it
+        prefs.edit().putBoolean("cloud_chat_enabled", it).apply()
+    }
+    Text(
+        "Cloud chat syncs plain text through Cloudflare. Drive photos and videos continue to use the PC backend.",
+        color = HelloColors.DarkTextMuted,
+        modifier = Modifier.padding(horizontal = HelloSpacing.Lg, vertical = HelloSpacing.Xs)
+    )
 }
 
 @Composable

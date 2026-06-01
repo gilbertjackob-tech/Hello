@@ -1,5 +1,6 @@
 package com.glassbox.hello.chat
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.glassbox.hello.chat.ChatModels.Chat
@@ -14,7 +15,7 @@ import kotlinx.coroutines.launch
 
 class ChatViewModel : ViewModel() {
     private val api = HelloApiClient()
-    private val repository = ChatRepository(api)
+    private var repository = ChatRepository(api)
 
     private val _chatsState = MutableStateFlow<ResultState<List<Chat>>>(ResultState.Loading)
     val chatsState: StateFlow<ResultState<List<Chat>>> = _chatsState
@@ -48,6 +49,10 @@ class ChatViewModel : ViewModel() {
 
     companion object {
         private const val MESSAGE_PAGE_SIZE = 50
+    }
+
+    fun configureCloudChat(context: Context) {
+        repository = ChatRepository(api, CloudChatRepository(context.applicationContext))
     }
 
     fun loadUsers(currentUserId: String, query: String? = null) {
@@ -111,7 +116,7 @@ class ChatViewModel : ViewModel() {
         }
     }
 
-    fun loadMessages(chatId: String) {
+    fun loadMessages(chatId: String, cloudChatEnabled: Boolean = false) {
         _messagesPaginationOffset.value = 0
         _hasMoreOlderMessages.value = true
         val hasCached = _messagesState.value is ResultState.Success
@@ -121,7 +126,7 @@ class ChatViewModel : ViewModel() {
             _messagesRefreshing.value = true
         }
         viewModelScope.launch {
-            val result = repository.fetchMessages(chatId, limit = MESSAGE_PAGE_SIZE, offset = 0)
+            val result = repository.fetchMessages(chatId, limit = MESSAGE_PAGE_SIZE, offset = 0, cloudChatEnabled = cloudChatEnabled)
             if (result.isSuccess) {
                 val messages = (result.getOrNull() ?: emptyList()).sortedBy { it.timestamp }.distinctBy { it.id }
                 _messagesState.value = ResultState.Success(messages)
@@ -137,7 +142,7 @@ class ChatViewModel : ViewModel() {
     /**
      * Load older messages for pagination (scroll to top to load history)
      */
-    fun loadOlderMessages(chatId: String) {
+    fun loadOlderMessages(chatId: String, cloudChatEnabled: Boolean = false) {
         if (_isLoadingOlderMessages.value || !_hasMoreOlderMessages.value) return
         
         _isLoadingOlderMessages.value = true
@@ -145,7 +150,8 @@ class ChatViewModel : ViewModel() {
             val result = repository.fetchMessages(
                 chatId,
                 limit = MESSAGE_PAGE_SIZE,
-                offset = _messagesPaginationOffset.value
+                offset = _messagesPaginationOffset.value,
+                cloudChatEnabled = cloudChatEnabled
             )
             if (result.isSuccess) {
                 val newMessages = (result.getOrNull() ?: emptyList()).sortedBy { it.timestamp }.distinctBy { it.id }
@@ -314,7 +320,9 @@ class ChatViewModel : ViewModel() {
         attachmentName: String? = null,
         attachmentSize: Long? = null,
         replyTo: ChatModels.ReplyTo? = null,
-        optimisticTempId: String? = null
+        optimisticTempId: String? = null,
+        cloudChatEnabled: Boolean = false,
+        chat: Chat? = null
     ) {
         _sendMessageState.value = ResultState.Loading
         viewModelScope.launch {
@@ -328,7 +336,9 @@ class ChatViewModel : ViewModel() {
                 attachmentType = attachmentType,
                 attachmentName = attachmentName,
                 attachmentSize = attachmentSize,
-                replyTo = replyTo
+                replyTo = replyTo,
+                cloudChatEnabled = cloudChatEnabled,
+                chat = chat
             )
             _sendMessageState.value = when {
                 result.isSuccess -> {

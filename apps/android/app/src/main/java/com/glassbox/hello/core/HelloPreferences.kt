@@ -13,7 +13,8 @@ data class HelloSettingsState(
     val enterSends: Boolean = true,
     val wallpaper: String = "default",
     val wallpaperOpacity: Int = 100,
-    val chatSounds: Boolean = true
+    val chatSounds: Boolean = true,
+    val cloudChatEnabled: Boolean = false
 )
 
 object HelloPreferences {
@@ -23,6 +24,7 @@ object HelloPreferences {
     const val KEY_WALLPAPER = "wallpaper"
     const val KEY_WALLPAPER_OPACITY = "wallpaper_opacity"
     const val KEY_CHAT_SOUNDS = "chat_sounds"
+    const val KEY_CLOUD_CHAT_ENABLED = "cloud_chat_enabled"
 
     fun prefs(context: Context): SharedPreferences =
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -34,7 +36,8 @@ object HelloPreferences {
             enterSends = prefs.getBoolean(KEY_ENTER_SENDS, true),
             wallpaper = prefs.getString(KEY_WALLPAPER, "default") ?: "default",
             wallpaperOpacity = prefs.getInt(KEY_WALLPAPER_OPACITY, 100),
-            chatSounds = prefs.getBoolean(KEY_CHAT_SOUNDS, true)
+            chatSounds = prefs.getBoolean(KEY_CHAT_SOUNDS, true),
+            cloudChatEnabled = prefs.getBoolean(KEY_CLOUD_CHAT_ENABLED, false)
         )
     }
 
@@ -56,6 +59,10 @@ object HelloPreferences {
 
     fun setChatSounds(context: Context, enabled: Boolean) {
         prefs(context).edit().putBoolean(KEY_CHAT_SOUNDS, enabled).apply()
+    }
+
+    fun setCloudChatEnabled(context: Context, enabled: Boolean) {
+        prefs(context).edit().putBoolean(KEY_CLOUD_CHAT_ENABLED, enabled).apply()
     }
 }
 
