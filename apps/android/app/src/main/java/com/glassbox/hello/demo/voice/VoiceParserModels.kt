@@ -53,3 +53,20 @@ internal data class VoiceParseFeedback(
     val resolvedTarget: String?,
     val timestampMillis: Long
 )
+
+internal data class GeminiVoiceReparseResult(
+    val englishTranscript: String,
+    val englishCommand: String,
+    val intent: String,
+    val route: String,
+    val targetAliasEnglish: String?,
+    val resolvedTargetEnglish: String?,
+    val candidateTargetsEnglish: List<String>,
+    val resolutionStatus: String,
+    val confidence: String,
+    val needsConfirmation: Boolean,
+    val clarificationQuestionEnglish: String?,
+    val wouldDoEnglish: String,
+    val model: String,
+    val keyIndex: Int
+)

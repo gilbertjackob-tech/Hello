@@ -4,9 +4,12 @@ import java.util.Locale
 
 internal object VoiceCommandParser {
     private const val INTENT_START_CALL = "start_call"
+    private const val INTENT_SEND_MESSAGE = "send_message"
+    private const val INTENT_READ_MESSAGE = "read_message"
     private const val INTENT_UNKNOWN = "unknown"
     private const val ROUTE_HELLO_CALL = "hello_call"
     private const val ROUTE_DIRECT_MOBILE_CALL = "direct_mobile_call"
+    private const val ROUTE_HELLO_MESSAGE = "hello_message"
     private const val ROUTE_UNKNOWN = "unknown"
 
     val contacts = listOf(
@@ -56,8 +59,19 @@ internal object VoiceCommandParser {
     private val directMarkers = listOf("direct", "phone", "mobile")
     private val helloMarkers = listOf("hello", "hello app", "call on hello", "কল অন হেলো")
     private val callMarkers = listOf("call")
+    private val sendMessageMarkers = listOf("message", "msg", "sms", "text", "chat")
+    private val readMessageMarkers = listOf("read message", "read msg", "message read", "messages")
     private val targetStopWords = setOf(
         "call",
+        "message",
+        "msg",
+        "sms",
+        "text",
+        "chat",
+        "read",
+        "send",
+        "pathao",
+        "bolo",
         "direct",
         "phone",
         "mobile",
@@ -99,26 +113,34 @@ internal object VoiceCommandParser {
     fun parse(rawTranscript: String): ParsedVoiceCommand {
         val normalizedTranscript = normalizeTranscript(rawTranscript)
         val callIntent = callMarkers.any { normalizedTranscript.hasToken(it) }
-        val route = detectRoute(normalizedTranscript, callIntent)
+        val messageIntent = sendMessageMarkers.any { marker -> normalizedTranscript.containsPhrase(marker) }
+        val readMessageIntent = readMessageMarkers.any { marker -> normalizedTranscript.containsPhrase(marker) }
+        val intent = when {
+            callIntent -> INTENT_START_CALL
+            readMessageIntent -> INTENT_READ_MESSAGE
+            messageIntent -> INTENT_SEND_MESSAGE
+            else -> INTENT_UNKNOWN
+        }
+        val route = detectRoute(normalizedTranscript, intent)
         val contactResolution = resolveContact(normalizedTranscript)
-        val intent = if (callIntent) INTENT_START_CALL else INTENT_UNKNOWN
         val skillMatched = when {
             route == ROUTE_DIRECT_MOBILE_CALL -> ROUTE_DIRECT_MOBILE_CALL
             route == ROUTE_HELLO_CALL -> ROUTE_HELLO_CALL
-            callIntent -> INTENT_START_CALL
+            route == ROUTE_HELLO_MESSAGE -> ROUTE_HELLO_MESSAGE
+            intent != INTENT_UNKNOWN -> intent
             else -> "none"
         }
         val confidence = when {
-            callIntent && contactResolution.status == VoiceResolutionStatus.Exact && route != ROUTE_UNKNOWN -> VoiceCommandConfidence.High
-            callIntent && contactResolution.status == VoiceResolutionStatus.Ambiguous -> VoiceCommandConfidence.Medium
-            callIntent && contactResolution.status == VoiceResolutionStatus.Missing -> VoiceCommandConfidence.Medium
+            intent != INTENT_UNKNOWN && contactResolution.status == VoiceResolutionStatus.Exact && route != ROUTE_UNKNOWN -> VoiceCommandConfidence.High
+            intent != INTENT_UNKNOWN && contactResolution.status == VoiceResolutionStatus.Ambiguous -> VoiceCommandConfidence.Medium
+            intent != INTENT_UNKNOWN && contactResolution.status == VoiceResolutionStatus.Missing -> VoiceCommandConfidence.Medium
             else -> VoiceCommandConfidence.Low
         }
         val needsConfirmation = when {
-            !callIntent -> false
+            intent == INTENT_UNKNOWN -> false
             contactResolution.status == VoiceResolutionStatus.Ambiguous -> true
             contactResolution.status == VoiceResolutionStatus.Missing -> true
-            route == ROUTE_HELLO_CALL -> true
+            route == ROUTE_HELLO_CALL || route == ROUTE_HELLO_MESSAGE -> true
             else -> false
         }
 
@@ -135,7 +157,7 @@ internal object VoiceCommandParser {
             confidence = confidence,
             needsConfirmation = needsConfirmation,
             wouldDo = wouldDo(
-                callIntent = callIntent,
+                intent = intent,
                 route = route,
                 status = contactResolution.status,
                 target = contactResolution.resolvedTarget
@@ -149,9 +171,9 @@ internal object VoiceCommandParser {
             resolutionCandidates = emptyList(),
             resolutionStatus = VoiceResolutionStatus.ExactByClarification,
             confidence = VoiceCommandConfidence.High,
-            needsConfirmation = parsedCommand.route == ROUTE_HELLO_CALL,
+            needsConfirmation = parsedCommand.route == ROUTE_HELLO_CALL || parsedCommand.route == ROUTE_HELLO_MESSAGE,
             wouldDo = wouldDo(
-                callIntent = parsedCommand.intent == INTENT_START_CALL,
+                intent = parsedCommand.intent,
                 route = parsedCommand.route,
                 status = VoiceResolutionStatus.ExactByClarification,
                 target = target
@@ -167,12 +189,13 @@ internal object VoiceCommandParser {
         return normalized.normalizeSpaces()
     }
 
-    private fun detectRoute(normalizedTranscript: String, callIntent: Boolean): String {
+    private fun detectRoute(normalizedTranscript: String, intent: String): String {
         return when {
-            !callIntent -> ROUTE_UNKNOWN
+            intent == INTENT_UNKNOWN -> ROUTE_UNKNOWN
+            intent == INTENT_SEND_MESSAGE || intent == INTENT_READ_MESSAGE -> ROUTE_HELLO_MESSAGE
             directMarkers.any { normalizedTranscript.hasToken(it) } -> ROUTE_DIRECT_MOBILE_CALL
             helloMarkers.any { marker -> normalizedTranscript.contains(normalizeTranscript(marker)) } -> ROUTE_HELLO_CALL
-            callIntent -> ROUTE_HELLO_CALL
+            intent == INTENT_START_CALL -> ROUTE_HELLO_CALL
             else -> ROUTE_UNKNOWN
         }
     }
@@ -218,17 +241,19 @@ internal object VoiceCommandParser {
     }
 
     private fun wouldDo(
-        callIntent: Boolean,
+        intent: String,
         route: String,
         status: VoiceResolutionStatus,
         target: DemoContactTarget?
     ): String {
         return when {
-            !callIntent -> "Would log transcript only"
-            status == VoiceResolutionStatus.Ambiguous -> "Would ask which Hasnat to call"
-            status == VoiceResolutionStatus.Missing -> "Would ask which user to call"
-            target == null -> "Would ask which user to call"
+            intent == INTENT_UNKNOWN -> "Would log transcript only"
+            status == VoiceResolutionStatus.Ambiguous -> "Would ask which user you meant"
+            status == VoiceResolutionStatus.Missing -> "Would ask which user to use"
+            target == null -> "Would ask which user to use"
             route == ROUTE_DIRECT_MOBILE_CALL -> "Would start direct mobile call to ${target.displayName}"
+            intent == INTENT_SEND_MESSAGE -> "Would prepare a Hello message to ${target.displayName} after confirmation"
+            intent == INTENT_READ_MESSAGE -> "Would read Hello messages from ${target.displayName} after confirmation"
             else -> "Would start Hello app call with ${target.displayName} after confirmation"
         }
     }
@@ -249,10 +274,11 @@ internal object VoiceCommandParser {
         val routeScore = when (route) {
             ROUTE_DIRECT_MOBILE_CALL -> 20
             ROUTE_HELLO_CALL -> 12
+            ROUTE_HELLO_MESSAGE -> 12
             else -> 0
         }
         val resolvedScore = if (resolvedTarget != null) 30 else 0
-        val intentScore = if (intent == INTENT_START_CALL) 20 else 0
+        val intentScore = if (intent != INTENT_UNKNOWN) 20 else 0
         return confidenceScore + resolutionScore + routeScore + resolvedScore + intentScore
     }
 

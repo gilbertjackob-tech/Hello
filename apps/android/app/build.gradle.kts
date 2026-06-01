@@ -4,6 +4,21 @@ plugins {
     alias(libs.plugins.ksp)
 }
 
+fun String.asBuildConfigString(): String {
+    return "\"" + replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+}
+
+fun geminiKeysFromPlan(): Map<String, String> {
+    val planFile = rootProject.projectDir.parentFile?.parentFile?.resolve("plan.md")
+    if (planFile?.isFile != true) return emptyMap()
+    val keyPattern = Regex("""(gemini_api\d+)\s*=\s*"([^"]+)"""")
+    return planFile.readLines()
+        .mapNotNull { line ->
+            keyPattern.find(line)?.let { match -> match.groupValues[1] to match.groupValues[2] }
+        }
+        .toMap()
+}
+
 android {
     namespace = "com.glassbox.hello"
     compileSdk {
@@ -25,6 +40,18 @@ android {
             ?: System.getenv("WEBRTC_FORCE_RELAY")?.toBoolean()
             ?: false
         buildConfigField("Boolean", "WEBRTC_FORCE_RELAY", forceRelay.toString())
+
+        val planGeminiKeys = geminiKeysFromPlan()
+        val geminiKeys = listOf(
+            providers.gradleProperty("gemini_api1").orNull
+                ?: System.getenv("GEMINI_API1")
+                ?: planGeminiKeys["gemini_api1"],
+            providers.gradleProperty("gemini_api2").orNull
+                ?: System.getenv("GEMINI_API2")
+                ?: planGeminiKeys["gemini_api2"]
+        ).filterNot { it.isNullOrBlank() }
+            .joinToString(",")
+        buildConfigField("String", "GEMINI_API_KEYS", geminiKeys.asBuildConfigString())
     }
 
     signingConfigs {

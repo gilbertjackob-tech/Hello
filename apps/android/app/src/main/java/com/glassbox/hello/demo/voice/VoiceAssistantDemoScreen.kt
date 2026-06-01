@@ -127,12 +127,17 @@ fun VoiceAssistantDemoScreen(
     val scope = rememberCoroutineScope()
     val history = remember { mutableStateListOf<String>() }
     val feedbackLog = remember { mutableStateListOf<VoiceParseFeedback>() }
+    val deviceContacts = remember { mutableStateListOf<DemoContactTarget>() }
+    val geminiClient = remember { GeminiVoiceReparseClient() }
     var language by remember { mutableStateOf(DemoLanguage.Bangla) }
     var phase by remember { mutableStateOf(DemoPhase.Idle) }
     var livePartial by remember { mutableStateOf("") }
     var finalCommand by remember { mutableStateOf("") }
     var draftCommand by remember { mutableStateOf("") }
     var parseResult by remember { mutableStateOf<VoiceParseResult?>(null) }
+    var geminiReparse by remember { mutableStateOf<GeminiVoiceReparseResult?>(null) }
+    var geminiReparseLoading by remember { mutableStateOf(false) }
+    var geminiReparseError by remember { mutableStateOf<String?>(null) }
     var helperText by remember { mutableStateOf("Say Hello or tap the orb to capture a command.") }
     var recognizer by remember { mutableStateOf<SpeechRecognizer?>(null) }
     var recognitionSession by remember { mutableIntStateOf(0) }
@@ -141,6 +146,11 @@ fun VoiceAssistantDemoScreen(
     var hasAudioPermission by remember {
         mutableStateOf(context.hasAudioPermission())
     }
+    var hasContactsPermission by remember {
+        mutableStateOf(context.hasContactsPermission())
+    }
+    var contactsLoading by remember { mutableStateOf(false) }
+    var contactsError by remember { mutableStateOf<String?>(null) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -154,6 +164,39 @@ fun VoiceAssistantDemoScreen(
         }
     }
 
+    fun loadContactsForParsing() {
+        if (!hasContactsPermission) {
+            contactsError = "Contacts permission is required to search device contacts."
+            return
+        }
+        contactsLoading = true
+        contactsError = null
+        scope.launch {
+            runCatching { context.loadVoiceDemoContacts() }
+                .onSuccess { contacts ->
+                    deviceContacts.clear()
+                    deviceContacts.addAll(contacts)
+                    contactsError = null
+                }
+                .onFailure { error ->
+                    contactsError = error.message ?: "Could not load contacts."
+                }
+            contactsLoading = false
+        }
+    }
+
+    val contactsPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        hasContactsPermission = granted
+        if (granted) {
+            helperText = "Contacts are available for parsing. No calls or messages will be executed."
+            loadContactsForParsing()
+        } else {
+            contactsError = "Contacts permission denied. Gemini will use demo contacts only."
+        }
+    }
+
     fun resetUi(nextPhase: DemoPhase = DemoPhase.Idle) {
         recognitionSession += 1
         timeoutJob?.cancel()
@@ -163,6 +206,9 @@ fun VoiceAssistantDemoScreen(
         draftCommand = ""
         finalCommand = ""
         parseResult = null
+        geminiReparse = null
+        geminiReparseLoading = false
+        geminiReparseError = null
         phase = nextPhase
         helperText = when (nextPhase) {
             DemoPhase.Idle -> "Say Hello or tap the orb to capture a command."
@@ -176,6 +222,28 @@ fun VoiceAssistantDemoScreen(
         return language == DemoLanguage.Bangla && activeLanguage != DemoLanguage.English && !fallbackAttempted
     }
 
+    fun requestGeminiReparse(
+        result: VoiceParseResult,
+        contacts: List<DemoContactTarget> = deviceContacts
+    ) {
+        if (result.chosen == null) return
+        geminiReparse = null
+        geminiReparseError = null
+        geminiReparseLoading = true
+        scope.launch {
+            runCatching { geminiClient.reparse(result, contacts) }
+                .onSuccess { reparse ->
+                    geminiReparse = reparse
+                    geminiReparseError = null
+                }
+                .onFailure { error ->
+                    geminiReparse = null
+                    geminiReparseError = error.message ?: "Gemini reparse failed."
+                }
+            geminiReparseLoading = false
+        }
+    }
+
     fun completeCommand(candidates: List<String>, draft: Boolean = false) {
         val result = VoiceCommandParser.parseCandidates(candidates)
         val chosen = result.chosen
@@ -187,6 +255,7 @@ fun VoiceAssistantDemoScreen(
         }
 
         parseResult = result
+        requestGeminiReparse(result)
         if (draft) {
             draftCommand = chosen.rawTranscript
             finalCommand = ""
@@ -205,6 +274,13 @@ fun VoiceAssistantDemoScreen(
         val current = parseResult?.chosen ?: return
         val clarified = VoiceCommandParser.clarify(current, target)
         parseResult = parseResult?.copy(chosen = clarified)
+        geminiReparse = geminiReparse?.copy(
+            targetAliasEnglish = target.displayName,
+            resolvedTargetEnglish = target.displayName,
+            resolutionStatus = VoiceResolutionStatus.ExactByClarification.name,
+            confidence = VoiceCommandConfidence.High.name,
+            wouldDoEnglish = clarified.wouldDo
+        )
         finalCommand = clarified.rawTranscript
         draftCommand = ""
         helperText = "Clarified target as ${target.displayName}. No real action executed."
@@ -258,6 +334,9 @@ fun VoiceAssistantDemoScreen(
         timeoutJob?.cancel()
         livePartial = ""
         parseResult = null
+        geminiReparse = null
+        geminiReparseLoading = false
+        geminiReparseError = null
         if (mode == RecognitionMode.Command) {
             draftCommand = ""
             finalCommand = ""
@@ -402,6 +481,9 @@ fun VoiceAssistantDemoScreen(
             phase = DemoPhase.PermissionRequired
             helperText = "Microphone permission is required for this isolated voice demo."
         }
+        if (hasContactsPermission) {
+            loadContactsForParsing()
+        }
     }
 
     DisposableEffect(Unit) {
@@ -421,6 +503,13 @@ fun VoiceAssistantDemoScreen(
         finalCommand = finalCommand,
         draftCommand = draftCommand,
         parseResult = parseResult,
+        geminiReparse = geminiReparse,
+        geminiReparseLoading = geminiReparseLoading,
+        geminiReparseError = geminiReparseError,
+        deviceContactsCount = deviceContacts.size,
+        hasContactsPermission = hasContactsPermission,
+        contactsLoading = contactsLoading,
+        contactsError = contactsError,
         helperText = helperText,
         history = history,
         feedbackLog = feedbackLog,
@@ -440,6 +529,8 @@ fun VoiceAssistantDemoScreen(
                 helperText = "Copied recognized command."
             }
         },
+        onRequestContacts = { contactsPermissionLauncher.launch(Manifest.permission.READ_CONTACTS) },
+        onReloadContacts = { loadContactsForParsing() },
         onClarifyTarget = ::clarifyTarget,
         onRate = ::rateCommand
     )
@@ -453,6 +544,13 @@ private fun VoiceAssistantDemoContent(
     finalCommand: String,
     draftCommand: String,
     parseResult: VoiceParseResult?,
+    geminiReparse: GeminiVoiceReparseResult?,
+    geminiReparseLoading: Boolean,
+    geminiReparseError: String?,
+    deviceContactsCount: Int,
+    hasContactsPermission: Boolean,
+    contactsLoading: Boolean,
+    contactsError: String?,
     helperText: String,
     history: List<String>,
     feedbackLog: List<VoiceParseFeedback>,
@@ -463,6 +561,8 @@ private fun VoiceAssistantDemoContent(
     onStop: () -> Unit,
     onRequestPermission: () -> Unit,
     onCopy: () -> Unit,
+    onRequestContacts: () -> Unit,
+    onReloadContacts: () -> Unit,
     onClarifyTarget: (DemoContactTarget) -> Unit,
     onRate: (Int) -> Unit
 ) {
@@ -505,7 +605,15 @@ private fun VoiceAssistantDemoContent(
             LanguageSelector(selected = language, onSelected = onLanguageSelected)
         }
         item {
-            RecognitionSettingsPanel(language = language)
+            RecognitionSettingsPanel(
+                language = language,
+                deviceContactsCount = deviceContactsCount,
+                hasContactsPermission = hasContactsPermission,
+                contactsLoading = contactsLoading,
+                contactsError = contactsError,
+                onRequestContacts = onRequestContacts,
+                onReloadContacts = onReloadContacts
+            )
         }
         item {
             GlowingVoiceOrb(
@@ -542,6 +650,9 @@ private fun VoiceAssistantDemoContent(
                 finalCommand = finalCommand,
                 draftCommand = draftCommand,
                 parseResult = parseResult,
+                geminiReparse = geminiReparse,
+                geminiReparseLoading = geminiReparseLoading,
+                geminiReparseError = geminiReparseError,
                 history = history,
                 feedbackLog = feedbackLog,
                 onCopy = onCopy,
@@ -584,7 +695,15 @@ private fun LanguageSelector(
 }
 
 @Composable
-private fun RecognitionSettingsPanel(language: DemoLanguage) {
+private fun RecognitionSettingsPanel(
+    language: DemoLanguage,
+    deviceContactsCount: Int,
+    hasContactsPermission: Boolean,
+    contactsLoading: Boolean,
+    contactsError: String?,
+    onRequestContacts: () -> Unit,
+    onReloadContacts: () -> Unit
+) {
     HelloPanel(modifier = Modifier.fillMaxWidth(), strong = false, shape = HelloShapes.Md) {
         Column(
             modifier = Modifier.padding(HelloSpacing.Md),
@@ -602,6 +721,26 @@ private fun RecognitionSettingsPanel(language: DemoLanguage) {
             ParserLogRow("Complete silence", "$COMPLETE_SILENCE_MS ms")
             ParserLogRow("Possibly complete silence", "$POSSIBLY_COMPLETE_SILENCE_MS ms")
             ParserLogRow("Max results", MAX_RECOGNITION_RESULTS.toString())
+            ParserLogRow(
+                "Contact directory",
+                if (hasContactsPermission) "$deviceContactsCount device contacts loaded" else "Demo contacts only"
+            )
+            contactsError?.let {
+                Text(it, color = HelloColors.DarkDanger, style = MaterialTheme.typography.bodySmall)
+            }
+            OutlinedButton(
+                onClick = if (hasContactsPermission) onReloadContacts else onRequestContacts,
+                enabled = !contactsLoading,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    when {
+                        contactsLoading -> "Loading contacts"
+                        hasContactsPermission -> "Reload contacts"
+                        else -> "Allow contacts for parsing"
+                    }
+                )
+            }
         }
     }
 }
@@ -758,6 +897,9 @@ private fun TranscriptPanel(
     finalCommand: String,
     draftCommand: String,
     parseResult: VoiceParseResult?,
+    geminiReparse: GeminiVoiceReparseResult?,
+    geminiReparseLoading: Boolean,
+    geminiReparseError: String?,
     history: List<String>,
     feedbackLog: List<VoiceParseFeedback>,
     onCopy: () -> Unit,
@@ -799,6 +941,11 @@ private fun TranscriptPanel(
                 parseResult = parseResult,
                 onClarifyTarget = onClarifyTarget,
                 onRate = onRate
+            )
+            GeminiReparsePanel(
+                reparse = geminiReparse,
+                loading = geminiReparseLoading,
+                error = geminiReparseError
             )
             FeedbackLogPanel(feedbackLog = feedbackLog)
             RecentCommandsPanel(history = history)
@@ -860,6 +1007,51 @@ private fun DemoParserLogPanel(
             )
         }
         RatingPanel(onRate = onRate)
+    }
+}
+
+@Composable
+private fun GeminiReparsePanel(
+    reparse: GeminiVoiceReparseResult?,
+    loading: Boolean,
+    error: String?
+) {
+    Text(
+        "Gemini English reparse",
+        color = HelloColors.DarkText,
+        style = MaterialTheme.typography.titleSmall,
+        fontWeight = FontWeight.Bold
+    )
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(Color.White.copy(alpha = 0.05f))
+            .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(14.dp))
+            .padding(HelloSpacing.Md),
+        verticalArrangement = Arrangement.spacedBy(HelloSpacing.Xs)
+    ) {
+        when {
+            loading -> Text("Reparsing with Gemini 2.5 Flash-Lite...", color = HelloColors.DarkTextMuted)
+            error != null -> Text(error, color = HelloColors.DarkDanger, style = MaterialTheme.typography.bodyMedium)
+            reparse == null -> Text("AI reparse will appear after a command is detected.", color = HelloColors.DarkTextMuted)
+            else -> {
+                ParserLogRow("English transcript", reparse.englishTranscript)
+                ParserLogRow("English command", reparse.englishCommand)
+                ParserLogRow("Intent", reparse.intent)
+                ParserLogRow("Route", reparse.route)
+                ParserLogRow("Target alias English", reparse.targetAliasEnglish.orEmpty())
+                ParserLogRow("Resolved target English", reparse.resolvedTargetEnglish.orEmpty())
+                ParserLogRow("Candidate targets", reparse.candidateTargetsEnglish.joinToString(", "))
+                ParserLogRow("Resolution status", reparse.resolutionStatus)
+                ParserLogRow("Confidence", reparse.confidence)
+                ParserLogRow("Needs confirmation", reparse.needsConfirmation.toString())
+                ParserLogRow("Hello asks", reparse.clarificationQuestionEnglish.orEmpty())
+                ParserLogRow("Would do English", reparse.wouldDoEnglish)
+                ParserLogRow("Model", reparse.model)
+                ParserLogRow("API key used", "Key ${reparse.keyIndex}")
+            }
+        }
     }
 }
 
@@ -1011,6 +1203,10 @@ private fun TranscriptBlock(
 
 private fun Context.hasAudioPermission(): Boolean {
     return ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+}
+
+private fun Context.hasContactsPermission(): Boolean {
+    return ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED
 }
 
 private fun recognizerIntent(language: DemoLanguage): Intent {
