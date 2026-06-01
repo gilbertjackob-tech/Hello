@@ -41,11 +41,11 @@ import {
   getMediaCaptureReadinessError,
   requestUserMediaWithDiagnostics,
 } from "../mediaPermissions";
+import { CALL_API_BASE } from "../api";
 
 const DEFAULT_ICE_SERVERS: RTCIceServer[] = [
   { urls: "stun:stun.l.google.com:19302" },
 ];
-const HELLO_API_BASE = "/hello/api";
 const FORCE_RELAY = (import.meta as any).env?.VITE_WEBRTC_FORCE_RELAY === "true";
 
 const applyRelayPolicy = (config: RTCConfiguration): RTCConfiguration =>
@@ -527,7 +527,7 @@ export function CallOverlay({ currentUser }: CallOverlayProps) {
 
   useEffect(() => {
     let cancelled = false;
-    fetch(`${HELLO_API_BASE}/calls/ice-config`)
+    fetch(`${CALL_API_BASE}/calls/ice-config`)
       .then((res) => (res.ok ? res.json() : null))
       .then((config) => {
         if (!cancelled && Array.isArray(config?.iceServers) && config.iceServers.length > 0) {
@@ -771,7 +771,7 @@ export function CallOverlay({ currentUser }: CallOverlayProps) {
   };
 
   const createCallLog = async (data: Omit<CallData, "callId">) => {
-    const res = await fetch(`${HELLO_API_BASE}/calls`, {
+    const res = await fetch(`${CALL_API_BASE}/calls`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -2082,7 +2082,7 @@ export function CallOverlay({ currentUser }: CallOverlayProps) {
       }
 
       try {
-        const res = await fetch(`${HELLO_API_BASE}/call-rooms`, {
+        const res = await fetch(`${CALL_API_BASE}/call-rooms`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -2759,7 +2759,7 @@ export function CallOverlay({ currentUser }: CallOverlayProps) {
     }
     try {
       const res = await fetch(
-        `${HELLO_API_BASE}/call-rooms/${activeGroupRoom.id}/join`,
+        `${CALL_API_BASE}/call-rooms/${activeGroupRoom.id}/join`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -2800,7 +2800,7 @@ export function CallOverlay({ currentUser }: CallOverlayProps) {
     const room = activeGroupRoomRef.current;
     if (!room) return;
     try {
-      await fetch(`${HELLO_API_BASE}/call-rooms/${room.id}/leave`, {
+      await fetch(`${CALL_API_BASE}/call-rooms/${room.id}/leave`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ userId: currentUser.id, ended }),

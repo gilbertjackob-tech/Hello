@@ -32,7 +32,9 @@ class HelloApiClient : HelloApi {
     private val client = sharedClient
     private val gson = Gson()
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
-    private val baseUrl = AppConfig.HELLO_API_BASE
+    private val baseUrl = AppConfig.CHAT_API_BASE
+    private val callBaseUrl = AppConfig.CALL_API_BASE
+    private val driveBaseUrl = AppConfig.DRIVE_API_BASE
 
     override suspend fun register(name: String, securityQuestion: String, securityAnswer: String): Result<User> = safeApiCall {
         val response = post("$baseUrl/register", mapOf("name" to name, "securityQuestion" to securityQuestion, "securityAnswer" to securityAnswer))
@@ -102,11 +104,11 @@ class HelloApiClient : HelloApi {
 
     override suspend fun fetchCalls(userId: String): Result<List<ChatModels.CallHistoryItem>> = safeApiCall {
         val type = object : TypeToken<List<ChatModels.CallHistoryItem>>() {}.type
-        gson.fromJson(get("$baseUrl/calls?userId=${encodeQueryValue(userId)}"), type)
+        gson.fromJson(get("$callBaseUrl/calls?userId=${encodeQueryValue(userId)}"), type)
     }
 
     override suspend fun fetchCallIceServers(): Result<List<CallIceServer>> = safeApiCall {
-        val response = get("$baseUrl/calls/ice-config")
+        val response = get("$callBaseUrl/calls/ice-config")
         val responseMap = gson.fromJson(response, Map::class.java)
         val rawServers = responseMap["iceServers"] ?: emptyList<Any>()
         val type = object : TypeToken<List<CallIceServer>>() {}.type
@@ -122,7 +124,7 @@ class HelloApiClient : HelloApi {
         startedAt: Long
     ): Result<String> = safeApiCall {
         val response = post(
-            "$baseUrl/calls",
+            "$callBaseUrl/calls",
             mapOf(
                 "callerId" to callerId,
                 "calleeId" to calleeId,
@@ -145,7 +147,7 @@ class HelloApiClient : HelloApi {
         participantIds: List<String>
     ): Result<CallRoom> = safeApiCall {
         val response = post(
-            "$baseUrl/call-rooms",
+            "$callBaseUrl/call-rooms",
             mapOf(
                 "chatId" to chatId,
                 "hostId" to hostId,
@@ -157,17 +159,17 @@ class HelloApiClient : HelloApi {
     }
 
     override suspend fun fetchCallRoom(roomId: String): Result<CallRoom> = safeApiCall {
-        gson.fromJson(get("$baseUrl/call-rooms/${encodePathValue(roomId)}"), CallRoom::class.java)
+        gson.fromJson(get("$callBaseUrl/call-rooms/${encodePathValue(roomId)}"), CallRoom::class.java)
     }
 
     override suspend fun joinCallRoom(roomId: String, userId: String): Result<CallRoom> = safeApiCall {
-        val response = post("$baseUrl/call-rooms/${encodePathValue(roomId)}/join", mapOf("userId" to userId))
+        val response = post("$callBaseUrl/call-rooms/${encodePathValue(roomId)}/join", mapOf("userId" to userId))
         gson.fromJson(response, CallRoom::class.java)
     }
 
     override suspend fun leaveCallRoom(roomId: String, userId: String, ended: Boolean): Result<CallRoom> = safeApiCall {
         val response = post(
-            "$baseUrl/call-rooms/${encodePathValue(roomId)}/leave",
+            "$callBaseUrl/call-rooms/${encodePathValue(roomId)}/leave",
             mapOf("userId" to userId, "ended" to ended)
         )
         gson.fromJson(response, CallRoom::class.java)
@@ -278,7 +280,7 @@ class HelloApiClient : HelloApi {
 
     override suspend fun fetchDriveItems(limit: Int, before: Long?): Result<DriveItemsResponse> = safeApiCall {
         val url = buildString {
-            append("$baseUrl/drive/items?limit=$limit")
+            append("$driveBaseUrl/drive/items?limit=$limit")
             if (before != null) append("&before=$before")
         }
         val response = get(url)
@@ -291,12 +293,12 @@ class HelloApiClient : HelloApi {
             .addFormDataPart("uploaderId", uploaderId)
             .addFormDataPart("files", fileName, bytes.toRequestBody(mimeType.toMediaType()))
             .build()
-        val response = request(Request.Builder().url("$baseUrl/drive/upload").post(body).build())
+        val response = request(Request.Builder().url("$driveBaseUrl/drive/upload").post(body).build())
         gson.fromJson(response, DriveUploadResponse::class.java)
     }
 
     override suspend fun deleteDriveItem(itemId: String): Result<Unit> = safeApiCall {
-        delete("$baseUrl/drive/items/${encodePathValue(itemId)}", emptyMap())
+        delete("$driveBaseUrl/drive/items/${encodePathValue(itemId)}", emptyMap())
         Unit
     }
 

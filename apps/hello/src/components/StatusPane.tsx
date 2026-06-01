@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { CircleDashed, Plus, X, Type, Image as ImageIcon, Send, Clock, Eye } from "lucide-react";
 import { User } from "../types";
 import { cn } from "../lib/utils";
-import { API_BASE } from "../api";
+import { CHAT_API_BASE } from "../api";
 
 interface StatusPaneProps {
   currentUser: User;
@@ -40,7 +40,7 @@ export function StatusPane({ currentUser }: StatusPaneProps) {
 
   const fetchStatuses = async () => {
     try {
-      const res = await fetch(`${API_BASE}/statuses?userId=${currentUser.id}`);
+      const res = await fetch(`${CHAT_API_BASE}/statuses?userId=${currentUser.id}`);
       if (res.ok) {
         setStatuses(await res.json());
       }
@@ -66,7 +66,7 @@ export function StatusPane({ currentUser }: StatusPaneProps) {
       if (createFile) {
         const formData = new FormData();
         formData.append("file", createFile);
-        const uploadRes = await fetch(`${API_BASE}/files/upload`, {
+        const uploadRes = await fetch(`${CHAT_API_BASE}/files/upload`, {
           method: "POST",
           body: formData,
         });
@@ -77,7 +77,7 @@ export function StatusPane({ currentUser }: StatusPaneProps) {
         }
       }
 
-      const res = await fetch(`${API_BASE}/statuses`, {
+      const res = await fetch(`${CHAT_API_BASE}/statuses`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -102,7 +102,7 @@ export function StatusPane({ currentUser }: StatusPaneProps) {
 
   const markViewed = async (statusId: string) => {
     try {
-      await fetch(`${API_BASE}/statuses/${statusId}/view`, {
+      await fetch(`${CHAT_API_BASE}/statuses/${statusId}/view`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ userId: currentUser.id })

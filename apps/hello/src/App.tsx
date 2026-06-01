@@ -14,7 +14,7 @@ import { ThemeProvider } from "./ThemeContext";
 import { NotificationProvider } from "./NotificationContext";
 import { ToastProvider } from "./ToastContext";
 import { cn } from "./lib/utils";
-import { API_BASE } from "./api";
+import { CHAT_API_BASE } from "./api";
 import {
   Menu,
   ArrowLeft,
@@ -90,7 +90,7 @@ export default function App() {
 
     async function validateCurrentUser() {
       try {
-        const res = await fetch(`${API_BASE}/users/${currentUser.id}`);
+        const res = await fetch(`${CHAT_API_BASE}/users/${currentUser.id}`);
 
         if (cancelled) return;
 

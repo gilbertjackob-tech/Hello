@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 import { Chat, User } from "../types";
 import { cn, formatLastActive } from "../lib/utils";
-import { API_BASE, fetchChatAttachments } from "../api";
+import { fetchChatAttachments } from "../api";
 
 interface ContactInfoPanelProps {
   chat: Chat;

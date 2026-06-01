@@ -166,11 +166,14 @@ apps/hello/src/components/CallOverlay.tsx
 Current frontend path rules:
 
 ```text
-Hello API client:       API_BASE = "/hello/api"
-Hello Socket.IO client: io(window.location.origin, { path: "/hello/socket.io" })
-Hello call REST paths:  "/hello/api/calls", "/hello/api/call-rooms"
-Hello file uploads:     upload response URL from server, currently under "/hello/api/files/:fileId"
-Hello Drive paths:      "/hello/api/drive/items", "/hello/api/drive/upload"
+Default local API:      API_BASE = "/hello/api"
+Chat API client:        CHAT_API_BASE = VITE_CHAT_API_BASE || API_BASE
+Call API client:        CALL_API_BASE = VITE_CALL_API_BASE || CHAT_API_BASE
+Drive API client:       DRIVE_API_BASE = VITE_DRIVE_API_BASE || API_BASE
+Chat Socket.IO client:  VITE_CHAT_SOCKET_ORIGIN || window.location.origin
+Chat Socket.IO path:    VITE_CHAT_SOCKET_PATH || "/hello/socket.io"
+Hello file uploads:     Chat/status attachments go through CHAT_API_BASE
+Hello Drive paths:      Drive photos/videos go through DRIVE_API_BASE only
 ```
 
 Avoid hardcoding:
@@ -345,6 +348,8 @@ Both should return `200` with an image content type when the file exists in `dat
 
 Family Drive is a central family photo/video library for Hello mobile and web. It intentionally avoids folders, sub-folders, passwords, recent sections, and shared-folder logic. All media is shown latest-to-oldest and grouped by month.
 
+Drive media must stay on the PC backend. It should not be routed through the Cloudflare chat/call backend or temporary attachment storage.
+
 Backend:
 
 ```text
@@ -393,6 +398,32 @@ Android native:
   WorkManager retries pending uploads when network connectivity is available.
   A Family Drive notification is shown after pending uploads complete.
 ```
+
+## Split Runtime Targets
+
+The app is prepared for separate Drive, Chat, and Calling backends while preserving the current local/Tailscale server as the default:
+
+```text
+Drive:
+  Target domain: home.bookhelloctg.com
+  Web env:       VITE_DRIVE_API_BASE
+  Android:       AppConfig.DRIVE_API_BASE
+  Storage:       PC backend only, data/hello/family-drive/YYYY/MM/
+
+Chat:
+  Target domain: chat.bookhelloctg.com
+  Web env:       VITE_CHAT_API_BASE, VITE_CHAT_SOCKET_ORIGIN, VITE_CHAT_SOCKET_PATH
+  Android:       AppConfig.CHAT_API_BASE, AppConfig.CHAT_SOCKET_ORIGIN, AppConfig.CHAT_SOCKET_PATH
+  Storage goal:  Cloudflare Worker + D1 metadata + Durable Objects/WebSockets + temporary R2 attachments
+
+Calling:
+  Target domain: call.bookhelloctg.com
+  Web env:       VITE_CALL_API_BASE
+  Android:       AppConfig.CALL_API_BASE
+  Routing goal:  Cloudflare Worker + Durable Object signaling, direct WebRTC first, TURN/SFU fallback later
+```
+
+Until those Cloudflare services are deployed, these targets intentionally default to the existing `/hello/api` and `/hello/socket.io` backend so web and native builds remain runnable.
 
 ## Data And Persistence
 

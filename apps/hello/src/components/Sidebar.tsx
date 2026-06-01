@@ -39,7 +39,8 @@ import {
   fetchStarredMessages,
   fetchUsers,
   createDirectChat,
-  API_BASE,
+  CHAT_API_BASE,
+  CALL_API_BASE,
 } from "../api";
 import { cn, formatLastActive } from "../lib/utils";
 import { useTheme } from "../ThemeContext";
@@ -565,7 +566,7 @@ export function Sidebar({
   const refreshCallLogs = useCallback(async () => {
     if (typeof window === "undefined") return;
     try {
-      const res = await fetch(`${API_BASE}/calls?userId=${encodeURIComponent(currentUser.id)}`);
+      const res = await fetch(`${CALL_API_BASE}/calls?userId=${encodeURIComponent(currentUser.id)}`);
       if (!res.ok) {
         throw new Error(`Failed to fetch calls: ${res.status}`);
       }
@@ -735,7 +736,7 @@ export function Sidebar({
       const data = await uploadFile(croppedFile, currentUser.id);
       const newAvatarUrl = data.url;
 
-      const res = await fetch(`${API_BASE}/users/${currentUser.id}/profile`, {
+      const res = await fetch(`${CHAT_API_BASE}/users/${currentUser.id}/profile`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ avatar: newAvatarUrl }),
@@ -1118,7 +1119,7 @@ export function Sidebar({
                 }
                 onBlur={async (e) => {
                    try {
-                     const res = await fetch(`${API_BASE}/users/${currentUser.id}/profile`, {
+                     const res = await fetch(`${CHAT_API_BASE}/users/${currentUser.id}/profile`, {
                         method: "PUT",
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({ name: e.target.value })

@@ -4,8 +4,18 @@ import com.glassbox.hello.BuildConfig
 
 object AppConfig {
     const val SERVER_ORIGIN = "https://desktop-8u23cj0.tail69a9e8.ts.net"
+    const val CHAT_SERVER_ORIGIN = SERVER_ORIGIN
+    const val CALL_SERVER_ORIGIN = SERVER_ORIGIN
+    const val DRIVE_SERVER_ORIGIN = SERVER_ORIGIN
     const val HELLO_API_BASE = "$SERVER_ORIGIN/hello/api"
+    const val CHAT_API_BASE = "$CHAT_SERVER_ORIGIN/hello/api"
+    const val CALL_API_BASE = "$CALL_SERVER_ORIGIN/hello/api"
+    const val DRIVE_API_BASE = "$DRIVE_SERVER_ORIGIN/hello/api"
+    const val CHAT_SOCKET_ORIGIN = CHAT_SERVER_ORIGIN
+    const val CALL_SOCKET_ORIGIN = CALL_SERVER_ORIGIN
     const val HELLO_SOCKET_PATH = "/hello/socket.io"
+    const val CHAT_SOCKET_PATH = HELLO_SOCKET_PATH
+    const val CALL_SOCKET_PATH = HELLO_SOCKET_PATH
     const val HELLO_UPLOADS_BASE = "$SERVER_ORIGIN/hello/uploads"
     const val HELLO_STATUS_URL = "$SERVER_ORIGIN/api/hello/status"
     const val HELLO_HEALTH_URL = "$SERVER_ORIGIN/hello/api/health"

@@ -17,6 +17,10 @@ object UrlResolver {
             value.startsWith("file_") -> "/hello/uploads/$value"
             else -> "/hello/uploads/$value"
         }
-        return AppConfig.SERVER_ORIGIN.trimEnd('/') + path
+        val origin = when {
+            path.startsWith("/hello/api/drive/") -> AppConfig.DRIVE_SERVER_ORIGIN
+            else -> AppConfig.CHAT_SERVER_ORIGIN
+        }
+        return origin.trimEnd('/') + path
     }
 }

@@ -2,6 +2,10 @@ import { createContext, useContext, useEffect, useState, ReactNode } from 'react
 import { io, Socket } from 'socket.io-client';
 import { User } from './types';
 
+const env = (import.meta as any).env || {};
+const CHAT_SOCKET_ORIGIN = env.VITE_CHAT_SOCKET_ORIGIN || window.location.origin;
+const CHAT_SOCKET_PATH = env.VITE_CHAT_SOCKET_PATH || "/hello/socket.io";
+
 interface SocketContextType {
   socket: Socket | null;
   isConnected: boolean;
@@ -16,8 +20,8 @@ export const SocketProvider = ({ children, currentUser }: { children: ReactNode;
   const [isConnected, setIsConnected] = useState(false);
 
   useEffect(() => {
-    const socketInstance = io(window.location.origin, {
-        path: "/hello/socket.io",
+    const socketInstance = io(CHAT_SOCKET_ORIGIN, {
+        path: CHAT_SOCKET_PATH,
         transports: ["websocket", "polling"],
         reconnectionAttempts: 5,
         reconnectionDelay: 1000,

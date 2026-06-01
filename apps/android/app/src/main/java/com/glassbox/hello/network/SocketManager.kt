@@ -65,14 +65,14 @@ class SocketManager private constructor() : CallSocket {
         }
 
         val options = IO.Options().apply {
-            path = AppConfig.HELLO_SOCKET_PATH
+            path = AppConfig.CHAT_SOCKET_PATH
             transports = arrayOf("websocket", "polling")
             reconnection = true
             reconnectionAttempts = 5
             reconnectionDelay = 1000
         }
 
-        val nextSocket = IO.socket(AppConfig.SERVER_ORIGIN, options).also { s ->
+        val nextSocket = IO.socket(AppConfig.CHAT_SOCKET_ORIGIN, options).also { s ->
             s.on(Socket.EVENT_CONNECT) {
                 synchronized(socketLock) {
                     isConnecting = false
