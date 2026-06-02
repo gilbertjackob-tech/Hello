@@ -39,11 +39,11 @@ import {
   fetchStarredMessages,
   fetchUsers,
   createDirectChat,
-  CALL_API_BASE,
   upsertCloudChatUser,
   uploadCloudUserAvatar,
   fetchCloudContacts,
   addCloudContact,
+  fetchCloudCallHistory,
 } from "../api";
 import { cn, formatLastActive } from "../lib/utils";
 import { useTheme } from "../ThemeContext";
@@ -603,12 +603,7 @@ export function Sidebar({
   const refreshCallLogs = useCallback(async () => {
     if (typeof window === "undefined") return;
     try {
-      const res = await fetch(`${CALL_API_BASE}/calls?userId=${encodeURIComponent(currentUser.id)}`);
-      if (!res.ok) {
-        throw new Error(`Failed to fetch calls: ${res.status}`);
-      }
-      const data = await res.json();
-      setCallLogs(Array.isArray(data) ? data : []);
+      setCallLogs(await fetchCloudCallHistory(currentUser.id));
     } catch (err) {
       console.error(err);
       setCallLogs([]);

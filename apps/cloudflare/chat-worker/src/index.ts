@@ -3,6 +3,9 @@ export interface Env {
   TEMP_FILES: R2Bucket;
   REALTIME_ROOM: DurableObjectNamespace;
   ENABLE_DEBUG_BINDINGS?: string;
+  TURN_URLS?: string;
+  TURN_USERNAME?: string;
+  TURN_CREDENTIAL?: string;
 }
 
 type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
@@ -278,6 +281,65 @@ async function ensureCloudAccountSchema(env: Env): Promise<void> {
             archived INTEGER NOT NULL DEFAULT 0,
             updated_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
             PRIMARY KEY (user_id, conversation_id)
+          )
+        `,
+      ).run();
+      await env.DB.prepare(
+        `
+          CREATE TABLE IF NOT EXISTS call_sessions (
+            id TEXT PRIMARY KEY,
+            chat_id TEXT NOT NULL,
+            caller_user_id TEXT NOT NULL,
+            receiver_user_id TEXT NOT NULL,
+            type TEXT NOT NULL DEFAULT 'audio',
+            status TEXT NOT NULL DEFAULT 'ringing',
+            started_at INTEGER NOT NULL,
+            answered_at INTEGER,
+            ended_at INTEGER,
+            end_reason TEXT,
+            created_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
+            updated_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
+          )
+        `,
+      ).run();
+      await ensureColumn(env, "call_sessions", "mode", "TEXT NOT NULL DEFAULT 'direct'").catch(() => undefined);
+      await ensureColumn(env, "call_sessions", "max_participants", "INTEGER NOT NULL DEFAULT 2").catch(() => undefined);
+      await env.DB.prepare(
+        `
+          CREATE TABLE IF NOT EXISTS call_participants (
+            call_id TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            role TEXT NOT NULL,
+            joined_at INTEGER,
+            left_at INTEGER,
+            PRIMARY KEY (call_id, user_id)
+          )
+        `,
+      ).run();
+      await env.DB.prepare(
+        `
+          CREATE TABLE IF NOT EXISTS call_events (
+            id TEXT PRIMARY KEY,
+            call_id TEXT NOT NULL,
+            event_type TEXT NOT NULL,
+            sender_user_id TEXT,
+            receiver_user_id TEXT,
+            payload_json TEXT NOT NULL,
+            created_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
+          )
+        `,
+      ).run();
+      await env.DB.prepare(
+        `
+          CREATE TABLE IF NOT EXISTS device_push_tokens (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            token TEXT NOT NULL,
+            platform TEXT,
+            device_name TEXT,
+            created_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
+            updated_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
+            UNIQUE (user_id, token)
           )
         `,
       ).run();
@@ -820,6 +882,451 @@ async function updateChatPreferences(env: Env, request: Request): Promise<Respon
   return getChatPreferences(env, request);
 }
 
+function callEventName(input: string): string {
+  const normalized = input.trim();
+  if (normalized === "incoming_call") return "call:start";
+  if (normalized === "call_accepted") return "call:accepted";
+  if (normalized === "call_rejected") return "call:declined";
+  if (normalized === "call_ended") return "call:ended";
+  if (normalized === "webrtc_offer") return "call:offer";
+  if (normalized === "webrtc_answer") return "call:answer";
+  if (normalized === "ice_candidate") return "call:ice-candidate";
+  if (normalized === "participant_left") return "call:ended";
+  return normalized || "call:event";
+}
+
+async function callRowFor(env: Env, callId: string): Promise<any> {
+  return env.DB.prepare(
+    `
+      SELECT id, chat_id AS chatId, caller_user_id AS callerId, receiver_user_id AS calleeId,
+        type, status, started_at AS startedAt, answered_at AS answeredAt,
+        ended_at AS endedAt, end_reason AS endReason,
+        COALESCE(mode, 'direct') AS mode,
+        COALESCE(max_participants, 2) AS maxParticipants
+      FROM call_sessions
+      WHERE id = ?
+    `,
+  ).bind(callId).first<any>();
+}
+
+async function callParticipantIds(env: Env, callId: string): Promise<string[]> {
+  const rows = await env.DB.prepare(
+    "SELECT user_id AS userId FROM call_participants WHERE call_id = ? ORDER BY joined_at IS NULL ASC, joined_at ASC",
+  ).bind(callId).all<any>();
+  return (rows.results || []).map((row: any) => row.userId).filter(Boolean);
+}
+
+async function conversationMemberIds(env: Env, conversationId: string): Promise<string[]> {
+  const rows = await env.DB.prepare(
+    "SELECT user_id AS userId FROM conversation_members WHERE conversation_id = ?",
+  ).bind(conversationId).all<any>();
+  return (rows.results || []).map((row: any) => row.userId).filter(Boolean);
+}
+
+async function isCallParticipant(env: Env, callId: string, userId: string): Promise<boolean> {
+  const row = await env.DB.prepare(
+    "SELECT 1 FROM call_participants WHERE call_id = ? AND user_id = ?",
+  ).bind(callId, userId).first<any>();
+  return !!row;
+}
+
+function callPayload(row: any, extra: JsonObject = {}): JsonObject {
+  return {
+    callId: row.id,
+    chatId: row.chatId,
+    callerId: row.callerId,
+    calleeId: row.calleeId,
+    fromUserId: extra.fromUserId || row.callerId,
+    toUserId: extra.toUserId || row.calleeId,
+    type: row.type || "audio",
+    callType: row.type || "audio",
+    isVideo: row.type === "video",
+    mode: row.mode || "direct",
+    maxParticipants: row.maxParticipants || (row.mode === "group" ? 4 : 2),
+    status: row.status,
+    startedAt: row.startedAt,
+    answeredAt: row.answeredAt || null,
+    endedAt: row.endedAt || null,
+    endReason: row.endReason || null,
+    ...extra,
+  };
+}
+
+async function callRoomPayload(env: Env, row: any): Promise<JsonObject> {
+  const participantIds = await callParticipantIds(env, row.id);
+  return {
+    id: row.id,
+    callId: row.id,
+    roomId: row.id,
+    chatId: row.chatId,
+    hostId: row.callerId,
+    mode: row.mode || "group",
+    type: row.type || "audio",
+    callType: row.type || "audio",
+    status: row.status,
+    maxParticipants: row.maxParticipants || 4,
+    participantIds,
+    participants: participantIds.map((id) => ({ id, isHost: id === row.callerId })),
+    createdAt: row.startedAt,
+    endedAt: row.endedAt || null,
+    endedBy: row.endReason || null,
+  };
+}
+
+async function recordCallEvent(env: Env, callId: string, event: string, payload: JsonObject): Promise<void> {
+  await env.DB.prepare(
+    `
+      INSERT INTO call_events (id, call_id, event_type, sender_user_id, receiver_user_id, payload_json, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `,
+  ).bind(
+    asString(payload.eventId, randomId("evt")),
+    callId,
+    event,
+    asString(payload.fromUserId, ""),
+    asString(payload.toUserId, ""),
+    JSON.stringify(payload),
+    Date.now(),
+  ).run();
+}
+
+async function updateCallStateForEvent(env: Env, callId: string, event: string, reason = ""): Promise<void> {
+  const now = Date.now();
+  if (event === "call:accepted") {
+    await env.DB.prepare(
+      "UPDATE call_sessions SET status = 'connecting', answered_at = COALESCE(answered_at, ?), updated_at = ? WHERE id = ?",
+    ).bind(now, now, callId).run();
+  } else if (event === "call:connected") {
+    await env.DB.prepare(
+      "UPDATE call_sessions SET status = 'connected', answered_at = COALESCE(answered_at, ?), updated_at = ? WHERE id = ?",
+    ).bind(now, now, callId).run();
+  } else if (event === "call:declined" || event === "call:busy") {
+    await env.DB.prepare(
+      "UPDATE call_sessions SET status = 'rejected', ended_at = COALESCE(ended_at, ?), end_reason = ?, updated_at = ? WHERE id = ?",
+    ).bind(now, reason || "rejected", now, callId).run();
+  } else if (event === "call:missed") {
+    await env.DB.prepare(
+      "UPDATE call_sessions SET status = 'missed', ended_at = COALESCE(ended_at, ?), end_reason = ?, updated_at = ? WHERE id = ?",
+    ).bind(now, reason || "missed", now, callId).run();
+  } else if (event === "call:ended" || event === "call:failed") {
+    await env.DB.prepare(
+      "UPDATE call_sessions SET status = 'ended', ended_at = COALESCE(ended_at, ?), end_reason = ?, updated_at = ? WHERE id = ?",
+    ).bind(now, reason || "ended", now, callId).run();
+  }
+}
+
+async function broadcastToDurableUser(env: Env, userId: string, event: string, payload: JsonObject): Promise<void> {
+  const id = env.REALTIME_ROOM.idFromName(`user:${userId}`);
+  await env.REALTIME_ROOM.get(id).fetch("https://internal/relay", {
+    method: "POST",
+    body: JSON.stringify({ event, payload }),
+  }).catch(() => undefined);
+}
+
+async function broadcastToDurableCall(env: Env, callId: string, event: string, payload: JsonObject): Promise<void> {
+  const id = env.REALTIME_ROOM.idFromName(`call:${callId}`);
+  await env.REALTIME_ROOM.get(id).fetch("https://internal/relay", {
+    method: "POST",
+    body: JSON.stringify({ event, payload }),
+  }).catch(() => undefined);
+}
+
+async function relayCallEvent(env: Env, event: string, payload: JsonObject): Promise<void> {
+  const callId = asString(payload.callId || payload.id, "");
+  if (!callId) return;
+  const eventId = asString(payload.eventId, "") || randomId("evt");
+  const outgoing = { ...payload, eventId, timestamp: Date.now(), event };
+  await recordCallEvent(env, callId, event, outgoing);
+  await updateCallStateForEvent(env, callId, event, asString(outgoing.reason, ""));
+  const toUserId = asString(outgoing.toUserId, "");
+  if (toUserId) await broadcastToDurableUser(env, toUserId, event, outgoing);
+  await broadcastToDurableCall(env, callId, event, outgoing);
+}
+
+async function broadcastToCallParticipants(env: Env, callId: string, event: string, payload: JsonObject, excludeUserId = ""): Promise<void> {
+  const participantIds = await callParticipantIds(env, callId);
+  await Promise.all(participantIds
+    .filter((userId) => userId && userId !== excludeUserId)
+    .map((userId) => broadcastToDurableUser(env, userId, event, { ...payload, toUserId: userId })));
+  await broadcastToDurableCall(env, callId, event, payload);
+}
+
+async function startCall(env: Env, request: Request): Promise<Response> {
+  const auth = await requireAuth(env, request);
+  if (auth instanceof Response) return auth;
+  const body = await readJson(request);
+  const callerId = auth.userId;
+  const receiverId = asString(body.receiverUserId || body.calleeId || body.toUserId, "");
+  const chatId = asString(body.chatId, `direct_${[callerId, receiverId].sort().join("_")}`);
+  const type = asString(body.type, "audio") === "video" ? "video" : "audio";
+  if (!receiverId) return badRequest("receiverUserId is required");
+  if (receiverId === callerId) return badRequest("Cannot call yourself");
+
+  const callId = randomId("call");
+  const now = Date.now();
+  await env.DB.prepare(
+    `
+      INSERT INTO call_sessions (id, chat_id, caller_user_id, receiver_user_id, type, status, started_at, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, 'ringing', ?, ?, ?)
+    `,
+  ).bind(callId, chatId, callerId, receiverId, type, now, now, now).run();
+  await env.DB.prepare(
+    "INSERT INTO call_participants (call_id, user_id, role, joined_at) VALUES (?, ?, 'caller', ?), (?, ?, 'receiver', NULL)",
+  ).bind(callId, callerId, now, callId, receiverId).run();
+
+  const caller = await userFor(env, callerId);
+  const receiver = await userFor(env, receiverId);
+  const row = await callRowFor(env, callId);
+  const payload = callPayload(row, {
+    fromUserId: callerId,
+    toUserId: receiverId,
+    callerName: asString(caller?.name, callerId),
+    callerAvatar: asString(caller?.avatar, ""),
+    calleeName: asString(receiver?.name, receiverId),
+    calleeAvatar: asString(receiver?.avatar, ""),
+  });
+  await relayCallEvent(env, "call:start", payload);
+  return json({ id: callId, callId, ...payload }, { status: 201 });
+}
+
+async function startGroupCall(env: Env, request: Request): Promise<Response> {
+  const auth = await requireAuth(env, request);
+  if (auth instanceof Response) return auth;
+  const body = await readJson(request);
+  const hostId = auth.userId;
+  const chatId = asString(body.chatId, "");
+  const type = asString(body.type || body.callType, "audio") === "video" ? "video" : "audio";
+  const invited = asStringList(body.participantIds || body.memberIds)
+    .filter((id) => id && id !== hostId);
+  const participantIds = [...new Set([hostId, ...invited])].slice(0, 4);
+  if (!chatId) return badRequest("chatId is required");
+  if (participantIds.length < 2) return badRequest("group call requires at least 2 participants");
+  if (participantIds.length > 4) return badRequest("group calls support up to 4 participants");
+
+  const callId = randomId("call");
+  const now = Date.now();
+  const receiverId = participantIds.find((id) => id !== hostId) || hostId;
+  await env.DB.prepare(
+    `
+      INSERT INTO call_sessions
+        (id, chat_id, caller_user_id, receiver_user_id, type, status, started_at, created_at, updated_at, mode, max_participants)
+      VALUES (?, ?, ?, ?, ?, 'ringing', ?, ?, ?, 'group', 4)
+    `,
+  ).bind(callId, chatId, hostId, receiverId, type, now, now, now).run();
+  for (const userId of participantIds) {
+    await env.DB.prepare(
+      "INSERT INTO call_participants (call_id, user_id, role, joined_at) VALUES (?, ?, ?, ?)",
+    ).bind(callId, userId, userId === hostId ? "host" : "participant", userId === hostId ? now : null).run();
+  }
+  const row = await callRowFor(env, callId);
+  const room = await callRoomPayload(env, row);
+  const payload = {
+    ...room,
+    room,
+    fromUserId: hostId,
+    participantIds,
+    eventId: randomId("evt"),
+    timestamp: now,
+    note: "Group calls use max-4 WebRTC mesh. Larger calls need an SFU later.",
+  };
+  await recordCallEvent(env, callId, "call:room-created", payload);
+  await broadcastToCallParticipants(env, callId, "call:room-created", payload, hostId);
+  return json(room, { status: 201 });
+}
+
+async function joinGroupCall(env: Env, request: Request, callId: string): Promise<Response> {
+  const auth = await requireAuth(env, request);
+  if (auth instanceof Response) return auth;
+  const row = await callRowFor(env, callId);
+  if (!row) return notFound(`/api/calls/group/${callId}`);
+  if (row.mode !== "group") return badRequest("call is not a group call");
+  if (!(await isCallParticipant(env, callId, auth.userId))) {
+    return json({ ok: false, error: "Forbidden" }, { status: 403 });
+  }
+  const now = Date.now();
+  await env.DB.prepare(
+    "UPDATE call_participants SET joined_at = COALESCE(joined_at, ?) WHERE call_id = ? AND user_id = ?",
+  ).bind(now, callId, auth.userId).run();
+  await env.DB.prepare(
+    "UPDATE call_sessions SET status = 'connected', answered_at = COALESCE(answered_at, ?), updated_at = ? WHERE id = ?",
+  ).bind(now, now, callId).run();
+  const updated = await callRowFor(env, callId);
+  const room = await callRoomPayload(env, updated);
+  const payload = { ...room, room, roomId: callId, fromUserId: auth.userId, userId: auth.userId, eventId: randomId("evt"), timestamp: now };
+  await recordCallEvent(env, callId, "call:room-join", payload);
+  await broadcastToCallParticipants(env, callId, "call:room-join", payload, auth.userId);
+  return json(room);
+}
+
+async function leaveGroupCall(env: Env, request: Request, callId: string): Promise<Response> {
+  const auth = await requireAuth(env, request);
+  if (auth instanceof Response) return auth;
+  const row = await callRowFor(env, callId);
+  if (!row) return notFound(`/api/calls/group/${callId}`);
+  if (!(await isCallParticipant(env, callId, auth.userId))) {
+    return json({ ok: false, error: "Forbidden" }, { status: 403 });
+  }
+  const body = await readJson(request);
+  const now = Date.now();
+  const ended = asBoolean(body.ended || body.end, false) || auth.userId === row.callerId;
+  await env.DB.prepare(
+    "UPDATE call_participants SET left_at = COALESCE(left_at, ?) WHERE call_id = ? AND user_id = ?",
+  ).bind(now, callId, auth.userId).run();
+  if (ended) {
+    await env.DB.prepare(
+      "UPDATE call_sessions SET status = 'ended', ended_at = COALESCE(ended_at, ?), end_reason = ?, updated_at = ? WHERE id = ?",
+    ).bind(now, asString(body.reason, auth.userId), now, callId).run();
+  }
+  const updated = await callRowFor(env, callId);
+  const room = await callRoomPayload(env, updated);
+  const payload = { ...room, room, roomId: callId, fromUserId: auth.userId, userId: auth.userId, ended, eventId: randomId("evt"), timestamp: now };
+  await recordCallEvent(env, callId, "call:room-leave", payload);
+  await broadcastToCallParticipants(env, callId, "call:room-leave", payload, auth.userId);
+  return json(room);
+}
+
+async function updateCallFromRest(env: Env, request: Request, callId: string, action: string): Promise<Response> {
+  const auth = await requireAuth(env, request);
+  if (auth instanceof Response) return auth;
+  const row = await callRowFor(env, callId);
+  if (!row) return notFound(`/api/calls/${callId}`);
+  if (auth.userId !== row.callerId && auth.userId !== row.calleeId) {
+    return json({ ok: false, error: "Forbidden" }, { status: 403 });
+  }
+  const body = await readJson(request);
+  const otherId = auth.userId === row.callerId ? row.calleeId : row.callerId;
+  const event = action === "accept" ? "call:accepted"
+    : action === "reject" ? "call:declined"
+    : "call:ended";
+  const payload = callPayload(row, {
+    fromUserId: auth.userId,
+    toUserId: otherId,
+    reason: asString(body.reason, action),
+  });
+  await relayCallEvent(env, event, payload);
+  const updated = await callRowFor(env, callId);
+  return json({ ok: true, ...(updated ? callPayload(updated) : { callId }) });
+}
+
+async function getCall(env: Env, request: Request, callId: string): Promise<Response> {
+  const auth = await requireAuth(env, request);
+  if (auth instanceof Response) return auth;
+  const row = await callRowFor(env, callId);
+  if (!row) return notFound(`/api/calls/${callId}`);
+  if (auth.userId !== row.callerId && auth.userId !== row.calleeId) {
+    return json({ ok: false, error: "Forbidden" }, { status: 403 });
+  }
+  return json(callPayload(row));
+}
+
+async function callHistory(env: Env, request: Request, url: URL): Promise<Response> {
+  const auth = await requireAuth(env, request);
+  if (auth instanceof Response) return auth;
+  const userId = url.searchParams.get("userId") || auth.userId;
+  if (userId !== auth.userId) return json({ ok: false, error: "Forbidden" }, { status: 403 });
+  const rows = await env.DB.prepare(
+    `
+      SELECT c.id, c.chat_id AS chatId, c.caller_user_id AS callerId, c.receiver_user_id AS calleeId,
+        c.type, c.status, c.started_at AS startedAt, c.answered_at AS acceptedAt,
+        c.ended_at AS endedAt, c.end_reason AS endReason,
+        COALESCE(c.mode, 'direct') AS mode,
+        COALESCE(c.max_participants, 2) AS maxParticipants,
+        CASE WHEN c.caller_user_id = ? THEN c.receiver_user_id ELSE c.caller_user_id END AS otherUserId,
+        u.display_name AS otherName, u.avatar_url AS otherAvatar
+      FROM call_sessions c
+      LEFT JOIN users u ON u.id = CASE WHEN c.caller_user_id = ? THEN c.receiver_user_id ELSE c.caller_user_id END
+      WHERE c.caller_user_id = ? OR c.receiver_user_id = ?
+      ORDER BY c.started_at DESC
+      LIMIT 50
+    `,
+  ).bind(userId, userId, userId, userId).all<any>();
+  const history = await Promise.all((rows.results || []).map(async (row: any) => ({
+    id: row.id,
+    callId: row.id,
+    chatId: row.chatId,
+    callerId: row.callerId,
+    calleeId: row.calleeId,
+    type: row.type || "audio",
+    callType: row.type || "audio",
+    mode: row.mode || "direct",
+    direction: row.callerId === userId ? "outgoing" : "incoming",
+    status: row.status,
+    startedAt: row.startedAt,
+    acceptedAt: row.acceptedAt || null,
+    endedAt: row.endedAt || null,
+    durationSeconds: row.endedAt && row.acceptedAt ? Math.max(0, Math.floor((row.endedAt - row.acceptedAt) / 1000)) : null,
+    endReason: row.endReason || null,
+    otherUser: {
+      id: row.otherUserId,
+      name: row.otherName || row.otherUserId,
+      avatar: row.otherAvatar || null,
+    },
+    participantIds: await callParticipantIds(env, row.id),
+    maxParticipants: row.maxParticipants || 2,
+  })));
+  return json(history);
+}
+
+async function registerDevicePushToken(env: Env, request: Request): Promise<Response> {
+  const auth = await requireAuth(env, request);
+  if (auth instanceof Response) return auth;
+  const body = await readJson(request);
+  const token = asString(body.token, "").trim();
+  const platform = asString(body.platform, "android");
+  const deviceName = asString(body.deviceName || body.name, "");
+  if (!token) return badRequest("token is required");
+  const id = asString(body.deviceId || body.id, "") || randomId("pushdev");
+  const now = Date.now();
+  await env.DB.prepare(
+    `
+      INSERT INTO device_push_tokens (id, user_id, token, platform, device_name, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(user_id, token) DO UPDATE SET
+        platform = excluded.platform,
+        device_name = excluded.device_name,
+        updated_at = excluded.updated_at
+    `,
+  ).bind(id, auth.userId, token, platform || null, deviceName || null, now, now).run();
+  return json({
+    ok: true,
+    id,
+    userId: auth.userId,
+    platform,
+    pushDelivery: "not_configured",
+    note: "Device token is stored for the future FCM adapter; killed-app calling is not faked.",
+  });
+}
+
+async function deleteDevicePushToken(env: Env, request: Request, deviceId: string): Promise<Response> {
+  const auth = await requireAuth(env, request);
+  if (auth instanceof Response) return auth;
+  await env.DB.prepare(
+    "DELETE FROM device_push_tokens WHERE id = ? AND user_id = ?",
+  ).bind(deviceId, auth.userId).run();
+  return json({ ok: true, id: deviceId });
+}
+
+function iceConfig(env: Env): Response {
+  const turnUrls = (env.TURN_URLS || "")
+    .split(",")
+    .map((url) => url.trim())
+    .filter(Boolean);
+  const iceServers: JsonObject[] = [
+    { urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"] },
+  ];
+  if (turnUrls.length > 0) {
+    iceServers.push({
+      urls: turnUrls,
+      username: env.TURN_USERNAME || "",
+      credential: env.TURN_CREDENTIAL || "",
+    });
+  }
+  return json({
+    iceServers,
+    source: turnUrls.length > 0 ? "turn_env" : "public_stun_default",
+  });
+}
+
 async function listConversations(env: Env, url: URL): Promise<Response> {
   const userId = url.searchParams.get("userId") || "";
   if (!userId) return badRequest("userId is required");
@@ -873,6 +1380,11 @@ async function createConversation(env: Env, body: JsonObject): Promise<Response>
     ).bind(id, memberId, now).run();
   }
   const conversation = await conversationFor(env, id, createdBy || uniqueMemberIds[0]);
+  if (conversation) {
+    await Promise.all(uniqueMemberIds
+      .filter((userId) => userId !== createdBy)
+      .map((userId) => broadcastToDurableUser(env, userId, "new_chat", conversation)));
+  }
   return json(conversation || { id }, { status: 201 });
 }
 
@@ -923,6 +1435,16 @@ async function createMessage(env: Env, conversationId: string, body: JsonObject)
     timestamp: now,
     status: "sent",
   };
+  const memberIds = await conversationMemberIds(env, conversationId);
+  const conversation = await conversationFor(env, conversationId, senderId);
+  await Promise.all(memberIds.map((userId) =>
+    broadcastToDurableUser(env, userId, "receive_message", message),
+  ));
+  if (conversation) {
+    await Promise.all(memberIds.map((userId) =>
+      broadcastToDurableUser(env, userId, "chat_updated", conversation),
+    ));
+  }
   return json(message, { status: 201 });
 }
 
@@ -1068,6 +1590,8 @@ async function getBindingDebug(env: Env): Promise<Response> {
 }
 
 export class RealtimeRoom {
+  private readonly sockets = new Set<WebSocket>();
+
   constructor(
     private readonly state: DurableObjectState,
     private readonly env: Env,
@@ -1080,6 +1604,12 @@ export class RealtimeRoom {
       return json({ ok: true });
     }
 
+    if (url.pathname === "/relay" && request.method === "POST") {
+      const body = await readJson(request);
+      this.broadcast(asString(body.event, "call:event"), (body.payload && typeof body.payload === "object" ? body.payload : {}) as JsonObject);
+      return json({ ok: true, sockets: this.sockets.size });
+    }
+
     if (url.pathname.endsWith("/health")) {
       return json({
         ok: true,
@@ -1088,13 +1618,109 @@ export class RealtimeRoom {
       });
     }
 
+    if (request.headers.get("upgrade")?.toLowerCase() === "websocket") {
+      return this.handleWebSocket(request, url);
+    }
+
     return json(
       {
         ok: true,
         service: "hello-realtime-room",
-        message: "Realtime chat/call Durable Object placeholder. WebSocket signaling will be added here later.",
+        message: "Realtime chat/call Durable Object is available for call signaling WebSockets.",
       },
     );
+  }
+
+  private async handleWebSocket(request: Request, url: URL): Promise<Response> {
+    const token = url.searchParams.get("token") || bearerToken(request);
+    if (!token) return json({ ok: false, error: "Unauthorized" }, { status: 401 });
+    const auth = await authenticatedUser(this.env, new Request(request.url, { headers: { authorization: `Bearer ${token}` } }));
+    if (!auth) return json({ ok: false, error: "Unauthorized" }, { status: 401 });
+
+    const callMatch = url.pathname.match(/^\/api\/calls\/([^/]+)\/ws$/);
+    if (callMatch) {
+      const call = await callRowFor(this.env, decodeURIComponent(callMatch[1]));
+      if (!call) return notFound(url.pathname);
+      if (!(await isCallParticipant(this.env, call.id, auth.userId))) {
+        return json({ ok: false, error: "Forbidden" }, { status: 403 });
+      }
+    }
+
+    const pair = new WebSocketPair();
+    const client = pair[0];
+    const server = pair[1];
+    server.accept();
+    this.sockets.add(server);
+    server.send(JSON.stringify({ event: "connected", payload: { userId: auth.userId, at: Date.now() } }));
+    server.addEventListener("message", (event) => {
+      this.handleClientMessage(auth.userId, String(event.data)).catch((error) => {
+        server.send(JSON.stringify({ event: "error", payload: { error: error?.message || "signaling_error" } }));
+      });
+    });
+    server.addEventListener("close", () => {
+      this.sockets.delete(server);
+    });
+    server.addEventListener("error", () => {
+      this.sockets.delete(server);
+    });
+    return new Response(null, { status: 101, webSocket: client });
+  }
+
+  private async handleClientMessage(userId: string, raw: string): Promise<void> {
+    const data = JSON.parse(raw);
+    const event = callEventName(String(data.event || data.type || ""));
+    const inputPayload = data.payload && typeof data.payload === "object" ? data.payload : data;
+    const payload = inputPayload as JsonObject;
+    if (event === "join_chat" || event === "leave_chat" || event === "mark_messages_read") return;
+    if (event === "typing") {
+      const chatId = asString(payload.chatId || payload.conversationId, "");
+      if (!chatId) return;
+      const memberIds = await conversationMemberIds(this.env, chatId);
+      if (!memberIds.includes(userId)) return;
+      const outgoing = {
+        chatId,
+        senderId: userId,
+        senderName: asString(payload.senderName || payload.name, userId),
+        isTyping: payload.isTyping !== false,
+        timestamp: Date.now(),
+      };
+      await Promise.all(memberIds
+        .filter((memberId) => memberId !== userId)
+        .map((memberId) => broadcastToDurableUser(this.env, memberId, "user_typing", outgoing)));
+      return;
+    }
+    const callId = asString(payload.callId || payload.id, "");
+    if (!callId) return;
+    const call = await callRowFor(this.env, callId);
+    if (!call) return;
+    if (!(await isCallParticipant(this.env, callId, userId))) return;
+    const targetId = asString(payload.toUserId, "") || (userId === call.callerId ? call.calleeId : call.callerId);
+    const outgoing = {
+      ...payload,
+      callId,
+      chatId: asString(payload.chatId, call.chatId),
+      callerId: asString(payload.callerId, call.callerId),
+      calleeId: asString(payload.calleeId, call.calleeId),
+      fromUserId: userId,
+      toUserId: targetId,
+      type: asString(payload.type, call.type || "audio"),
+      isVideo: payload.isVideo === true || call.type === "video",
+      eventId: asString(payload.eventId, "") || randomId("evt"),
+      timestamp: Date.now(),
+      event,
+    };
+    await relayCallEvent(this.env, event, outgoing);
+  }
+
+  private broadcast(event: string, payload: JsonObject): void {
+    const message = JSON.stringify({ event, payload });
+    for (const socket of [...this.sockets]) {
+      try {
+        socket.send(message);
+      } catch {
+        this.sockets.delete(socket);
+      }
+    }
   }
 }
 
@@ -1127,6 +1753,23 @@ export default {
     if (url.pathname.startsWith("/rooms/")) {
       const roomName = decodeURIComponent(url.pathname.split("/")[2] || "default");
       const roomId = env.REALTIME_ROOM.idFromName(roomName);
+      return env.REALTIME_ROOM.get(roomId).fetch(request);
+    }
+
+    if (url.pathname === "/api/calls/ws" && request.headers.get("upgrade")?.toLowerCase() === "websocket") {
+      await ensureCloudAccountSchema(env);
+      const token = url.searchParams.get("token") || bearerToken(request);
+      if (!token) return json({ ok: false, error: "Unauthorized" }, { status: 401 });
+      const auth = await authenticatedUser(env, new Request(request.url, { headers: { authorization: `Bearer ${token}` } }));
+      if (!auth) return json({ ok: false, error: "Unauthorized" }, { status: 401 });
+      const roomId = env.REALTIME_ROOM.idFromName(`user:${auth.userId}`);
+      return env.REALTIME_ROOM.get(roomId).fetch(request);
+    }
+
+    const callWsMatch = url.pathname.match(/^\/api\/calls\/([^/]+)\/ws$/);
+    if (callWsMatch && request.headers.get("upgrade")?.toLowerCase() === "websocket") {
+      await ensureCloudAccountSchema(env);
+      const roomId = env.REALTIME_ROOM.idFromName(`call:${decodeURIComponent(callWsMatch[1])}`);
       return env.REALTIME_ROOM.get(roomId).fetch(request);
     }
 
@@ -1207,6 +1850,51 @@ export default {
 
     if (url.pathname === "/api/preferences/chat" && request.method === "PATCH") {
       return updateChatPreferences(env, request);
+    }
+
+    if (url.pathname === "/api/devices/register" && request.method === "POST") {
+      return registerDevicePushToken(env, request);
+    }
+
+    const deviceDeleteMatch = url.pathname.match(/^\/api\/devices\/([^/]+)$/);
+    if (deviceDeleteMatch && request.method === "DELETE") {
+      return deleteDevicePushToken(env, request, decodeURIComponent(deviceDeleteMatch[1]));
+    }
+
+    if (url.pathname === "/api/calls/start" && request.method === "POST") {
+      return startCall(env, request);
+    }
+
+    if (url.pathname === "/api/calls/group/start" && request.method === "POST") {
+      return startGroupCall(env, request);
+    }
+
+    const groupJoinMatch = url.pathname.match(/^\/api\/calls\/group\/([^/]+)\/join$/);
+    if (groupJoinMatch && request.method === "POST") {
+      return joinGroupCall(env, request, decodeURIComponent(groupJoinMatch[1]));
+    }
+
+    const groupLeaveMatch = url.pathname.match(/^\/api\/calls\/group\/([^/]+)\/leave$/);
+    if (groupLeaveMatch && request.method === "POST") {
+      return leaveGroupCall(env, request, decodeURIComponent(groupLeaveMatch[1]));
+    }
+
+    if (url.pathname === "/api/calls/history" && request.method === "GET") {
+      return callHistory(env, request, url);
+    }
+
+    if ((url.pathname === "/api/calls/ice-config" || url.pathname === "/api/calls/ice-servers") && request.method === "GET") {
+      return iceConfig(env);
+    }
+
+    const callActionMatch = url.pathname.match(/^\/api\/calls\/([^/]+)\/(accept|reject|end)$/);
+    if (callActionMatch && request.method === "POST") {
+      return updateCallFromRest(env, request, decodeURIComponent(callActionMatch[1]), callActionMatch[2]);
+    }
+
+    const callGetMatch = url.pathname.match(/^\/api\/calls\/([^/]+)$/);
+    if (callGetMatch && request.method === "GET") {
+      return getCall(env, request, decodeURIComponent(callGetMatch[1]));
     }
 
     if (url.pathname === "/api/chat/users" && request.method === "GET") {

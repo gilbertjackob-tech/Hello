@@ -1,21 +1,36 @@
 package com.glassbox.hello.network
 
+import android.content.Context
 import com.glassbox.hello.chat.ChatModels
 import com.glassbox.hello.calls.CallSocket
+import com.glassbox.hello.auth.CloudSessionManager
 import com.glassbox.hello.core.AppConfig
 import com.glassbox.hello.core.User
 import com.google.gson.Gson
 import io.socket.client.IO
 import io.socket.client.Socket
 import android.util.Log
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.Response
+import okhttp3.WebSocket
+import okhttp3.WebSocketListener
 import org.json.JSONObject
 import java.util.UUID
 import java.util.concurrent.CopyOnWriteArraySet
+import java.util.concurrent.TimeUnit
 
 class SocketManager private constructor() : CallSocket {
     private val gson = Gson()
     private val socketLock = Any()
     private var socket: Socket? = null
+    private var cloudSocket: WebSocket? = null
+    private var cloudConnected = false
+    private val cloudClient = OkHttpClient.Builder()
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(0, TimeUnit.SECONDS)
+        .pingInterval(20, TimeUnit.SECONDS)
+        .build()
     private var currentUser: User? = null
     private var currentChatId: String? = null
     private var isConnecting = false
@@ -166,6 +181,68 @@ class SocketManager private constructor() : CallSocket {
         }
     }
 
+    fun connect(context: Context, user: User) {
+        val token = CloudSessionManager(context.applicationContext).token() ?: user.sessionToken
+        if (token.isNullOrBlank()) {
+            connect(user)
+            return
+        }
+        synchronized(socketLock) {
+            currentUser = user
+            socket?.let {
+                it.off()
+                it.disconnect()
+                socket = null
+            }
+            cloudSocket?.close(1000, "reconnect")
+            cloudConnected = false
+            isConnecting = true
+        }
+        val wsUrl = "${AppConfig.CHAT_CLOUD_BASE_URL}/api/calls/ws?token=${encode(token)}"
+            .replace("https://", "wss://")
+            .replace("http://", "ws://")
+        val request = Request.Builder().url(wsUrl).build()
+        cloudSocket = cloudClient.newWebSocket(request, object : WebSocketListener() {
+            override fun onOpen(webSocket: WebSocket, response: Response) {
+                synchronized(socketLock) {
+                    isConnecting = false
+                    cloudConnected = true
+                }
+                Log.d(TAG, "Cloud chat realtime connected for ${user.id}")
+                onConnectedChanged?.invoke(true)
+                currentChatId?.let { emitCloud("join_chat", JSONObject(mapOf("chatId" to it))) }
+            }
+
+            override fun onMessage(webSocket: WebSocket, text: String) {
+                runCatching {
+                    val envelope = JSONObject(text)
+                    val event = envelope.optString("event")
+                    val payload = envelope.optJSONObject("payload") ?: envelope
+                    dispatchCloudEvent(event, payload)
+                }.onFailure {
+                    Log.w(TAG, "Failed to parse cloud realtime event", it)
+                }
+            }
+
+            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                synchronized(socketLock) {
+                    isConnecting = false
+                    cloudConnected = false
+                }
+                onConnectedChanged?.invoke(false)
+            }
+
+            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                synchronized(socketLock) {
+                    isConnecting = false
+                    cloudConnected = false
+                }
+                Log.w(TAG, "Cloud chat realtime failed", t)
+                onConnectedChanged?.invoke(false)
+            }
+        })
+    }
+
     fun identify() {
         currentUser?.id?.let { socket?.emit("identify", it) }
     }
@@ -173,30 +250,47 @@ class SocketManager private constructor() : CallSocket {
     fun joinChat(chatId: String) {
         currentChatId?.takeIf { it != chatId }?.let { socket?.emit("leave_chat", it) }
         currentChatId = chatId
+        if (cloudConnected) {
+            emitCloud("join_chat", JSONObject(mapOf("chatId" to chatId)))
+            return
+        }
         socket?.emit("join_chat", chatId)
     }
 
     fun leaveChat(chatId: String) {
         if (currentChatId == chatId) currentChatId = null
+        if (cloudConnected) {
+            emitCloud("leave_chat", JSONObject(mapOf("chatId" to chatId)))
+            return
+        }
         socket?.emit("leave_chat", chatId)
     }
 
     fun typing(chatId: String, userId: String, userName: String, isTyping: Boolean = true) {
+        val payload = JSONObject(
+            mapOf(
+                "chatId" to chatId,
+                "userId" to userId,
+                "senderName" to userName,
+                "userName" to userName,
+                "isTyping" to isTyping
+            )
+        )
+        if (cloudConnected) {
+            emitCloud("typing", payload)
+            return
+        }
         socket?.emit(
             "typing",
-            JSONObject(
-                mapOf(
-                    "chatId" to chatId,
-                    "userId" to userId,
-                    "senderName" to userName,
-                    "userName" to userName,
-                    "isTyping" to isTyping
-                )
-            )
+            payload
         )
     }
 
     fun markMessagesRead(chatId: String, readerId: String) {
+        if (cloudConnected) {
+            emitCloud("mark_messages_read", JSONObject(mapOf("chatId" to chatId, "readerId" to readerId)))
+            return
+        }
         socket?.emit("mark_messages_read", JSONObject(mapOf("chatId" to chatId, "readerId" to readerId)))
     }
 
@@ -278,31 +372,31 @@ class SocketManager private constructor() : CallSocket {
     }
 
     override fun createRoom(payload: JSONObject) {
-        socket?.emit("call:room-created", payload)
+        if (cloudConnected) emitCloud("call:room-created", payload) else socket?.emit("call:room-created", payload)
     }
 
     override fun joinRoom(payload: JSONObject) {
-        socket?.emit("call:room-join", payload)
+        if (cloudConnected) emitCloud("call:room-join", payload) else socket?.emit("call:room-join", payload)
     }
 
     override fun leaveRoom(payload: JSONObject) {
-        socket?.emit("call:room-leave", payload)
+        if (cloudConnected) emitCloud("call:room-leave", payload) else socket?.emit("call:room-leave", payload)
     }
 
     override fun participantState(payload: JSONObject) {
-        socket?.emit("call:participant-state", payload)
+        if (cloudConnected) emitCloud("call:participant-state", payload) else socket?.emit("call:participant-state", payload)
     }
 
     override fun sendRoomOffer(payload: JSONObject) {
-        socket?.emit("call:room-offer", payload)
+        if (cloudConnected) emitCloud("call:room-offer", payload) else socket?.emit("call:room-offer", payload)
     }
 
     override fun sendRoomAnswer(payload: JSONObject) {
-        socket?.emit("call:room-answer", payload)
+        if (cloudConnected) emitCloud("call:room-answer", payload) else socket?.emit("call:room-answer", payload)
     }
 
     override fun sendRoomIceCandidate(payload: JSONObject) {
-        socket?.emit("call:room-ice-candidate", payload)
+        if (cloudConnected) emitCloud("call:room-ice-candidate", payload) else socket?.emit("call:room-ice-candidate", payload)
     }
 
     fun disconnect() {
@@ -311,6 +405,9 @@ class SocketManager private constructor() : CallSocket {
             val existingSocket = socket
             val existingChat = currentChatId
             socket = null
+            cloudSocket?.close(1000, "disconnect")
+            cloudSocket = null
+            cloudConnected = false
             currentUser = null
             currentChatId = null
             existingSocket to existingChat
@@ -321,7 +418,7 @@ class SocketManager private constructor() : CallSocket {
         Log.d(TAG, "[CALL_TRACE] android socket disconnected")
     }
 
-    override fun isConnected(): Boolean = socket?.connected() == true
+    override fun isConnected(): Boolean = cloudConnected || socket?.connected() == true
 
     private inline fun <reified T> parse(value: Any?): T? {
         return try {
@@ -364,7 +461,43 @@ class SocketManager private constructor() : CallSocket {
             TAG,
             "[CALL_TRACE] android emit event=$event callId=${envelope.optString("callId")} eventId=${envelope.optString("eventId")} hasOfferSdp=${envelope.optJSONObject("offer")?.optString("sdp").isNullOrBlank().not()} hasAnswerSdp=${envelope.optJSONObject("answer")?.optString("sdp").isNullOrBlank().not()} hasIce=${envelope.optJSONObject("candidate")?.optString("candidate").isNullOrBlank().not()}"
         )
-        socket?.emit(event, envelope)
+        if (cloudConnected) {
+            emitCloud(event, envelope)
+        } else {
+            socket?.emit(event, envelope)
+        }
     }
+
+    private fun dispatchCloudEvent(event: String, payload: JSONObject) {
+        when (event) {
+            "receive_message" -> parse<ChatModels.Message>(payload)?.let { message ->
+                onMessageReceived?.invoke(message)
+                messageListeners.forEach { listener -> listener(message) }
+            }
+            "message_updated" -> parse<ChatModels.Message>(payload)?.let {
+                onMessageUpdated?.invoke(it)
+                messageUpdateListeners.forEach { listener -> listener(it) }
+            }
+            "chat_updated", "new_chat" -> parse<ChatModels.Chat>(payload)?.let { onChatUpdated?.invoke(it) }
+            "presence_updated" -> onPresenceUpdated?.invoke(payload)
+            "user_typing" -> {
+                onTyping?.invoke(payload)
+                typingListeners.forEach { listener -> listener(payload) }
+            }
+            else -> if (event.startsWith("call:")) onCallEvent?.invoke(event, payload)
+        }
+    }
+
+    private fun emitCloud(event: String, payload: JSONObject) {
+        cloudSocket?.send(
+            JSONObject()
+                .put("event", event)
+                .put("payload", payload)
+                .toString()
+        )
+    }
+
+    private fun encode(value: String): String =
+        java.net.URLEncoder.encode(value, "UTF-8").replace("+", "%20")
 
 }

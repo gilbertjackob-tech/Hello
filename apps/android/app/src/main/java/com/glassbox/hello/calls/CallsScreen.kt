@@ -150,6 +150,8 @@ fun GlobalCallOverlay(
             context.hasPermission(Manifest.permission.CAMERA)
         if (hasAudio && hasCamera) {
             callViewModel.acceptIncoming(context)
+        } else if (hasAudio && needsCamera) {
+            callViewModel.acceptIncoming(context, forceAudio = true)
         } else {
             permissionDialog = true
         }

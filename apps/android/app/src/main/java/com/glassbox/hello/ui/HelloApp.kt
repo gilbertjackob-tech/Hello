@@ -32,7 +32,6 @@ import com.glassbox.hello.calls.CallViewModel
 import com.glassbox.hello.familydrive.FamilyDriveScreen
 import com.glassbox.hello.calls.GlobalCallOverlay
 import com.glassbox.hello.chat.ChatScreen
-import com.glassbox.hello.core.AppConfig
 import com.glassbox.hello.core.SessionManager
 import com.glassbox.hello.core.User
 import com.glassbox.hello.settings.SettingsScreen
@@ -83,9 +82,7 @@ fun HelloApp(darkTheme: Boolean = true) {
 
     val callViewModel: CallViewModel = viewModel(key = "hello-global-call")
     LaunchedEffect(currentUser.value?.id) {
-        if (AppConfig.ENABLE_PC_CALL_SIGNALING) {
-            currentUser.value?.let { callViewModel.connect(it) }
-        }
+        currentUser.value?.let { callViewModel.connect(context, it) }
     }
 
     HelloScreenBackground(modifier = Modifier.fillMaxSize(), dark = darkTheme) {

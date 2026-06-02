@@ -1,4 +1,4 @@
-import { Chat, DriveItemsResponse, DriveUploadResponse, Message, User } from "./types";
+import { CallHistoryItem, Chat, DriveItemsResponse, DriveUploadResponse, Message, User } from "./types";
 
 const env = (import.meta as any).env || {};
 
@@ -6,7 +6,7 @@ export const API_BASE = env.VITE_HELLO_API_BASE || "/hello/api";
 export const CHAT_CLOUD_BASE_URL = env.VITE_CHAT_CLOUD_BASE_URL || "https://chat.bookhelloctg.com";
 export const CHAT_CLOUD_FALLBACK_URL = env.VITE_CHAT_CLOUD_FALLBACK_URL || "https://hello-chat-worker.gilbert-jackob3.workers.dev";
 export const CHAT_API_BASE = env.VITE_CHAT_API_BASE || API_BASE;
-export const CALL_API_BASE = env.VITE_CALL_API_BASE || CHAT_API_BASE;
+export const CALL_API_BASE = env.VITE_CALL_API_BASE || `${CHAT_CLOUD_BASE_URL}/api`;
 export const DRIVE_API_BASE = env.VITE_DRIVE_API_BASE || API_BASE;
 export const CLOUD_SESSION_TOKEN_KEY = "hello_cloud_session_token";
 
@@ -18,7 +18,7 @@ function setCloudSessionToken(token?: string | null) {
   if (token) localStorage.setItem(CLOUD_SESSION_TOKEN_KEY, token);
 }
 
-function cloudAuthHeaders(): Record<string, string> {
+export function cloudAuthHeaders(): Record<string, string> {
   const token = getCloudSessionToken();
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
@@ -274,6 +274,42 @@ export async function patchCloudChatPreferences(input: {
   });
   if (!res.ok) return readJsonError(res, "Failed to update chat preferences");
   return res.json();
+}
+
+export async function startCloudAudioCall(input: {
+  receiverUserId: string;
+  chatId: string;
+}): Promise<{ callId: string; id: string; status: string }> {
+  const res = await fetchCloudChat("/api/calls/start", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...cloudAuthHeaders() },
+    body: JSON.stringify({ ...input, type: "audio" }),
+  });
+  if (!res.ok) return readJsonError(res, "Failed to start cloud call");
+  return res.json();
+}
+
+export async function fetchCloudCallHistory(userId?: string): Promise<CallHistoryItem[]> {
+  const path = userId ? `/api/calls/history?userId=${encodeURIComponent(userId)}` : "/api/calls/history";
+  const res = await fetchCloudChat(path, { headers: cloudAuthHeaders() });
+  if (!res.ok) return readJsonError(res, "Failed to fetch call history");
+  return res.json();
+}
+
+export function createCloudCallWebSocket(
+  onEvent: (event: string, payload: any) => void,
+): WebSocket {
+  const token = getCloudSessionToken();
+  if (!token) throw new Error("Cloud account session required for calls");
+  const url = `${CHAT_CLOUD_BASE_URL}/api/calls/ws?token=${encodeURIComponent(token)}`
+    .replace(/^https:/, "wss:")
+    .replace(/^http:/, "ws:");
+  const socket = new WebSocket(url);
+  socket.addEventListener("message", (message) => {
+    const envelope = JSON.parse(String(message.data));
+    if (envelope?.event) onEvent(envelope.event, envelope.payload || envelope);
+  });
+  return socket;
 }
 
 export async function updateUserPrivacy(

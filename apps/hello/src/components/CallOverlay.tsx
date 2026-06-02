@@ -41,7 +41,7 @@ import {
   getMediaCaptureReadinessError,
   requestUserMediaWithDiagnostics,
 } from "../mediaPermissions";
-import { CALL_API_BASE } from "../api";
+import { CALL_API_BASE, cloudAuthHeaders } from "../api";
 
 const DEFAULT_ICE_SERVERS: RTCIceServer[] = [
   { urls: "stun:stun.l.google.com:19302" },
@@ -771,19 +771,13 @@ export function CallOverlay({ currentUser }: CallOverlayProps) {
   };
 
   const createCallLog = async (data: Omit<CallData, "callId">) => {
-    const res = await fetch(`${CALL_API_BASE}/calls`, {
+    const res = await fetch(`${CALL_API_BASE}/calls/start`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...cloudAuthHeaders() },
       body: JSON.stringify({
-        callerId: data.callerId,
-        calleeId: data.calleeId,
+        receiverUserId: data.calleeId,
         chatId: data.chatId,
         type: data.isVideo ? "video" : "audio",
-        mode: data.mode || "direct",
-        roomId: data.roomId,
-        participantIds: data.mode === "group" ? [data.callerId, data.calleeId] : undefined,
-        status: "outgoing_calling",
-        startedAt: Date.now(),
       }),
     });
     if (!res.ok) throw new Error("Failed to create call log");
@@ -2062,9 +2056,10 @@ export function CallOverlay({ currentUser }: CallOverlayProps) {
     };
 
     const startGroupCall = async (e: Event) => {
-      const { chatId, chatName, participantIds, isVideo } = (
+      const { chatId, chatName, participantIds } = (
         e as CustomEvent<StartGroupCallDetail>
       ).detail;
+      const isVideo = false;
       const invitedIds = Array.from(new Set(participantIds)).filter(
         (id) => id && id !== currentUser.id,
       );
@@ -2082,14 +2077,13 @@ export function CallOverlay({ currentUser }: CallOverlayProps) {
       }
 
       try {
-        const res = await fetch(`${CALL_API_BASE}/call-rooms`, {
+        const res = await fetch(`${CALL_API_BASE}/calls/group/start`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", ...cloudAuthHeaders() },
           body: JSON.stringify({
             chatId,
-            hostId: currentUser.id,
             participantIds: invitedIds,
-            type: isVideo ? "video" : "audio",
+            type: "audio",
           }),
         });
         if (!res.ok) {
@@ -2759,10 +2753,10 @@ export function CallOverlay({ currentUser }: CallOverlayProps) {
     }
     try {
       const res = await fetch(
-        `${CALL_API_BASE}/call-rooms/${activeGroupRoom.id}/join`,
+        `${CALL_API_BASE}/calls/group/${activeGroupRoom.id}/join`,
         {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", ...cloudAuthHeaders() },
           body: JSON.stringify({ userId: currentUser.id }),
         },
       );
@@ -2800,9 +2794,9 @@ export function CallOverlay({ currentUser }: CallOverlayProps) {
     const room = activeGroupRoomRef.current;
     if (!room) return;
     try {
-      await fetch(`${CALL_API_BASE}/call-rooms/${room.id}/leave`, {
+      await fetch(`${CALL_API_BASE}/calls/group/${room.id}/leave`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...cloudAuthHeaders() },
         body: JSON.stringify({ userId: currentUser.id, ended }),
       });
       socket?.emit("call:room-leave", {

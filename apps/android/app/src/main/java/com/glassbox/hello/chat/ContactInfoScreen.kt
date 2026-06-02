@@ -101,7 +101,12 @@ fun ContactInfoScreen(
         val hasCamera = !pendingVideoCall || grants[Manifest.permission.CAMERA] == true ||
             context.hasPermission(Manifest.permission.CAMERA)
         if (hasAudio && hasCamera) {
-            callViewModel.startCall(context, chat, currentUser, pendingVideoCall)
+            val startAsVideo = pendingVideoCall
+            pendingVideoCall = false
+            callViewModel.startCall(context, chat, currentUser, startAsVideo)
+        } else if (hasAudio && pendingVideoCall) {
+            pendingVideoCall = false
+            callViewModel.startCall(context, chat, currentUser, false)
         } else {
             showPermissionDialog = true
         }
@@ -116,6 +121,7 @@ fun ContactInfoScreen(
             arrayOf(Manifest.permission.RECORD_AUDIO)
         }
         if (permissions.all { context.hasPermission(it) }) {
+            pendingVideoCall = false
             callViewModel.startCall(context, chat, currentUser, isVideo)
         } else {
             permissionLauncher.launch(permissions)

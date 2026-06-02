@@ -19,7 +19,7 @@ Android release install from `apps/android`:
 
 ```powershell
 adb devices
-cd \apps\android\
+cd apps\android
 .\gradlew.bat clean assembleRelease --no-daemon; if ($LASTEXITCODE -eq 0) { adb install -r app\build\outputs\apk\release\app-release.apk }
 ```
 

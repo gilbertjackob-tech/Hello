@@ -44,12 +44,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.glassbox.hello.calls.ActiveCallScreen
-import com.glassbox.hello.calls.CallUiStatus
 import com.glassbox.hello.calls.CallViewModel
-import com.glassbox.hello.calls.GroupActiveCallScreen
-import com.glassbox.hello.calls.IncomingCallScreen
-import com.glassbox.hello.calls.OutgoingCallScreen
 import com.glassbox.hello.chat.ChatModels.Chat
 import com.glassbox.hello.chat.ChatModels.Message
 import com.glassbox.hello.chat.components.ActionMessageState
@@ -113,7 +108,6 @@ fun ChatRoomScreen(
     val usersState by viewModel.usersState.collectAsState()
     val isLoadingOlderMessages by viewModel.isLoadingOlderMessages.collectAsState()
     val hasMoreOlderMessages by viewModel.hasMoreOlderMessages.collectAsState()
-    val callState by callViewModel.state.collectAsState()
 
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
@@ -136,7 +130,6 @@ fun ChatRoomScreen(
     var selectedMessage by remember { mutableStateOf<ActionMessageState?>(null) }
     var deleteMode by remember { mutableStateOf("message") }
     var pendingCallIsVideo by remember { mutableStateOf(false) }
-    var pendingIncomingAccept by remember { mutableStateOf(false) }
     var permissionDialog by remember { mutableStateOf(false) }
     var fileSizeError by remember { mutableStateOf<String?>(null) }
     val pendingAttachments = remember { mutableStateListOf<AttachmentDraft>() }
@@ -179,10 +172,6 @@ fun ChatRoomScreen(
 
     LaunchedEffect(chat.id, settingsState.cloudChatEnabled) {
         viewModel.loadMessages(chat.id, cloudChatEnabled = settingsState.cloudChatEnabled)
-    }
-
-    LaunchedEffect(currentUserId, currentUserName, currentUserAvatar) {
-        callViewModel.connect(User(id = currentUserId, name = currentUserName, avatar = currentUserAvatar))
     }
 
     LaunchedEffect(showContactShare, contactQuery) {
@@ -314,19 +303,23 @@ fun ChatRoomScreen(
         val hasAudio = grants[Manifest.permission.RECORD_AUDIO] == true || context.checkSelfPermissionCompat(Manifest.permission.RECORD_AUDIO)
         val hasCamera = !needsCamera || grants[Manifest.permission.CAMERA] == true || context.checkSelfPermissionCompat(Manifest.permission.CAMERA)
         if (hasAudio && hasCamera) {
-            if (pendingIncomingAccept) {
-                pendingIncomingAccept = false
-                callViewModel.acceptIncoming(context)
-            } else {
-                callViewModel.startCall(
-                    context = context,
-                    chat = chat,
-                    user = User(id = currentUserId, name = currentUserName, avatar = currentUserAvatar),
-                    isVideo = pendingCallIsVideo
-                )
-            }
+            val startAsVideo = pendingCallIsVideo
+            pendingCallIsVideo = false
+            callViewModel.startCall(
+                context = context,
+                chat = chat,
+                user = User(id = currentUserId, name = currentUserName, avatar = currentUserAvatar),
+                isVideo = startAsVideo
+            )
+        } else if (hasAudio && pendingCallIsVideo) {
+            pendingCallIsVideo = false
+            callViewModel.startCall(
+                context = context,
+                chat = chat,
+                user = User(id = currentUserId, name = currentUserName, avatar = currentUserAvatar),
+                isVideo = false
+            )
         } else {
-            pendingIncomingAccept = false
             permissionDialog = true
         }
     }
@@ -339,28 +332,13 @@ fun ChatRoomScreen(
             arrayOf(Manifest.permission.RECORD_AUDIO)
         }
         if (permissions.all { context.checkSelfPermissionCompat(it) }) {
+            pendingCallIsVideo = false
             callViewModel.startCall(
                 context = context,
                 chat = chat,
                 user = User(id = currentUserId, name = currentUserName, avatar = currentUserAvatar),
                 isVideo = isVideo
             )
-        } else {
-            permissionLauncher.launch(permissions)
-        }
-    }
-
-    fun acceptIncomingCall() {
-        pendingIncomingAccept = true
-        pendingCallIsVideo = callState.signal?.isVideo == true || callState.activeRoom?.type == "video"
-        val permissions = if (pendingCallIsVideo) {
-            arrayOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.CAMERA)
-        } else {
-            arrayOf(Manifest.permission.RECORD_AUDIO)
-        }
-        if (permissions.all { context.checkSelfPermissionCompat(it) }) {
-            pendingIncomingAccept = false
-            callViewModel.acceptIncoming(context)
         } else {
             permissionLauncher.launch(permissions)
         }
@@ -584,7 +562,7 @@ fun ChatRoomScreen(
         socketManager.addMessageListener(messageListener)
         socketManager.addMessageUpdateListener(updateListener)
         socketManager.addTypingListener(typingListener)
-        socketManager.connect(User(id = currentUserId, name = currentUserName, avatar = currentUserAvatar))
+        socketManager.connect(context, User(id = currentUserId, name = currentUserName, avatar = currentUserAvatar))
         socketManager.joinChat(chat.id)
         socketManager.markMessagesRead(chat.id, currentUserId)
         onDispose {
@@ -611,6 +589,7 @@ fun ChatRoomScreen(
                 onOpenContactInfo = onOpenContactInfo,
                 onAudioCall = { requestCall(false) },
                 onVideoCall = { requestCall(true) },
+                videoCallEnabled = !chat.isGroup,
                 onMore = { showChatActions = true }
             )
 
@@ -1000,83 +979,6 @@ fun ChatRoomScreen(
             MediaViewer(state = state, onDismiss = { mediaViewerState = null })
         }
 
-        when (callState.status) {
-            CallUiStatus.Incoming -> IncomingCallScreen(
-                name = callState.peerName,
-                video = callState.signal?.isVideo == true || callState.activeRoom?.type == "video",
-                message = callState.message.orEmpty(),
-                onAccept = { acceptIncomingCall() },
-                onDecline = { callViewModel.declineCall() },
-                modifier = Modifier.fillMaxSize()
-            )
-            CallUiStatus.Outgoing, CallUiStatus.Connecting -> OutgoingCallScreen(
-                name = callState.peerName,
-                video = callState.signal?.isVideo == true,
-                message = callState.message ?: "Calling...",
-                onCancel = { callViewModel.endCall("ended_by_caller") },
-                modifier = Modifier.fillMaxSize()
-            )
-            CallUiStatus.Active -> {
-                val room = callState.activeRoom
-                if (room != null) {
-                    GroupActiveCallScreen(
-                        name = callState.peerName,
-                        video = room.type == "video",
-                        durationSeconds = callState.durationSeconds,
-                        participants = callState.roomParticipants,
-                        muted = callState.muted,
-                        speakerOn = callState.speakerOn,
-                        cameraOff = callState.cameraOff,
-                        onMute = { callViewModel.toggleMute() },
-                        onSpeaker = { callViewModel.toggleSpeaker(context) },
-                        onCamera = { callViewModel.toggleCamera() },
-                        onSwitchCamera = { callViewModel.switchCamera() },
-                        onEnd = { callViewModel.endCall("ended") },
-                        modifier = Modifier.fillMaxSize()
-                    )
-                } else {
-                    ActiveCallScreen(
-                        name = callState.peerName,
-                        video = callState.signal?.isVideo == true,
-                        durationSeconds = callState.durationSeconds,
-                        mediaPhase = callState.mediaPhase,
-                        muted = callState.muted,
-                        speakerOn = callState.speakerOn,
-                        cameraOff = callState.cameraOff,
-                        onMute = { callViewModel.toggleMute() },
-                        onSpeaker = { callViewModel.toggleSpeaker(context) },
-                        onCamera = { callViewModel.toggleCamera() },
-                        onSwitchCamera = { callViewModel.switchCamera() },
-                        onAttachLocalRenderer = { callViewModel.attachLocalRenderer(it) },
-                        onAttachRemoteRenderer = { callViewModel.attachRemoteRenderer(it) },
-                        onEnd = { callViewModel.endCall("ended") },
-                        modifier = Modifier.fillMaxSize()
-                    )
-                }
-            }
-            CallUiStatus.Ended,
-            CallUiStatus.Declined,
-            CallUiStatus.Missed,
-            CallUiStatus.Busy,
-            CallUiStatus.Unavailable,
-            CallUiStatus.Failed -> CallResultDialog(
-                message = callState.message ?: "Call ended",
-                onDismiss = { callViewModel.dismissCallOverlay() }
-            )
-            CallUiStatus.PermissionDenied -> PermissionRequiredDialog(
-                onOpenSettings = {
-                    callViewModel.dismissCallOverlay()
-                    context.startActivity(
-                        Intent(
-                            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                            Uri.parse("package:${context.packageName}")
-                        )
-                    )
-                },
-                onCancel = { callViewModel.dismissCallOverlay() }
-            )
-            CallUiStatus.Idle -> Unit
-        }
     }
 }
 

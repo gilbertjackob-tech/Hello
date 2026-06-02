@@ -20,8 +20,8 @@ import org.json.JSONObject
 import org.webrtc.SurfaceViewRenderer
 
 class CallViewModel(
-    private val repository: CallRepositoryContract = CallRepository(),
-    private val socketManager: CallSocket = SocketManager.getInstance(),
+    private var repository: CallRepositoryContract = CallRepository(),
+    private var socketManager: CallSocket = SocketManager.getInstance(),
     private val callEngine: CallMediaEngine = NativeCallEngine()
 ) : ViewModel() {
     private val _state = MutableStateFlow(CallUiState())
@@ -111,6 +111,21 @@ class CallViewModel(
 
     fun connect(user: User) {
         currentUser = user
+        socketManager.connect(user)
+    }
+
+    fun connect(context: Context, user: User) {
+        currentUser = user
+        repository = CloudCallRepository(context.applicationContext)
+        socketManager = CallSignalingClient(context.applicationContext).also { cloudSocket ->
+            cloudSocket.onConnectedChanged = { connected ->
+                _state.value = _state.value.copy(socketConnected = connected)
+                if (!connected && _state.value.status in setOf(CallUiStatus.Outgoing, CallUiStatus.Connecting, CallUiStatus.Active)) {
+                    _state.value = _state.value.copy(mediaPhase = CallMediaPhase.Reconnecting, message = "Network reconnecting...")
+                }
+            }
+            cloudSocket.onCallEvent = { event, payload -> handleSocketEvent(event, payload) }
+        }
         socketManager.connect(user)
     }
 
@@ -260,7 +275,7 @@ class CallViewModel(
         }
 
         viewModelScope.launch {
-            val type = if (isVideo) "video" else "audio"
+            val type = "audio"
             val room = repository.createGroupRoom(
                 chatId = chat.id,
                 hostId = user.id,
@@ -288,27 +303,37 @@ class CallViewModel(
                     .put("fromUserId", user.id)
                     .put("participantIds", JSONArray(activeRoom.participantIds))
             )
-            callEngine.startOutgoing(context, isVideo)
+            callEngine.startOutgoing(context, isVideo = false)
             startTimer()
         }
     }
 
-    fun acceptIncoming(context: Context?) {
+    fun acceptIncoming(context: Context?, forceAudio: Boolean = false) {
         val user = currentUser ?: return
         _state.value.activeRoom?.let {
             acceptIncomingGroup(context, user, it)
             return
         }
         val signal = _state.value.signal ?: return
-        val accept = signal.copy(fromUserId = user.id, toUserId = signal.callerId)
+        val acceptedSignal = if (forceAudio && signal.isVideo) {
+            signal.copy(type = "audio", isVideo = false)
+        } else {
+            signal
+        }
+        val accept = acceptedSignal.copy(fromUserId = user.id, toUserId = signal.callerId)
         addDebug("ANDROID: accept clicked")
-        _state.value = _state.value.copy(status = CallUiStatus.Connecting, message = "Connecting...", mediaPhase = CallMediaPhase.Preparing)
+        _state.value = _state.value.copy(
+            status = CallUiStatus.Connecting,
+            signal = acceptedSignal,
+            message = if (forceAudio && signal.isVideo) "Camera permission denied; joining with audio..." else "Connecting...",
+            mediaPhase = CallMediaPhase.Preparing
+        )
         viewModelScope.launch {
             ensureIceConfig()
             socketManager.acceptCall(accept.toJson())
             addDebug("ANDROID: startIncoming called")
-            callEngine.startIncoming(context, signal.isVideo, signal.offerSdp)
-            startConnectionTimeout(signal)
+            callEngine.startIncoming(context, acceptedSignal.isVideo, acceptedSignal.offerSdp)
+            startConnectionTimeout(acceptedSignal)
         }
     }
 
@@ -650,6 +675,12 @@ class CallViewModel(
             mediaPhase = CallMediaPhase.Closed,
             nativeMediaReady = false
         )
+        currentUser?.id?.let { userId ->
+            viewModelScope.launch {
+                delay(500)
+                loadHistory(userId)
+            }
+        }
     }
 
     private fun startTimer() {
@@ -722,7 +753,7 @@ class CallViewModel(
             message.contains("Failed to connect", ignoreCase = true) ||
                 message.contains("timeout", ignoreCase = true) ||
                 message.contains("timed out", ignoreCase = true) ->
-                "Could not reach the Hello desktop server over Tailscale. Make sure desktop-8u23cj0 is online, the Hello web server is running on HTTPS, and the phone can open /api/hello/status."
+                "Could not create the Cloudflare call. Check Cloud Account and internet connectivity."
             message.isNotBlank() -> message
             else -> "Could not create call"
         }

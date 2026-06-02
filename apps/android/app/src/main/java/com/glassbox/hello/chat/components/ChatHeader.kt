@@ -36,6 +36,7 @@ fun ChatHeader(
     onOpenContactInfo: () -> Unit,
     onAudioCall: () -> Unit,
     onVideoCall: () -> Unit,
+    videoCallEnabled: Boolean = false,
     onMore: () -> Unit
 ) {
     val subtitleIsTyping = subtitle.contains("typing", ignoreCase = true)
@@ -74,8 +75,10 @@ fun ChatHeader(
                 )
             }
         }
-        HelloIconButton(onClick = onVideoCall) {
-            Icon(Icons.Default.Videocam, contentDescription = "Video call", tint = HelloColors.DarkTextMuted)
+        if (videoCallEnabled) {
+            HelloIconButton(onClick = onVideoCall) {
+                Icon(Icons.Default.Videocam, contentDescription = "Video call", tint = HelloColors.DarkTextMuted)
+            }
         }
         HelloIconButton(onClick = onAudioCall) {
             Icon(Icons.Default.Call, contentDescription = "Audio call", tint = HelloColors.DarkTextMuted)

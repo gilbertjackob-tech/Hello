@@ -69,6 +69,10 @@ class NativeCallEngine : CallMediaEngine {
     private var queuedRemoteOfferSdp: String? = null
     @Volatile
     private var queuedRemoteAnswerSdp: String? = null
+    private var audioManager: AudioManager? = null
+    private var previousAudioMode: Int? = null
+    private var previousSpeakerphoneOn: Boolean? = null
+    private var previousMicrophoneMute: Boolean? = null
 
     override fun setIceServers(iceServers: List<CallIceServer>) {
         synchronized(configuredIceServers) {
@@ -222,9 +226,9 @@ class NativeCallEngine : CallMediaEngine {
     }
 
     override fun setSpeaker(context: Context, on: Boolean) {
-        val audio = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        audio.mode = AudioManager.MODE_IN_COMMUNICATION
+        val audio = ensureCallAudio(context, on)
         audio.isSpeakerphoneOn = on
+        debug("speaker=${if (on) "on" else "off"}")
     }
 
     override fun setPreferredVideoProfile(profile: VideoQualityProfile) {
@@ -259,6 +263,7 @@ class NativeCallEngine : CallMediaEngine {
         audioSource?.dispose()
         peerConnection?.close()
         peerConnection?.dispose()
+        releaseCallAudio()
         localRenderer = null
         remoteRenderer = null
         peerConnection = null
@@ -320,6 +325,10 @@ class NativeCallEngine : CallMediaEngine {
                 }
 
                 override fun onTrack(transceiver: RtpTransceiver) {
+                    (transceiver.receiver.track() as? AudioTrack)?.let { track ->
+                        track.setEnabled(true)
+                        debug("remoteAudioTrack=received")
+                    }
                     (transceiver.receiver.track() as? VideoTrack)?.let { track ->
                         remoteVideoTrack = track
                         remoteRenderer?.let { renderer ->
@@ -369,10 +378,13 @@ class NativeCallEngine : CallMediaEngine {
             disposePeerOnly()
             return failAndReturn("Microphone permission is needed for calls")
         }
+        ensureCallAudio(context, speakerOn = true)
         try {
             audioSource = factory.createAudioSource(MediaConstraints())
             audioTrack = factory.createAudioTrack("hello_audio", audioSource).also {
+                it.setEnabled(true)
                 peerConnection?.addTrack(it, listOf("hello"))
+                debug("localAudioTrack=created")
             }
         } catch (error: Exception) {
             disposePeerOnly()
@@ -409,6 +421,7 @@ class NativeCallEngine : CallMediaEngine {
         audioSource?.dispose()
         peerConnection?.close()
         peerConnection?.dispose()
+        releaseCallAudio()
         peerConnection = null
         audioTrack = null
         audioSource = null
@@ -523,6 +536,32 @@ class NativeCallEngine : CallMediaEngine {
     private fun mediaConstraints() = MediaConstraints().apply {
         mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
         mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", if (wantsVideo) "true" else "false"))
+    }
+
+    private fun ensureCallAudio(context: Context, speakerOn: Boolean): AudioManager {
+        val audio = audioManager ?: (context.getSystemService(Context.AUDIO_SERVICE) as AudioManager).also {
+            audioManager = it
+            previousAudioMode = it.mode
+            previousSpeakerphoneOn = it.isSpeakerphoneOn
+            previousMicrophoneMute = it.isMicrophoneMute
+        }
+        audio.mode = AudioManager.MODE_IN_COMMUNICATION
+        audio.isMicrophoneMute = false
+        audio.isSpeakerphoneOn = speakerOn
+        debug("audioRoute mode=communication speaker=$speakerOn")
+        return audio
+    }
+
+    private fun releaseCallAudio() {
+        val audio = audioManager ?: return
+        previousMicrophoneMute?.let { audio.isMicrophoneMute = it }
+        previousSpeakerphoneOn?.let { audio.isSpeakerphoneOn = it }
+        previousAudioMode?.let { audio.mode = it }
+        debug("audioRoute=restored")
+        audioManager = null
+        previousAudioMode = null
+        previousSpeakerphoneOn = null
+        previousMicrophoneMute = null
     }
 
     private fun startCaptureWithFallback(candidate: CameraCandidate): Boolean {
