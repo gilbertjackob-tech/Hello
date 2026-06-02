@@ -207,6 +207,7 @@ fun ChatRoomScreen(
     LaunchedEffect(visibleMessages.size, isNearBottom) {
         if (visibleMessages.isNotEmpty()) {
             socketManager.markMessagesRead(chat.id, currentUserId)
+            viewModel.clearUnreadForChat(chat.id, currentUserId, settingsState.cloudChatEnabled)
             val shouldScroll = !hasAutoScrolledInitial ||
                 isNearBottom ||
                 (visibleMessages.size > lastVisibleMessageCount && visibleMessages.lastOrNull()?.senderId == currentUserId)
@@ -526,9 +527,15 @@ fun ChatRoomScreen(
         val messageListener: (Message) -> Unit = { message ->
             if (message.chatId == chat.id) {
                 scope.launch {
-                    viewModel.appendFromSocket(message)
+                    viewModel.appendFromSocket(
+                        message = message,
+                        currentUserId = currentUserId,
+                        activeChatId = chat.id,
+                        baseChat = chat
+                    )
                     if (message.senderId != currentUserId) {
                         socketManager.markMessagesRead(chat.id, currentUserId)
+                        viewModel.clearUnreadForChat(chat.id, currentUserId, settingsState.cloudChatEnabled)
                         ChatFeedback.playReceived(settingsState.chatSounds)
                     }
                 }
@@ -562,15 +569,20 @@ fun ChatRoomScreen(
         socketManager.addMessageListener(messageListener)
         socketManager.addMessageUpdateListener(updateListener)
         socketManager.addTypingListener(typingListener)
+        socketManager.onChatUpdated = { updatedChat ->
+            viewModel.upsertChatFromSocket(updatedChat, currentUserId)
+        }
         socketManager.connect(context, User(id = currentUserId, name = currentUserName, avatar = currentUserAvatar))
         socketManager.joinChat(chat.id)
         socketManager.markMessagesRead(chat.id, currentUserId)
+        viewModel.clearUnreadForChat(chat.id, currentUserId, settingsState.cloudChatEnabled)
         onDispose {
             socketManager.typing(chat.id, currentUserId, currentUserName, isTyping = false)
             socketManager.leaveChat(chat.id)
             socketManager.removeMessageListener(messageListener)
             socketManager.removeMessageUpdateListener(updateListener)
             socketManager.removeTypingListener(typingListener)
+            socketManager.onChatUpdated = null
         }
     }
 
@@ -741,7 +753,13 @@ fun ChatRoomScreen(
                         selectedMessage = null
                     },
                     onReact = { emoji ->
-                        viewModel.reactToMessage(chat.id, selected.message.id, emoji, currentUserId)
+                        viewModel.reactToMessage(
+                            chat.id,
+                            selected.message.id,
+                            emoji,
+                            currentUserId,
+                            cloudChatEnabled = settingsState.cloudChatEnabled
+                        )
                         ChatFeedback.playReaction(settingsState.chatSounds)
                         selectedMessage = null
                     },

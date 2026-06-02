@@ -64,7 +64,7 @@ class ChatViewModel : ViewModel() {
                     val users = result.getOrNull()
                         .orEmpty()
                         .filter { it.id != currentUserId }
-                        .filter { query?.isNotBlank() == true || !it.isGeneratedIdentity() }
+                        .filter { cloudChatEnabled || query?.isNotBlank() == true || !it.isGeneratedIdentity() }
                         .sortedWith(compareByDescending<User> { it.online == true }.thenBy { it.name.lowercase() })
                     ResultState.Success(users)
                 }
@@ -78,13 +78,18 @@ class ChatViewModel : ViewModel() {
         currentUserId: String,
         currentUserName: String,
         targetUserId: String,
+        targetUserName: String? = null,
         cloudChatEnabled: Boolean = false
     ) {
         _createChatState.value = ResultState.Loading
         viewModelScope.launch {
-            val result = repository.createDirectChat(currentUserId, targetUserId, currentUserName, cloudChatEnabled)
+            val result = repository.createDirectChat(currentUserId, targetUserId, currentUserName, targetUserName, cloudChatEnabled)
             _createChatState.value = when {
-                result.isSuccess -> ResultState.Success(result.getOrNull()!!)
+                result.isSuccess -> {
+                    val chat = result.getOrNull()!!
+                    upsertChat(chat, currentUserId)
+                    ResultState.Success(chat)
+                }
                 result.isFailure -> ResultState.Error(result.exceptionOrNull()?.message ?: "Failed to start chat")
                 else -> ResultState.Error("Unknown error")
             }
@@ -112,7 +117,14 @@ class ChatViewModel : ViewModel() {
 
     fun loadChats(userId: String, cloudChatEnabled: Boolean = false) {
         val hasCached = _chatsState.value is ResultState.Success
-        if (!hasCached) {
+        val cachedCloudChats = repository.cachedChats(userId, cloudChatEnabled)
+            .dedupeDirectChats(userId)
+            .filter { it.isProfessionalInboxItem(userId) }
+        if (cachedCloudChats.isNotEmpty()) {
+            _chatsState.value = ResultState.Success(cachedCloudChats)
+        }
+        val hasVisibleChats = hasCached || cachedCloudChats.isNotEmpty()
+        if (!hasVisibleChats) {
             _chatsState.value = ResultState.Loading
         } else {
             _chatsRefreshing.value = true
@@ -126,7 +138,7 @@ class ChatViewModel : ViewModel() {
                         .dedupeDirectChats(userId)
                         .filter { it.isProfessionalInboxItem(userId) }
                 )
-            } else if (!hasCached) {
+            } else if (!hasVisibleChats) {
                 _chatsState.value = ResultState.Error(result.exceptionOrNull()?.message ?: "Failed to load chats")
             }
             _chatsRefreshing.value = false
@@ -192,10 +204,16 @@ class ChatViewModel : ViewModel() {
      * React to message with optimistic update - NO FULL RELOAD
      * Updates message instantly, reverts on API failure
      */
-    fun reactToMessage(chatId: String, messageId: String, emoji: String, userId: String) {
+    fun reactToMessage(
+        chatId: String,
+        messageId: String,
+        emoji: String,
+        userId: String,
+        cloudChatEnabled: Boolean = false
+    ) {
         viewModelScope.launch {
             applyReactionPatch(messageId, emoji, userId)  // Optimistic UI update
-            val result = repository.reactToMessage(chatId, messageId, emoji, userId)
+            val result = repository.reactToMessage(chatId, messageId, emoji, userId, cloudChatEnabled)
             if (result.isSuccess) {
                 result.getOrNull()?.let { upsertMessage(it) }  // Patch with server response
             } else {
@@ -361,6 +379,13 @@ class ChatViewModel : ViewModel() {
                 result.isSuccess -> {
                     val message = result.getOrNull()!!
                     upsertMessage(message, optimisticTempId)
+                    upsertChatFromMessage(
+                        message = message,
+                        currentUserId = senderId,
+                        activeChatId = chat?.id ?: chatId,
+                        baseChat = chat,
+                        incoming = false
+                    )
                     ResultState.Success(message)
                 }
                 result.isFailure -> {
@@ -481,7 +506,16 @@ class ChatViewModel : ViewModel() {
                 )
 
                 if (result.isSuccess) {
-                    result.getOrNull()?.let { upsertMessage(it, optimistic.tempId) }
+                    result.getOrNull()?.let {
+                        upsertMessage(it, optimistic.tempId)
+                        upsertChatFromMessage(
+                            message = it,
+                            currentUserId = senderId,
+                            activeChatId = chat?.id ?: chatId,
+                            baseChat = chat,
+                            incoming = false
+                        )
+                    }
                 } else {
                     markMessageFailed(optimistic.tempId)
                     firstError = firstError ?: (result.exceptionOrNull()?.message ?: "Failed to send message")
@@ -496,12 +530,42 @@ class ChatViewModel : ViewModel() {
         }
     }
 
-    fun appendFromSocket(message: Message) {
+    fun appendFromSocket(
+        message: Message,
+        currentUserId: String? = null,
+        activeChatId: String? = null,
+        baseChat: Chat? = null
+    ) {
         upsertMessage(message)
+        if (currentUserId != null) {
+            upsertChatFromMessage(
+                message = message,
+                currentUserId = currentUserId,
+                activeChatId = activeChatId,
+                baseChat = baseChat,
+                incoming = message.senderId != currentUserId
+            )
+        }
     }
 
     fun updateFromSocket(message: Message) {
         upsertMessage(message)
+    }
+
+    fun upsertChatFromSocket(chat: Chat, currentUserId: String) {
+        upsertChat(chat, currentUserId)
+    }
+
+    fun clearUnreadForChat(chatId: String, currentUserId: String, cloudChatEnabled: Boolean = false) {
+        val current = _chatsState.value
+        if (current is ResultState.Success) {
+            _chatsState.value = ResultState.Success(
+                current.data.map { chat ->
+                    if (chat.id == chatId) chat.copy(unreadCount = 0) else chat
+                }
+            )
+        }
+        repository.clearCachedUnread(currentUserId, chatId, cloudChatEnabled)
     }
 
     /**
@@ -533,6 +597,58 @@ class ChatViewModel : ViewModel() {
             }
         }.sortedBy { it.timestamp }
         _messagesState.value = ResultState.Success(next)
+    }
+
+    private fun upsertChat(chat: Chat, currentUserId: String) {
+        val current = _chatsState.value
+        val chats = if (current is ResultState.Success) current.data else emptyList()
+        val next = (chats.filterNot { existing ->
+            existing.id == chat.id ||
+                (!existing.isGroup && !chat.isGroup && existing.directDedupeKey(currentUserId) == chat.directDedupeKey(currentUserId))
+        } + chat)
+            .dedupeDirectChats(currentUserId)
+            .filter { it.isProfessionalInboxItem(currentUserId) }
+            .sortedByDescending { it.lastMessageTime ?: 0L }
+        _chatsState.value = ResultState.Success(next)
+    }
+
+    private fun upsertChatFromMessage(
+        message: Message,
+        currentUserId: String,
+        activeChatId: String?,
+        baseChat: Chat?,
+        incoming: Boolean
+    ) {
+        val current = _chatsState.value
+        val chats = if (current is ResultState.Success) current.data else emptyList()
+        val existing = chats.firstOrNull { it.id == message.chatId || it.id == baseChat?.id }
+        val preview = message.text.takeIf { it.isNotBlank() }
+            ?: message.attachmentName?.takeIf { it.isNotBlank() }
+            ?: if (message.attachmentUrl != null) "Attachment" else ""
+        val unread = when {
+            !incoming -> 0
+            activeChatId == message.chatId || activeChatId == baseChat?.id -> 0
+            else -> (existing?.unreadCount ?: baseChat?.unreadCount ?: 0) + 1
+        }
+        val fallbackOther = ChatModels.User(
+            id = message.senderId,
+            name = message.senderName,
+            avatar = message.senderAvatar
+        )
+        val updated = (existing ?: baseChat ?: Chat(
+            id = message.chatId,
+            type = "direct",
+            name = message.senderName.ifBlank { "Cloud chat" },
+            isGroup = false,
+            members = listOf(currentUserId, message.senderId).distinct(),
+            participants = listOf(fallbackOther)
+        )).copy(
+            id = message.chatId,
+            lastMessage = preview,
+            lastMessageTime = message.timestamp,
+            unreadCount = unread
+        )
+        upsertChat(updated, currentUserId)
     }
 
     private fun classifyAttachment(mimeType: String): String = when {

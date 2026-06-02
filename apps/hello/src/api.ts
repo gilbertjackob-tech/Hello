@@ -1,4 +1,4 @@
-import { CallHistoryItem, Chat, DriveItemsResponse, DriveUploadResponse, Message, User } from "./types";
+import { CallHistoryItem, Chat, DriveDeleteResponse, DriveItem, DriveItemsResponse, DriveUploadResponse, Message, User } from "./types";
 
 const env = (import.meta as any).env || {};
 
@@ -228,21 +228,35 @@ export async function uploadCloudChatAttachment(
   return res.json();
 }
 
+export function resolveCloudChatUrl(url?: string | null): string {
+  if (!url) return "";
+  if (url.startsWith("/api/")) return `${CHAT_CLOUD_BASE_URL}${url}`;
+  return url;
+}
+
 export async function uploadCloudUserAvatar(
   userId: string,
   file: File,
 ): Promise<User> {
-  const formData = new FormData();
-  formData.append("userId", userId);
-  formData.append("file", file);
-  const path = getCloudSessionToken()
-    ? `/api/users/${encodeURIComponent(userId)}/avatar`
-    : "/api/chat/users/avatar";
-  const res = await fetchCloudChat(path, {
+  const buildFormData = () => {
+    const formData = new FormData();
+    formData.append("userId", userId);
+    formData.append("file", file);
+    return formData;
+  };
+  const token = getCloudSessionToken();
+  const path = token ? `/api/users/${encodeURIComponent(userId)}/avatar` : "/api/chat/users/avatar";
+  let res = await fetchCloudChat(path, {
     method: "POST",
     headers: cloudAuthHeaders(),
-    body: formData,
+    body: buildFormData(),
   });
+  if (!res.ok && token && (res.status === 401 || res.status === 403)) {
+    res = await fetchCloudChat("/api/chat/users/avatar", {
+      method: "POST",
+      body: buildFormData(),
+    });
+  }
   if (!res.ok) return readJsonError(res, "Failed to upload profile image");
   return res.json();
 }
@@ -437,11 +451,33 @@ export async function uploadFile(
 export async function fetchDriveItems(
   limit = 60,
   before?: number | null,
+  sync = false,
 ): Promise<DriveItemsResponse> {
   const params = new URLSearchParams({ limit: String(limit) });
   if (before) params.set("before", String(before));
+  if (sync) params.set("sync", "true");
   const res = await fetch(`${DRIVE_API_BASE}/drive/items?${params.toString()}`);
   if (!res.ok) throw new Error("Failed to fetch Drive items");
+  return res.json();
+}
+
+export async function fetchDriveTrash(
+  limit = 60,
+  before?: number | null,
+  sync = false,
+): Promise<DriveItemsResponse> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (before) params.set("before", String(before));
+  if (sync) params.set("sync", "true");
+  const res = await fetch(`${DRIVE_API_BASE}/drive/trash?${params.toString()}`);
+  if (!res.ok) throw new Error("Failed to fetch Drive trash");
+  return res.json();
+}
+
+export async function fetchDriveDeleteLimit(userId: string): Promise<DriveDeleteResponse["deleteLimit"]> {
+  const params = new URLSearchParams({ userId });
+  const res = await fetch(`${DRIVE_API_BASE}/drive/delete-limit?${params.toString()}`);
+  if (!res.ok) throw new Error("Failed to fetch Drive delete limit");
   return res.json();
 }
 
@@ -467,11 +503,36 @@ export async function uploadDriveFiles(
   return res.json();
 }
 
-export async function deleteDriveItem(itemId: string): Promise<void> {
+export async function deleteDriveItem(itemId: string, userId?: string): Promise<DriveDeleteResponse> {
   const res = await fetch(`${DRIVE_API_BASE}/drive/items/${encodeURIComponent(itemId)}`, {
     method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ userId }),
   });
-  if (!res.ok) throw new Error("Failed to delete Drive item");
+  if (!res.ok) {
+    const message = await res
+      .json()
+      .then((body) => body?.error)
+      .catch(() => null);
+    throw new Error(message || "Failed to delete Drive item");
+  }
+  return res.json();
+}
+
+export async function restoreDriveItem(itemId: string): Promise<DriveItem> {
+  const res = await fetch(`${DRIVE_API_BASE}/drive/items/${encodeURIComponent(itemId)}/restore`, {
+    method: "POST",
+  });
+  if (!res.ok) throw new Error("Failed to restore Drive item");
+  const body = await res.json();
+  return body.item;
+}
+
+export async function permanentlyDeleteDriveItem(itemId: string): Promise<void> {
+  const res = await fetch(`${DRIVE_API_BASE}/drive/items/${encodeURIComponent(itemId)}/permanent`, {
+    method: "DELETE",
+  });
+  if (!res.ok) throw new Error("Failed to permanently delete Drive item");
 }
 
 export async function sendMessage(
@@ -487,9 +548,17 @@ export async function sendMessage(
   location?: any,
   replyTo?: { id: string; text: string; senderName: string; senderId?: string },
 ): Promise<Message> {
-  const attachmentId = attachmentUrl?.startsWith("/api/chat/attachments/")
-    ? attachmentUrl.split("/").pop()
-    : undefined;
+  let attachmentId: string | undefined;
+  if (attachmentUrl) {
+    try {
+      const parsed = new URL(attachmentUrl, CHAT_CLOUD_BASE_URL);
+      const match = parsed.pathname.match(/^\/api\/chat\/attachments\/([^/]+)$/);
+      attachmentId = match ? decodeURIComponent(match[1]) : undefined;
+    } catch {
+      const match = attachmentUrl.match(/^\/api\/chat\/attachments\/([^/]+)$/);
+      attachmentId = match ? decodeURIComponent(match[1]) : undefined;
+    }
+  }
   const res = await fetchCloudChat(`/api/chat/conversations/${encodeURIComponent(chatId)}/messages`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -549,16 +618,13 @@ export async function reactToMessage(
   emoji: string,
   userId: string,
 ): Promise<Message> {
-  const existing = (await fetchMessages(chatId)).find((message) => message.id === messageId);
-  if (!existing) throw new Error("Message not found");
-  const current = existing.reactions || [];
-  const hasReaction = current.some((reaction) => reaction.emoji === emoji && reaction.userId === userId);
-  return {
-    ...existing,
-    reactions: hasReaction
-      ? current.filter((reaction) => !(reaction.emoji === emoji && reaction.userId === userId))
-      : [...current, { emoji, userId }],
-  };
+  const res = await fetchCloudChat(`/api/chat/messages/${encodeURIComponent(messageId)}/react`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ chatId, emoji, userId }),
+  });
+  if (!res.ok) throw new Error("Failed to react to message");
+  return res.json();
 }
 
 export async function starMessage(

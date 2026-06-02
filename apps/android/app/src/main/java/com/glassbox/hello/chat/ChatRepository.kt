@@ -21,10 +21,11 @@ class ChatRepository(
         currentUserId: String,
         targetUserId: String,
         currentUserName: String,
+        targetUserName: String? = null,
         cloudChatEnabled: Boolean = false
     ): Result<Chat> {
         if (cloudChatEnabled && cloudRepository != null) {
-            return cloudRepository.createDirectChat(currentUserId, targetUserId, currentUserName)
+            return cloudRepository.createDirectChat(currentUserId, targetUserId, currentUserName, targetUserName)
         }
         return api.createDirectChat(currentUserId, targetUserId)
     }
@@ -47,6 +48,19 @@ class ChatRepository(
             return cloudRepository.fetchChats(userId)
         }
         return api.fetchChats(userId)
+    }
+
+    fun cachedChats(userId: String, cloudChatEnabled: Boolean = false): List<Chat> {
+        if (cloudChatEnabled && cloudRepository != null) {
+            return cloudRepository.cachedChats(userId)
+        }
+        return emptyList()
+    }
+
+    fun clearCachedUnread(userId: String, chatId: String, cloudChatEnabled: Boolean = false) {
+        if (cloudChatEnabled && cloudRepository != null) {
+            cloudRepository.clearCachedUnread(userId, chatId)
+        }
     }
 
     suspend fun fetchMessages(
@@ -114,8 +128,18 @@ class ChatRepository(
         cloudRepository?.uploadAttachment(fileName, mimeType, bytes)
             ?: Result.failure(IllegalStateException("Cloud chat is not configured"))
 
-    suspend fun reactToMessage(chatId: String, messageId: String, emoji: String, userId: String) =
-        api.reactToMessage(chatId, messageId, emoji, userId)
+    suspend fun reactToMessage(
+        chatId: String,
+        messageId: String,
+        emoji: String,
+        userId: String,
+        cloudChatEnabled: Boolean = false
+    ) =
+        if (cloudChatEnabled && cloudRepository != null) {
+            cloudRepository.reactToMessage(messageId, emoji, userId)
+        } else {
+            api.reactToMessage(chatId, messageId, emoji, userId)
+        }
 
     suspend fun starMessage(chatId: String, messageId: String, userId: String) =
         api.starMessage(chatId, messageId, userId)

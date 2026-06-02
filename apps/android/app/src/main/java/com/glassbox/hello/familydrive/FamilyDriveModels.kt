@@ -11,7 +11,9 @@ data class DriveItem(
     val uploaderId: String? = null,
     val createdAt: Long = 0L,
     val monthKey: String? = null,
-    val monthLabel: String? = null
+    val monthLabel: String? = null,
+    val deletedAt: Long? = null,
+    val deletedBy: String? = null
 ) {
     val isVideo: Boolean get() = type == "video" || mimeType?.startsWith("video/") == true
 }
@@ -26,6 +28,24 @@ data class DriveItemsResponse(
 data class DriveUploadResponse(
     val items: List<DriveItem> = emptyList(),
     val count: Int = 0
+)
+
+data class DriveDeleteLimit(
+    val limit: Int = 20,
+    val used: Int = 0,
+    val remaining: Int = 20,
+    val deleteDay: String = ""
+)
+
+data class DriveDeleteResponse(
+    val ok: Boolean = false,
+    val item: DriveItem? = null,
+    val deleteLimit: DriveDeleteLimit? = null
+)
+
+data class DriveItemActionResponse(
+    val ok: Boolean = false,
+    val item: DriveItem? = null
 )
 
 enum class PendingDriveStatus {

@@ -2376,7 +2376,7 @@ export default function App() {
   void handleAction;
 
   return (
-    <div className="flex h-full w-full min-h-0 min-w-0 flex-col overflow-hidden border border-gb-border bg-gb-bg font-sans text-sm text-gb-text">
+    <div className="grid h-full w-full min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden border border-gb-border bg-gb-bg font-sans text-sm text-gb-text">
       <header className="flex min-w-0 shrink-0 flex-col overflow-visible border-b border-gb-border">
         <div className="drag-region flex h-10 min-w-0 items-center gap-2 border-b border-gb-border bg-gb-surface px-2 py-1">
           {appMode === 'browser' ? (

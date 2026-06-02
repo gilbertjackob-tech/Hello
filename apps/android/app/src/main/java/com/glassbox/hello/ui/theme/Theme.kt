@@ -10,10 +10,10 @@ import androidx.compose.ui.graphics.Color
 
 private val DarkColorScheme = darkColorScheme(
     primary = HelloMint,
-    onPrimary = Color(0xFF062F1E),
-    primaryContainer = Color(0xFF1F4D35),
+    onPrimary = Color(0xFF062F31),
+    primaryContainer = Color(0xFF17484D),
     onPrimaryContainer = HelloDarkText,
-    secondary = HelloGreen,
+    secondary = Color(0xFFF0B35A),
     onSecondary = Color.White,
     background = HelloDarkBackground,
     onBackground = HelloDarkText,
@@ -21,25 +21,25 @@ private val DarkColorScheme = darkColorScheme(
     onSurface = HelloDarkText,
     surfaceVariant = HelloDarkSurfaceAlt,
     onSurfaceVariant = HelloMutedText,
-    outline = Color(0xFF6B7C83),
-    error = Color(0xFFFF8A80)
+    outline = Color(0xFF70818B),
+    error = Color(0xFFFF7A8A)
 )
 
 private val LightColorScheme = lightColorScheme(
     primary = HelloGreenDark,
     onPrimary = Color.White,
-    primaryContainer = Color(0xFFD8F4DF),
-    onPrimaryContainer = Color(0xFF063D27),
-    secondary = HelloGreen,
+    primaryContainer = Color(0xFFCFEFEB),
+    onPrimaryContainer = Color(0xFF07383D),
+    secondary = Color(0xFFB7652C),
     onSecondary = Color.White,
     background = HelloLightBackground,
     onBackground = HelloLightText,
     surface = HelloLightSurface,
     onSurface = HelloLightText,
-    surfaceVariant = Color(0xFFE8EEF0),
-    onSurfaceVariant = Color(0xFF53626A),
-    outline = Color(0xFF7D8B91),
-    error = Color(0xFFB3261E)
+    surfaceVariant = Color(0xFFE7ECEB),
+    onSurfaceVariant = Color(0xFF5D6878),
+    outline = Color(0xFF7C898D),
+    error = Color(0xFFC44D58)
 )
 
 @Composable

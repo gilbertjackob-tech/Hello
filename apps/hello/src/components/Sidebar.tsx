@@ -81,7 +81,7 @@ function mergeChats(chats: Chat[], currentUserId: string): Chat[] {
       merged.set(key, {
         ...existing,
         ...chat,
-        unreadCount: Math.max(existing?.unreadCount || 0, chat.unreadCount || 0),
+        unreadCount: chat.unreadCount ?? existing?.unreadCount ?? 0,
       });
     }
   }
@@ -371,7 +371,19 @@ export function Sidebar({
       socket.off("user_updated", handleUserUpdate);
       socket.off("presence_updated", handleUserUpdate);
     };
-  }, [socket, currentUser.id, sortUsersForDiscovery]);
+  }, [socket, currentUser.id, activeChatId, sortUsersForDiscovery]);
+
+  useEffect(() => {
+    if (!activeChatId) return;
+    setChats((prev) =>
+      mergeChats(
+        prev.map((chat) =>
+          chat.id === activeChatId ? { ...chat, unreadCount: 0 } : chat,
+        ),
+        currentUser.id,
+      ),
+    );
+  }, [activeChatId, currentUser.id]);
 
   const handleNewChat = () => {
     setShowContacts(true);
@@ -690,11 +702,11 @@ export function Sidebar({
 
   const buildCroppedAvatarFile = async () => {
     if (!avatarCropSource) throw new Error("No avatar selected");
-    const image = new Image();
-    image.src = avatarCropSource;
+    const image = document.createElement("img");
     await new Promise<void>((resolve, reject) => {
       image.onload = () => resolve();
       image.onerror = () => reject(new Error("Could not load selected image"));
+      image.src = avatarCropSource;
     });
 
     const size = 640;
@@ -743,7 +755,7 @@ export function Sidebar({
       console.error("Failed to update avatar", err);
       pushToast({
         title: "Profile photo update failed",
-        description: "Please try again.",
+        description: err instanceof Error ? err.message : "Please try again.",
         tone: "error",
       });
     } finally {

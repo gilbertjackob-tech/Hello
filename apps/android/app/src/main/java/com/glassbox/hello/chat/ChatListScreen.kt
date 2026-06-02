@@ -143,10 +143,12 @@ fun ChatListScreen(
     }
 
     DisposableEffect(currentUserId, currentUserName, cloudChatEnabled) {
-        socketManager.onChatUpdated = {
+        socketManager.onChatUpdated = { chat ->
+            viewModel.upsertChatFromSocket(chat, currentUserId)
             viewModel.loadChats(currentUserId, cloudChatEnabled = cloudChatEnabled)
         }
-        socketManager.onMessageReceived = {
+        socketManager.onMessageReceived = { message ->
+            viewModel.appendFromSocket(message, currentUserId = currentUserId)
             viewModel.loadChats(currentUserId, cloudChatEnabled = cloudChatEnabled)
         }
         socketManager.onPresenceUpdated = {
@@ -409,7 +411,7 @@ fun ChatListScreen(
                     viewModel.resetCreateChatState()
                 },
                 onUserSelected = { user ->
-                    viewModel.startDirectChat(currentUserId, currentUserName, user.id, cloudChatEnabled)
+                    viewModel.startDirectChat(currentUserId, currentUserName, user.id, user.name, cloudChatEnabled)
                 }
             )
         }

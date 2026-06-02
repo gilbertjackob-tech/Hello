@@ -49,6 +49,7 @@ import {
   pinMessage,
   deleteMessage,
   uploadFile,
+  resolveCloudChatUrl,
 } from "../api";
 import { cn, formatLastActive } from "../lib/utils";
 import { useTheme } from "../ThemeContext";
@@ -596,10 +597,30 @@ export function ChatWindow({
   };
 
   const handleReact = async (msgId: string, emoji: string) => {
+    const previousMessages = messages;
+    setMessages((prev) =>
+      prev.map((message) => {
+        if (message.id !== msgId) return message;
+        const current = message.reactions || [];
+        const hasReaction = current.some(
+          (reaction) => reaction.emoji === emoji && reaction.userId === currentUser.id,
+        );
+        return {
+          ...message,
+          reactions: hasReaction
+            ? current.filter((reaction) => !(reaction.emoji === emoji && reaction.userId === currentUser.id))
+            : [...current, { emoji, userId: currentUser.id }],
+        };
+      }),
+    );
     try {
-      await reactToMessage(chat.id, msgId, emoji, currentUser.id);
+      const updated = await reactToMessage(chat.id, msgId, emoji, currentUser.id);
+      setMessages((prev) =>
+        prev.map((message) => (message.id === updated.id ? { ...message, ...updated } : message)),
+      );
     } catch (err) {
       console.error(err);
+      setMessages(previousMessages);
     }
   };
 
@@ -1380,12 +1401,12 @@ export function ChatWindow({
                         {msg.attachmentType === "image" ? (
                           <div className="relative group rounded-md overflow-hidden bg-black/5 dark:bg-white/5">
                             <img
-                              src={msg.attachmentUrl}
+                              src={resolveCloudChatUrl(msg.attachmentUrl)}
                               alt={msg.attachmentName || "attachment"}
                               className="rounded-md max-h-64 sm:max-h-80 object-contain w-auto hover:opacity-90 transition-opacity"
                             />
                             <a
-                              href={msg.attachmentUrl}
+                              href={resolveCloudChatUrl(msg.attachmentUrl)}
                               target="_blank"
                               rel="noopener noreferrer"
                               className="absolute top-2 right-2 bg-black/50 text-white p-1.5 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
@@ -1398,7 +1419,7 @@ export function ChatWindow({
                           <div className="bg-black/5 dark:bg-white/5 p-2 rounded-lg">
                             <audio
                               controls
-                              src={msg.attachmentUrl}
+                              src={resolveCloudChatUrl(msg.attachmentUrl)}
                               className="max-w-[200px] h-10 outline-none"
                             />
                             {msg.attachmentSize && (
@@ -1433,7 +1454,7 @@ export function ChatWindow({
                               </div>
                             </div>
                             <a
-                              href={msg.attachmentUrl}
+                              href={resolveCloudChatUrl(msg.attachmentUrl)}
                               target="_blank"
                               rel="noopener noreferrer"
                               className="flex items-center justify-center space-x-2 bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 p-2 rounded-lg font-bold text-xs hover:bg-indigo-100 dark:hover:bg-indigo-900/50 transition-colors"

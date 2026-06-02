@@ -11,10 +11,10 @@ fun Chat.otherParticipant(currentUserId: String): User? {
 fun Chat.displayName(currentUserId: String): String {
     val other = otherParticipant(currentUserId)
     return when {
-        other != null && !other.isGeneratedIdentity() -> other.name
+        other != null && other.name.isNotBlank() -> other.name
         isGroup && name.isNotBlank() -> name
         !name.isGeneratedDisplayName() -> name
-        else -> "Contact"
+        else -> "Cloud chat"
     }
 }
 
@@ -50,7 +50,7 @@ fun List<Chat>.dedupeDirectChats(currentUserId: String): List<Chat> {
             val key = chat.directDedupeKey(currentUserId)
             val existing = acc[key]
             if (existing == null || (chat.lastMessageTime ?: 0L) >= (existing.lastMessageTime ?: 0L)) {
-                acc[key] = chat.copy(unreadCount = maxOf(existing?.unreadCount ?: 0, chat.unreadCount ?: 0))
+                acc[key] = chat.copy(unreadCount = chat.unreadCount ?: existing?.unreadCount ?: 0)
             }
             acc
         }
@@ -67,9 +67,11 @@ fun User.isGeneratedIdentity(): Boolean {
 }
 
 fun Chat.isProfessionalInboxItem(currentUserId: String): Boolean {
+    if (lastMessage?.isNotBlank() == true) return true
     if (isGroup) return name.isNotBlank() && !name.isGeneratedDisplayName()
     val other = otherParticipant(currentUserId)
-    if (other != null) return !other.isGeneratedIdentity()
+    if (other != null) return true
+    if ((members?.filter { it.isNotBlank() }?.distinct()?.size ?: 0) >= 2) return true
     val title = name.ifBlank { id }
     return !title.isGeneratedDisplayName()
 }

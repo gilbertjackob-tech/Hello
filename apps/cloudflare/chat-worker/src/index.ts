@@ -308,6 +308,25 @@ async function ensureCloudAccountSchema(env: Env): Promise<void> {
       ).run();
       await env.DB.prepare(
         `
+          CREATE TABLE IF NOT EXISTS message_reactions (
+            message_id TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            emoji TEXT NOT NULL,
+            created_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
+            PRIMARY KEY (message_id, user_id, emoji),
+            FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+          )
+        `,
+      ).run();
+      await env.DB.prepare(
+        `
+          CREATE INDEX IF NOT EXISTS idx_message_reactions_message
+          ON message_reactions (message_id, created_at)
+        `,
+      ).run();
+      await env.DB.prepare(
+        `
           CREATE TABLE IF NOT EXISTS conversation_preferences (
             user_id TEXT NOT NULL,
             conversation_id TEXT NOT NULL,
@@ -444,6 +463,15 @@ async function broadcastUserPresence(env: Env, userId: string, online: boolean):
   }));
 }
 
+async function broadcastUserProfileUpdate(env: Env, userId: string): Promise<void> {
+  const payload = await userPresencePayload(env, userId, true);
+  const recipients = await allUserIds(env);
+  await Promise.all(recipients.map(async (recipientId) => {
+    await broadcastToDurableUser(env, recipientId, "user_updated", payload);
+    await broadcastToDurableUser(env, recipientId, "presence_updated", payload);
+  }));
+}
+
 async function getChatUser(env: Env, userId: string): Promise<Response> {
   const user = await userFor(env, userId);
   if (!user) return json({ ok: false, error: "User not found" }, { status: 404 });
@@ -473,9 +501,9 @@ async function uploadUserAvatar(env: Env, request: Request, pathUserId = ""): Pr
     httpMetadata: { contentType: file.type || "image/jpeg" },
   });
 
-  const url = new URL(request.url);
-  const avatarUrl = `${url.origin}/api/users/${encodeURIComponent(userId)}/avatar`;
   const now = Date.now();
+  const url = new URL(request.url);
+  const avatarUrl = `${url.origin}/api/users/${encodeURIComponent(userId)}/avatar?v=${now}`;
   await env.DB.prepare(
     `
       UPDATE users
@@ -487,6 +515,7 @@ async function uploadUserAvatar(env: Env, request: Request, pathUserId = ""): Pr
 
   const user = await userFor(env, userId);
   if (!user) return json({ ok: false, error: "User not found" }, { status: 404 });
+  await broadcastUserProfileUpdate(env, userId);
   return json({
     id: user.id,
     name: user.name,
@@ -597,6 +626,87 @@ async function conversationFor(env: Env, conversationId: string, viewerId?: stri
   };
 }
 
+async function reactionsForMessages(env: Env, messageIds: string[]): Promise<Record<string, JsonObject[]>> {
+  if (messageIds.length === 0) return {};
+  const placeholders = messageIds.map(() => "?").join(",");
+  const rows = await env.DB.prepare(
+    `
+      SELECT message_id AS messageId, user_id AS userId, emoji, created_at AS timestamp
+      FROM message_reactions
+      WHERE message_id IN (${placeholders})
+      ORDER BY created_at ASC
+    `,
+  ).bind(...messageIds).all<any>();
+  const grouped: Record<string, JsonObject[]> = {};
+  for (const row of rows.results || []) {
+    const messageId = String(row.messageId || "");
+    if (!messageId) continue;
+    if (!grouped[messageId]) grouped[messageId] = [];
+    grouped[messageId].push({
+      emoji: String(row.emoji || ""),
+      userId: String(row.userId || ""),
+      timestamp: Number(row.timestamp || 0),
+    });
+  }
+  return grouped;
+}
+
+async function receiptStatusForMessages(env: Env, messageIds: string[]): Promise<Record<string, "sent" | "delivered" | "read">> {
+  if (messageIds.length === 0) return {};
+  const placeholders = messageIds.map(() => "?").join(",");
+  const rows = await env.DB.prepare(
+    `
+      SELECT m.id AS messageId,
+        SUM(CASE WHEN cm.user_id != m.sender_id THEN 1 ELSE 0 END) AS recipientCount,
+        SUM(CASE WHEN cm.user_id != m.sender_id AND r.delivered_at IS NOT NULL THEN 1 ELSE 0 END) AS deliveredCount,
+        SUM(CASE WHEN cm.user_id != m.sender_id AND r.read_at IS NOT NULL THEN 1 ELSE 0 END) AS readCount
+      FROM messages m
+      JOIN conversation_members cm ON cm.conversation_id = m.conversation_id
+      LEFT JOIN message_receipts r ON r.message_id = m.id AND r.user_id = cm.user_id
+      WHERE m.id IN (${placeholders})
+      GROUP BY m.id
+    `,
+  ).bind(...messageIds).all<any>();
+  const statuses: Record<string, "sent" | "delivered" | "read"> = {};
+  for (const row of rows.results || []) {
+    const messageId = String(row.messageId || "");
+    if (!messageId) continue;
+    const recipientCount = Number(row.recipientCount || 0);
+    const deliveredCount = Number(row.deliveredCount || 0);
+    const readCount = Number(row.readCount || 0);
+    statuses[messageId] = recipientCount > 0 && readCount >= recipientCount
+      ? "read"
+      : recipientCount > 0 && deliveredCount >= recipientCount
+        ? "delivered"
+        : "sent";
+  }
+  return statuses;
+}
+
+async function mapMessageRows(env: Env, rows: any[]): Promise<JsonObject[]> {
+  const messageIds = rows.map((row) => String(row.id));
+  const [reactionsByMessage, statusesByMessage] = await Promise.all([
+    reactionsForMessages(env, messageIds),
+    receiptStatusForMessages(env, messageIds),
+  ]);
+  return rows.map((row: any) => ({
+    id: row.id,
+    chatId: row.chatId,
+    senderId: row.senderId,
+    senderName: row.senderName,
+    senderAvatar: row.senderAvatar || null,
+    text: row.deletedAt ? "" : row.text,
+    timestamp: row.timestamp,
+    attachmentUrl: row.attachmentId ? `/api/chat/attachments/${encodeURIComponent(row.attachmentId)}` : null,
+    attachmentType: row.attachmentMimeType?.startsWith("image/") ? "image" : row.attachmentId ? "file" : null,
+    attachmentName: row.attachmentName || null,
+    attachmentSize: row.attachmentSize || null,
+    status: statusesByMessage[String(row.id)] || "sent",
+    isDeleted: !!row.deletedAt,
+    reactions: reactionsByMessage[String(row.id)] || [],
+  }));
+}
+
 async function messagesFor(env: Env, conversationId: string, limit = 50, offset = 0): Promise<JsonObject[]> {
   const rows = await env.DB.prepare(
     `
@@ -620,21 +730,32 @@ async function messagesFor(env: Env, conversationId: string, limit = 50, offset 
     `,
   ).bind(conversationId, limit, offset).all<any>();
 
-  return (rows.results || []).reverse().map((row: any) => ({
-    id: row.id,
-    chatId: row.chatId,
-    senderId: row.senderId,
-    senderName: row.senderName,
-    senderAvatar: row.senderAvatar || null,
-    text: row.deletedAt ? "" : row.text,
-    timestamp: row.timestamp,
-    attachmentUrl: row.attachmentId ? `/api/chat/attachments/${encodeURIComponent(row.attachmentId)}` : null,
-    attachmentType: row.attachmentMimeType?.startsWith("image/") ? "image" : row.attachmentId ? "file" : null,
-    attachmentName: row.attachmentName || null,
-    attachmentSize: row.attachmentSize || null,
-    status: "sent",
-    isDeleted: !!row.deletedAt,
-  }));
+  return mapMessageRows(env, rows.results ? [...rows.results].reverse() : []);
+}
+
+async function messageFor(env: Env, messageId: string): Promise<JsonObject | null> {
+  const row = await env.DB.prepare(
+    `
+      SELECT m.id, m.conversation_id AS chatId, m.sender_id AS senderId,
+        COALESCE(u.display_name, m.sender_id) AS senderName,
+        u.avatar_url AS senderAvatar,
+        COALESCE(m.body, '') AS text,
+        m.message_type AS messageType,
+        m.created_at AS timestamp,
+        m.deleted_at AS deletedAt,
+        a.id AS attachmentId,
+        a.file_name AS attachmentName,
+        a.mime_type AS attachmentMimeType,
+        a.size_bytes AS attachmentSize
+      FROM messages m
+      LEFT JOIN users u ON u.id = m.sender_id
+      LEFT JOIN attachments a ON a.message_id = m.id
+      WHERE m.id = ?
+      LIMIT 1
+    `,
+  ).bind(messageId).first<any>();
+  if (!row) return null;
+  return (await mapMessageRows(env, [row]))[0] || null;
 }
 
 async function upsertUser(env: Env, body: JsonObject): Promise<Response> {
@@ -889,6 +1010,7 @@ async function updateUserProfile(env: Env, request: Request, userId: string): Pr
     profileStatus,
     now,
   ).run();
+  await broadcastUserProfileUpdate(env, userId);
   return json(await userFor(env, userId));
 }
 
@@ -1071,6 +1193,88 @@ async function conversationMemberIds(env: Env, conversationId: string): Promise<
   return (rows.results || []).map((row: any) => row.userId).filter(Boolean);
 }
 
+async function markMessageDelivered(env: Env, messageId: string, userId: string, deliveredAt = Date.now()): Promise<void> {
+  await env.DB.prepare(
+    `
+      INSERT INTO message_receipts (message_id, user_id, delivered_at, read_at)
+      VALUES (?, ?, ?, NULL)
+      ON CONFLICT(message_id, user_id) DO UPDATE SET
+        delivered_at = COALESCE(message_receipts.delivered_at, excluded.delivered_at)
+    `,
+  ).bind(messageId, userId, deliveredAt).run();
+}
+
+async function markConversationMessagesRead(env: Env, conversationId: string, readerId: string): Promise<string[]> {
+  const member = await env.DB.prepare(
+    "SELECT 1 FROM conversation_members WHERE conversation_id = ? AND user_id = ?",
+  ).bind(conversationId, readerId).first<any>();
+  if (!member) return [];
+
+  const rows = await env.DB.prepare(
+    `
+      SELECT m.id
+      FROM messages m
+      LEFT JOIN message_receipts r ON r.message_id = m.id AND r.user_id = ?
+      WHERE m.conversation_id = ?
+        AND m.sender_id != ?
+        AND m.deleted_at IS NULL
+        AND r.read_at IS NULL
+    `,
+  ).bind(readerId, conversationId, readerId).all<any>();
+  const messageIds = (rows.results || []).map((row: any) => String(row.id || "")).filter(Boolean);
+  if (messageIds.length === 0) return [];
+
+  const now = Date.now();
+  await Promise.all(messageIds.map((messageId) => env.DB.prepare(
+    `
+      INSERT INTO message_receipts (message_id, user_id, delivered_at, read_at)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(message_id, user_id) DO UPDATE SET
+        delivered_at = COALESCE(message_receipts.delivered_at, excluded.delivered_at),
+        read_at = excluded.read_at
+    `,
+  ).bind(messageId, readerId, now, now).run()));
+  return messageIds;
+}
+
+async function markUndeliveredMessagesDelivered(env: Env, userId: string): Promise<Record<string, string[]>> {
+  const rows = await env.DB.prepare(
+    `
+      SELECT m.id AS messageId, m.conversation_id AS conversationId
+      FROM messages m
+      JOIN conversation_members cm ON cm.conversation_id = m.conversation_id AND cm.user_id = ?
+      LEFT JOIN message_receipts r ON r.message_id = m.id AND r.user_id = ?
+      WHERE m.sender_id != ?
+        AND m.deleted_at IS NULL
+        AND r.delivered_at IS NULL
+    `,
+  ).bind(userId, userId, userId).all<any>();
+  const grouped: Record<string, string[]> = {};
+  const now = Date.now();
+  for (const row of rows.results || []) {
+    const messageId = String(row.messageId || "");
+    const conversationId = String(row.conversationId || "");
+    if (!messageId || !conversationId) continue;
+    await markMessageDelivered(env, messageId, userId, now);
+    if (!grouped[conversationId]) grouped[conversationId] = [];
+    grouped[conversationId].push(messageId);
+  }
+  return grouped;
+}
+
+async function broadcastMessageAndChatUpdates(env: Env, conversationId: string, messageIds: string[]): Promise<void> {
+  const memberIds = await conversationMemberIds(env, conversationId);
+  const messages = (await Promise.all(messageIds.map((messageId) => messageFor(env, messageId))))
+    .filter((message): message is JsonObject => !!message);
+  await Promise.all(memberIds.flatMap((userId) =>
+    messages.map((message) => broadcastToDurableUser(env, userId, "message_updated", message)),
+  ));
+  await Promise.all(memberIds.map(async (userId) => {
+    const payload = await conversationFor(env, conversationId, userId);
+    if (payload) await broadcastToDurableUser(env, userId, "chat_updated", payload);
+  }));
+}
+
 async function isCallParticipant(env: Env, callId: string, userId: string): Promise<boolean> {
   const row = await env.DB.prepare(
     "SELECT 1 FROM call_participants WHERE call_id = ? AND user_id = ?",
@@ -1163,12 +1367,15 @@ async function updateCallStateForEvent(env: Env, callId: string, event: string, 
   }
 }
 
-async function broadcastToDurableUser(env: Env, userId: string, event: string, payload: JsonObject): Promise<void> {
+async function broadcastToDurableUser(env: Env, userId: string, event: string, payload: JsonObject): Promise<number> {
   const id = env.REALTIME_ROOM.idFromName(`user:${userId}`);
-  await env.REALTIME_ROOM.get(id).fetch("https://internal/relay", {
+  const response = await env.REALTIME_ROOM.get(id).fetch("https://internal/relay", {
     method: "POST",
     body: JSON.stringify({ event, payload }),
-  }).catch(() => undefined);
+  }).catch(() => null);
+  if (!response) return 0;
+  const result = await response.json().catch(() => null) as any;
+  return Number(result?.sockets || 0);
 }
 
 async function broadcastToDurableCall(env: Env, callId: string, event: string, payload: JsonObject): Promise<void> {
@@ -1180,14 +1387,22 @@ async function broadcastToDurableCall(env: Env, callId: string, event: string, p
 }
 
 async function relayCallEvent(env: Env, event: string, payload: JsonObject): Promise<void> {
-  const callId = asString(payload.callId || payload.id, "");
+  const callId = asString(payload.callId || payload.roomId || payload.id, "");
   if (!callId) return;
   const eventId = asString(payload.eventId, "") || randomId("evt");
-  const outgoing: JsonObject = { ...payload, eventId, timestamp: Date.now(), event };
+  const outgoing: JsonObject = { ...payload, callId, roomId: asString(payload.roomId, callId), eventId, timestamp: Date.now(), event };
   await recordCallEvent(env, callId, event, outgoing);
   await updateCallStateForEvent(env, callId, event, asString(outgoing.reason, ""));
   const toUserId = asString(outgoing.toUserId, "");
-  if (toUserId) await broadcastToDurableUser(env, toUserId, event, outgoing);
+  if (toUserId) {
+    await broadcastToDurableUser(env, toUserId, event, outgoing);
+  } else {
+    const fromUserId = asString(outgoing.fromUserId, "");
+    const participantIds = await callParticipantIds(env, callId);
+    await Promise.all(participantIds
+      .filter((userId) => userId && userId !== fromUserId)
+      .map((userId) => broadcastToDurableUser(env, userId, event, { ...outgoing, toUserId: userId })));
+  }
   await broadcastToDurableCall(env, callId, event, outgoing);
 }
 
@@ -1640,7 +1855,8 @@ async function createMessage(env: Env, conversationId: string, body: JsonObject)
     await env.DB.prepare("UPDATE attachments SET message_id = ? WHERE id = ?").bind(messageId, attachmentId).run();
   }
 
-  const message = (await messagesFor(env, conversationId, 1, 0)).find((item) => item.id === messageId) || {
+  const memberIds = await conversationMemberIds(env, conversationId);
+  const message = await messageFor(env, messageId) || {
     id: messageId,
     chatId: conversationId,
     senderId,
@@ -1650,10 +1866,15 @@ async function createMessage(env: Env, conversationId: string, body: JsonObject)
     timestamp: now,
     status: "sent",
   };
-  const memberIds = await conversationMemberIds(env, conversationId);
-  await Promise.all(memberIds.map((userId) =>
-    userId === senderId ? Promise.resolve() : broadcastToDurableUser(env, userId, "receive_message", message),
-  ));
+  const deliveredRecipientIds: string[] = [];
+  await Promise.all(memberIds.map(async (userId) => {
+    if (userId === senderId) return;
+    const socketCount = await broadcastToDurableUser(env, userId, "receive_message", message);
+    if (socketCount > 0) deliveredRecipientIds.push(userId);
+  }));
+  await Promise.all(deliveredRecipientIds.map((userId) => markMessageDelivered(env, messageId, userId, now)));
+  const senderMessage = await messageFor(env, messageId) || message;
+  await broadcastToDurableUser(env, senderId, "message_updated", senderMessage);
   await Promise.all(memberIds.map(async (userId) => {
     const payload = await conversationFor(env, conversationId, userId);
     if (payload) await broadcastToDurableUser(env, userId, "chat_updated", payload);
@@ -1664,6 +1885,14 @@ async function createMessage(env: Env, conversationId: string, body: JsonObject)
 async function markMessageRead(env: Env, messageId: string, body: JsonObject): Promise<Response> {
   const userId = asString(body.userId || body.readerId);
   if (!userId) return badRequest("userId is required");
+  const row = await env.DB.prepare(
+    "SELECT conversation_id AS conversationId FROM messages WHERE id = ? AND deleted_at IS NULL",
+  ).bind(messageId).first<any>();
+  if (!row) return json({ ok: false, error: "Message not found" }, { status: 404 });
+  const member = await env.DB.prepare(
+    "SELECT 1 FROM conversation_members WHERE conversation_id = ? AND user_id = ?",
+  ).bind(row.conversationId, userId).first<any>();
+  if (!member) return json({ ok: false, error: "User is not a conversation member" }, { status: 403 });
   const now = Date.now();
   await env.DB.prepare(
     `
@@ -1674,7 +1903,53 @@ async function markMessageRead(env: Env, messageId: string, body: JsonObject): P
         read_at = excluded.read_at
     `,
   ).bind(messageId, userId, now, now).run();
+  await broadcastMessageAndChatUpdates(env, String(row.conversationId), [messageId]);
   return json({ ok: true, messageId, userId, readAt: now });
+}
+
+async function reactToMessage(env: Env, messageId: string, body: JsonObject): Promise<Response> {
+  const userId = asString(body.userId || body.senderId);
+  const emoji = asString(body.emoji).trim();
+  if (!userId) return badRequest("userId is required");
+  if (!emoji) return badRequest("emoji is required");
+  if (emoji.length > 32) return badRequest("emoji is too long");
+
+  const messageRow = await env.DB.prepare(
+    "SELECT id, conversation_id AS conversationId FROM messages WHERE id = ? AND deleted_at IS NULL",
+  ).bind(messageId).first<any>();
+  if (!messageRow) return json({ ok: false, error: "Message not found" }, { status: 404 });
+
+  const member = await env.DB.prepare(
+    "SELECT 1 FROM conversation_members WHERE conversation_id = ? AND user_id = ?",
+  ).bind(messageRow.conversationId, userId).first<any>();
+  if (!member) return json({ ok: false, error: "User is not a conversation member" }, { status: 403 });
+
+  const now = Date.now();
+  await env.DB.prepare(
+    "INSERT OR IGNORE INTO users (id, display_name, created_at, updated_at) VALUES (?, ?, ?, ?)",
+  ).bind(userId, userId, now, now).run();
+
+  const existing = await env.DB.prepare(
+    "SELECT 1 FROM message_reactions WHERE message_id = ? AND user_id = ? AND emoji = ?",
+  ).bind(messageId, userId, emoji).first<any>();
+  if (existing) {
+    await env.DB.prepare(
+      "DELETE FROM message_reactions WHERE message_id = ? AND user_id = ? AND emoji = ?",
+    ).bind(messageId, userId, emoji).run();
+  } else {
+    await env.DB.prepare(
+      `
+        INSERT INTO message_reactions (message_id, user_id, emoji, created_at)
+        VALUES (?, ?, ?, ?)
+      `,
+    ).bind(messageId, userId, emoji, now).run();
+  }
+
+  const message = await messageFor(env, messageId);
+  if (!message) return json({ ok: false, error: "Message not found" }, { status: 404 });
+  const memberIds = await conversationMemberIds(env, String(messageRow.conversationId));
+  await Promise.all(memberIds.map((memberId) => broadcastToDurableUser(env, memberId, "message_updated", message)));
+  return json(message);
 }
 
 async function uploadAttachment(env: Env, request: Request): Promise<Response> {
@@ -2038,6 +2313,10 @@ export class RealtimeRoom {
     await touchPresence(this.env, auth);
     server.send(JSON.stringify({ event: "connected", payload: { userId: auth.userId, at: Date.now() } }));
     await broadcastUserPresence(this.env, auth.userId, true);
+    const deliveredByConversation = await markUndeliveredMessagesDelivered(this.env, auth.userId);
+    await Promise.all(Object.entries(deliveredByConversation).map(([conversationId, messageIds]) =>
+      broadcastMessageAndChatUpdates(this.env, conversationId, messageIds),
+    ));
     await this.sendPresenceSnapshot(server);
     server.addEventListener("message", (event) => {
       this.handleClientMessage(auth.userId, String(event.data)).catch((error) => {
@@ -2074,7 +2353,14 @@ export class RealtimeRoom {
       await broadcastUserPresence(this.env, userId, payload.online !== false);
       return;
     }
-    if (event === "join_chat" || event === "leave_chat" || event === "mark_messages_read") return;
+    if (event === "mark_messages_read") {
+      const chatId = asString(payload.chatId || payload.conversationId, "");
+      if (!chatId) return;
+      const messageIds = await markConversationMessagesRead(this.env, chatId, userId);
+      await broadcastMessageAndChatUpdates(this.env, chatId, messageIds);
+      return;
+    }
+    if (event === "join_chat" || event === "leave_chat") return;
     if (event === "typing") {
       const chatId = asString(payload.chatId || payload.conversationId, "");
       if (!chatId) return;
@@ -2092,15 +2378,17 @@ export class RealtimeRoom {
         .map((memberId) => broadcastToDurableUser(this.env, memberId, "user_typing", outgoing)));
       return;
     }
-    const callId = asString(payload.callId || payload.id, "");
+    const callId = asString(payload.callId || payload.roomId || payload.id, "");
     if (!callId) return;
     const call = await callRowFor(this.env, callId);
     if (!call) return;
     if (!(await isCallParticipant(this.env, callId, userId))) return;
-    const targetId = asString(payload.toUserId, "") || (userId === call.callerId ? call.calleeId : call.callerId);
+    const explicitTargetId = asString(payload.toUserId, "");
+    const targetId = explicitTargetId || (call.mode === "group" ? "" : (userId === call.callerId ? call.calleeId : call.callerId));
     const outgoing = {
       ...payload,
       callId,
+      roomId: asString(payload.roomId, callId),
       chatId: asString(payload.chatId, call.chatId),
       callerId: asString(payload.callerId, call.callerId),
       calleeId: asString(payload.calleeId, call.calleeId),
@@ -2362,6 +2650,16 @@ export default {
     const readMatch = url.pathname.match(/^\/api\/chat\/messages\/([^/]+)\/read$/);
     if (readMatch && request.method === "POST") {
       return markMessageRead(env, decodeURIComponent(readMatch[1]), await readJson(request));
+    }
+
+    const reactMatch = url.pathname.match(/^\/api\/chat\/messages\/([^/]+)\/react$/);
+    if (reactMatch && request.method === "POST") {
+      return reactToMessage(env, decodeURIComponent(reactMatch[1]), await readJson(request));
+    }
+
+    const conversationReactMatch = url.pathname.match(/^\/api\/chat\/conversations\/([^/]+)\/messages\/([^/]+)\/react$/);
+    if (conversationReactMatch && request.method === "POST") {
+      return reactToMessage(env, decodeURIComponent(conversationReactMatch[2]), await readJson(request));
     }
 
     if (url.pathname === "/api/chat/attachments/upload" && request.method === "POST") {

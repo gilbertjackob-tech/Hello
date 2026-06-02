@@ -158,6 +158,8 @@ export interface DriveItem {
   createdAt: number;
   monthKey?: string;
   monthLabel?: string;
+  deletedAt?: number | null;
+  deletedBy?: string | null;
 }
 
 export interface DriveItemsResponse {
@@ -165,6 +167,19 @@ export interface DriveItemsResponse {
   nextCursor: number | null;
   hasMore: boolean;
   total: number;
+}
+
+export interface DriveDeleteLimit {
+  limit: number;
+  used: number;
+  remaining: number;
+  deleteDay: string;
+}
+
+export interface DriveDeleteResponse {
+  ok: boolean;
+  item?: DriveItem;
+  deleteLimit?: DriveDeleteLimit;
 }
 
 export interface DriveUploadResponse {

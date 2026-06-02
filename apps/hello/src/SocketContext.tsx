@@ -30,6 +30,7 @@ function createCloudRealtimeSocket(currentUser: User): RealtimeSocket {
   const listeners = new Map<string, Set<RealtimeHandler>>();
   let ws: WebSocket | null = null;
   let closed = false;
+  const pendingSends: string[] = [];
 
   const dispatch = (event: string, payload?: any) => {
     listeners.get(event)?.forEach((handler) => handler(payload));
@@ -50,6 +51,9 @@ function createCloudRealtimeSocket(currentUser: User): RealtimeSocket {
       const payload = { userId: currentUser.id, name: currentUser.name, online: true, platform: "web" };
       ws?.send(JSON.stringify({ event: "identify", payload }));
       ws?.send(JSON.stringify({ event: "online", payload }));
+      while (pendingSends.length > 0 && ws?.readyState === WebSocket.OPEN) {
+        ws.send(pendingSends.shift()!);
+      }
     });
     ws.addEventListener("close", () => {
       dispatch("disconnect");
@@ -88,9 +92,7 @@ function createCloudRealtimeSocket(currentUser: User): RealtimeSocket {
       if (ws?.readyState === WebSocket.OPEN) {
         ws.send(body);
       } else {
-        window.setTimeout(() => {
-          if (ws?.readyState === WebSocket.OPEN) ws.send(body);
-        }, 500);
+        pendingSends.push(body);
       }
     },
     disconnect() {

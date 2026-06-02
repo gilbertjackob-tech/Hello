@@ -93,6 +93,8 @@ class ChatPaneErrorBoundary extends Component<
 export default function App() {
   const [activeChat, setActiveChat] = useState<Chat | null>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const isEmbeddedInGlassBox =
+    typeof window !== "undefined" && window.self !== window.top;
   const [currentUser, setCurrentUser] = useState<User | null>(() => {
     const saved = localStorage.getItem("whatsclone_user_real");
     return saved ? JSON.parse(saved) : null;
@@ -109,7 +111,7 @@ export default function App() {
   const isBrowserRailTab = activeRailTab === "browser";
 
   const selectChat = useCallback((chat: Chat | null) => {
-    setActiveChat(chat);
+    setActiveChat(chat ? { ...chat, unreadCount: 0 } : null);
     if (!currentUser) return;
 
     const storageKey = `${ACTIVE_CHAT_STORAGE_PREFIX}_${currentUser.id}`;
@@ -188,7 +190,12 @@ export default function App() {
               <div className="absolute left-[-10%] top-[-15%] h-[280px] w-[280px] rounded-full bg-emerald-300/20 blur-3xl dark:bg-emerald-500/10" />
               <div className="absolute bottom-[-10%] right-[-6%] h-[260px] w-[260px] rounded-full bg-amber-200/30 blur-3xl dark:bg-cyan-500/10" />
             </div>
-            <div className="relative flex h-full w-full flex-col overflow-hidden px-2 pb-2 pt-2 sm:px-3 sm:pb-3 sm:pt-3 md:flex-row md:gap-3">
+            <div
+              className={cn(
+                "relative flex h-full w-full flex-col overflow-hidden px-2 pb-2 sm:px-3 sm:pb-3 md:flex-row md:gap-3",
+                isEmbeddedInGlassBox ? "pt-[72px]" : "pt-2 sm:pt-3",
+              )}
+            >
               <div className="hello-panel-strong flex h-full w-full flex-col overflow-hidden rounded-[32px] md:flex-row md:min-h-0">
                 <CallOverlay currentUser={currentUser} />
 

@@ -781,7 +781,7 @@ export function CallOverlay({ currentUser }: CallOverlayProps) {
       }),
     });
     if (!res.ok) throw new Error("Failed to create call log");
-    return (await res.json()).id as string;
+    return res.json() as Promise<SignalPayload & { id?: string; callId?: string }>;
   };
 
   const emitSignal = (event: string, data: SignalPayload) => {
@@ -1977,7 +1977,9 @@ export function CallOverlay({ currentUser }: CallOverlayProps) {
       addCallDebug("WEB: outgoing call requested", { chatId, calleeId, isVideo });
 
       try {
-        const callId = await createCallLog(baseCall);
+        const callPayload = await createCallLog(baseCall);
+        const callId = callPayload.callId || callPayload.id;
+        if (!callId) throw new Error("Call log did not return a call id");
         updateCallDebug({ callId });
         addCallDebug("WEB: create call log success", { callId });
         const call: CallData = { ...baseCall, callId, status: "outgoing_calling" };
@@ -2037,7 +2039,6 @@ export function CallOverlay({ currentUser }: CallOverlayProps) {
 
         const signal = buildSignal(call, calleeId);
         if (!signal || !offer.sdp) throw new Error("Could not create a valid call offer");
-        emitSignal("call:start", { ...signal, ...call });
         emitSignal("call:offer", { ...signal, offer });
         void flushQueuedAnswer(callId);
         startNoAnswerTimeout(call);
@@ -2056,7 +2057,7 @@ export function CallOverlay({ currentUser }: CallOverlayProps) {
     };
 
     const startGroupCall = async (e: Event) => {
-      const { chatId, chatName, participantIds } = (
+      const { chatId, participantIds } = (
         e as CustomEvent<StartGroupCallDetail>
       ).detail;
       const isVideo = false;
@@ -2103,12 +2104,6 @@ export function CallOverlay({ currentUser }: CallOverlayProps) {
         });
         setCallStatus("connected");
         setIsMinimized(false);
-        socket.emit("call:room-created", {
-          room,
-          chatName,
-          fromUserId: currentUser.id,
-          participantIds: room.participantIds,
-        });
 
         const { stream: obtainedStream, quality: obtainedQuality } =
           await getCameraStreamWithFallback(isVideo, videoQuality);
@@ -2767,12 +2762,6 @@ export function CallOverlay({ currentUser }: CallOverlayProps) {
       const room = (await res.json()) as CallRoom;
       setActiveGroupRoom(room);
       setCallStatus("connected");
-      socket.emit("call:room-join", {
-        roomId: room.id,
-        fromUserId: currentUser.id,
-        userId: currentUser.id,
-        participantIds: room.participantIds,
-      });
 
       const { stream: obtainedStream, quality: obtainedQuality } =
         await getCameraStreamWithFallback(room.type === "video", videoQuality);
@@ -2798,12 +2787,6 @@ export function CallOverlay({ currentUser }: CallOverlayProps) {
         method: "POST",
         headers: { "Content-Type": "application/json", ...cloudAuthHeaders() },
         body: JSON.stringify({ userId: currentUser.id, ended }),
-      });
-      socket?.emit("call:room-leave", {
-        roomId: room.id,
-        fromUserId: currentUser.id,
-        userId: currentUser.id,
-        ended,
       });
     } catch (err) {
       console.error(err);

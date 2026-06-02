@@ -21,6 +21,28 @@ let HELLO_API_PATH = "/api";
 let db: any;
 let upload: any;
 let driveUpload: any;
+let lastDriveFolderSyncAt = 0;
+
+const MANUAL_DRIVE_UPLOADER_ID = "Hasnat PC";
+const DRIVE_FOLDER_SYNC_MIN_INTERVAL_MS = 3000;
+const DRIVE_MEDIA_TYPES: Record<string, string> = {
+  ".avif": "image/avif",
+  ".bmp": "image/bmp",
+  ".gif": "image/gif",
+  ".heic": "image/heic",
+  ".heif": "image/heif",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".png": "image/png",
+  ".webp": "image/webp",
+  ".3gp": "video/3gpp",
+  ".avi": "video/x-msvideo",
+  ".m4v": "video/x-m4v",
+  ".mkv": "video/x-matroska",
+  ".mov": "video/quicktime",
+  ".mp4": "video/mp4",
+  ".webm": "video/webm",
+};
 
 export interface MountHelloOptions {
   basePath?: string;
@@ -165,7 +187,8 @@ function initializeHelloRuntime(options: MountHelloOptions = {}) {
       uploaderId TEXT,
       createdAt INTEGER,
       monthKey TEXT,
-      deletedAt INTEGER
+      deletedAt INTEGER,
+      deletedBy TEXT
     );
 
     CREATE INDEX IF NOT EXISTS idx_drive_items_latest
@@ -173,6 +196,17 @@ function initializeHelloRuntime(options: MountHelloOptions = {}) {
 
     CREATE INDEX IF NOT EXISTS idx_drive_items_month
       ON drive_items (deletedAt, monthKey, createdAt DESC);
+
+    CREATE TABLE IF NOT EXISTS drive_delete_events (
+      id TEXT PRIMARY KEY,
+      itemId TEXT,
+      userId TEXT,
+      deletedAt INTEGER,
+      deleteDay TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_drive_delete_events_user_day
+      ON drive_delete_events (userId, deleteDay, deletedAt DESC);
 
     CREATE TABLE IF NOT EXISTS call_logs (
       id TEXT PRIMARY KEY,
@@ -251,8 +285,19 @@ function initializeHelloRuntime(options: MountHelloOptions = {}) {
 
   try { db.prepare("ALTER TABLE drive_items ADD COLUMN monthKey TEXT").run(); } catch(e){}
   try { db.prepare("ALTER TABLE drive_items ADD COLUMN deletedAt INTEGER").run(); } catch(e){}
+  try { db.prepare("ALTER TABLE drive_items ADD COLUMN deletedBy TEXT").run(); } catch(e){}
   try { db.prepare("CREATE INDEX IF NOT EXISTS idx_drive_items_latest ON drive_items (deletedAt, createdAt DESC, id DESC)").run(); } catch(e){}
   try { db.prepare("CREATE INDEX IF NOT EXISTS idx_drive_items_month ON drive_items (deletedAt, monthKey, createdAt DESC)").run(); } catch(e){}
+  try { db.prepare(`
+    CREATE TABLE IF NOT EXISTS drive_delete_events (
+      id TEXT PRIMARY KEY,
+      itemId TEXT,
+      userId TEXT,
+      deletedAt INTEGER,
+      deleteDay TEXT
+    )
+  `).run(); } catch(e){}
+  try { db.prepare("CREATE INDEX IF NOT EXISTS idx_drive_delete_events_user_day ON drive_delete_events (userId, deleteDay, deletedAt DESC)").run(); } catch(e){}
 
   const storage = multer.diskStorage({
     destination: (_req, _file, cb) => {
@@ -336,6 +381,116 @@ function getDriveMonthLabel(monthKey: string) {
   return date.toLocaleString("en-US", { month: "long", year: "numeric" });
 }
 
+function getDriveMediaMime(filePath: string) {
+  return DRIVE_MEDIA_TYPES[path.extname(filePath).toLowerCase()] || null;
+}
+
+function isInsideDriveRoot(filePath: string) {
+  const resolvedRoot = path.resolve(FAMILY_DRIVE_DIR);
+  const resolvedFile = path.resolve(filePath);
+  return resolvedFile === resolvedRoot || resolvedFile.startsWith(resolvedRoot + path.sep);
+}
+
+function walkDriveMediaFiles(rootDir: string) {
+  const files: string[] = [];
+  const stack = [rootDir];
+  while (stack.length) {
+    const current = stack.pop()!;
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(current, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    for (const entry of entries) {
+      if (entry.name.startsWith(".")) continue;
+      const entryPath = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        stack.push(entryPath);
+      } else if (entry.isFile() && getDriveMediaMime(entryPath)) {
+        files.push(path.resolve(entryPath));
+      }
+    }
+  }
+  return files;
+}
+
+function getManualDriveUploaderId() {
+  const row = db
+    .prepare("SELECT id FROM users WHERE LOWER(name) = LOWER(?) ORDER BY id LIMIT 1")
+    .get(MANUAL_DRIVE_UPLOADER_ID) as { id?: string } | undefined;
+  return row?.id || MANUAL_DRIVE_UPLOADER_ID;
+}
+
+function syncDriveFolder(force = false) {
+  const now = Date.now();
+  if (!force && now - lastDriveFolderSyncAt < DRIVE_FOLDER_SYNC_MIN_INTERVAL_MS) {
+    return { scanned: 0, added: 0, removed: 0, skipped: true };
+  }
+  lastDriveFolderSyncAt = now;
+
+  fs.mkdirSync(FAMILY_DRIVE_DIR, { recursive: true });
+  const rows = db.prepare("SELECT id, path FROM drive_items").all() as Array<{ id: string; path?: string }>;
+  const existingByPath = new Map<string, string>();
+  const missingIds: string[] = [];
+
+  for (const row of rows) {
+    const resolvedPath = row.path ? path.resolve(row.path) : "";
+    if (!resolvedPath || !isInsideDriveRoot(resolvedPath) || !fs.existsSync(resolvedPath)) {
+      missingIds.push(row.id);
+    } else {
+      existingByPath.set(resolvedPath, row.id);
+    }
+  }
+
+  const diskFiles = walkDriveMediaFiles(FAMILY_DRIVE_DIR);
+  const manualUploaderId = getManualDriveUploaderId();
+  const insert = db.prepare(`
+    INSERT INTO drive_items
+    (id, originalName, storedName, mimeType, type, size, path, uploaderId, createdAt, monthKey, deletedAt)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+  `);
+
+  let added = 0;
+  const reconcile = db.transaction(() => {
+    for (const id of missingIds) {
+      db.prepare("DELETE FROM drive_delete_events WHERE itemId = ?").run(id);
+      db.prepare("DELETE FROM drive_items WHERE id = ?").run(id);
+    }
+
+    for (const filePath of diskFiles) {
+      if (existingByPath.has(filePath)) continue;
+      const mimeType = getDriveMediaMime(filePath);
+      if (!mimeType) continue;
+      let stat: fs.Stats;
+      try {
+        stat = fs.statSync(filePath);
+      } catch {
+        continue;
+      }
+      const createdAt = Math.max(1, Math.floor(stat.mtimeMs || stat.birthtimeMs || Date.now())) + added;
+      const id = `drive_pc_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+      insert.run(
+        id,
+        path.basename(filePath),
+        path.basename(filePath),
+        mimeType,
+        mimeType.startsWith("video/") ? "video" : "image",
+        stat.size,
+        filePath,
+        manualUploaderId,
+        createdAt,
+        getDriveMonthKey(createdAt),
+      );
+      added += 1;
+    }
+  });
+  reconcile();
+
+  return { scanned: diskFiles.length, added, removed: missingIds.length, skipped: false };
+}
+
 function driveItemToResponse(row: any) {
   const monthKey = row.monthKey || getDriveMonthKey(Number(row.createdAt || Date.now()));
   return {
@@ -350,6 +505,41 @@ function driveItemToResponse(row: any) {
     createdAt: Number(row.createdAt || 0),
     monthKey,
     monthLabel: getDriveMonthLabel(monthKey),
+    deletedAt: row.deletedAt ? Number(row.deletedAt) : null,
+    deletedBy: row.deletedBy || null,
+  };
+}
+
+function getDriveActorId(req: express.Request) {
+  const candidate =
+    req.get("x-user-id") ||
+    req.query.userId ||
+    (req.body && typeof req.body === "object" ? req.body.userId : null);
+  return String(candidate || "unknown").trim() || "unknown";
+}
+
+function getDhakaDeleteDay(timestamp: number) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Dhaka",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date(timestamp));
+  const value = (type: string) => parts.find((part) => part.type === type)?.value || "";
+  return `${value("year")}-${value("month")}-${value("day")}`;
+}
+
+function getDriveDeleteAllowance(userId: string, now = Date.now()) {
+  const deleteDay = getDhakaDeleteDay(now);
+  const row = db
+    .prepare("SELECT COUNT(*) as count FROM drive_delete_events WHERE userId = ? AND deleteDay = ?")
+    .get(userId, deleteDay) as { count?: number };
+  const used = Number(row?.count || 0);
+  return {
+    limit: 20,
+    used,
+    remaining: Math.max(0, 20 - used),
+    deleteDay,
   };
 }
 
@@ -391,6 +581,7 @@ function resetLocalHelloData() {
     "messages",
     "chats",
     "file_attachments",
+    "drive_delete_events",
     "drive_items",
     "users",
   ];
@@ -420,7 +611,7 @@ function resetLocalHelloData() {
 
 function sendDriveItemFile(itemId: string, res: express.Response) {
   const item = db
-    .prepare("SELECT * FROM drive_items WHERE id = ? AND deletedAt IS NULL")
+    .prepare("SELECT * FROM drive_items WHERE id = ?")
     .get(itemId) as any;
   if (!item || !fs.existsSync(item.path)) {
     res.status(404).json({ error: "Drive item not found" });
@@ -1344,6 +1535,11 @@ export async function mountHello(
     });
   });
 
+  app.get("/api/drive/delete-limit", (req, res) => {
+    res.setHeader("Cache-Control", "no-store");
+    res.json(getDriveDeleteAllowance(getDriveActorId(req)));
+  });
+
   // File Upload API
   app.post("/api/files/upload", upload.single("file"), (req, res) => {
     if (!req.file) {
@@ -1382,6 +1578,9 @@ export async function mountHello(
 
   // Family Drive: central PC-backed photo/video library. No folders, no passwords.
   app.get("/api/drive/items", (req, res) => {
+    if (String(req.query.sync || "").toLowerCase() === "true") {
+      syncDriveFolder(true);
+    }
     const limit = Math.min(Math.max(Number(req.query.limit || 60), 1), 120);
     const before = Number(req.query.before || Date.now() + 1);
 
@@ -1415,6 +1614,7 @@ export async function mountHello(
   });
 
   app.get("/api/drive/months", (_req, res) => {
+    syncDriveFolder();
     const rows = db
       .prepare(
         `
@@ -1435,6 +1635,42 @@ export async function mountHello(
         count: Number(row.count || 0),
         latest: Number(row.latest || 0),
       })),
+    });
+  });
+
+  app.get("/api/drive/trash", (req, res) => {
+    if (String(req.query.sync || "").toLowerCase() === "true") {
+      syncDriveFolder(true);
+    }
+    const limit = Math.min(Math.max(Number(req.query.limit || 60), 1), 120);
+    const before = Number(req.query.before || Date.now() + 1);
+
+    const rows = db
+      .prepare(
+        `
+        SELECT * FROM drive_items
+        WHERE deletedAt IS NOT NULL AND deletedAt < ?
+        ORDER BY deletedAt DESC, id DESC
+        LIMIT ?
+      `,
+      )
+      .all(before, limit + 1) as any[];
+
+    const visibleRows = rows.slice(0, limit);
+    const hasMore = rows.length > limit;
+    const nextCursor = hasMore && visibleRows.length
+      ? Number(visibleRows[visibleRows.length - 1].deletedAt)
+      : null;
+    const totalRow = db
+      .prepare("SELECT COUNT(*) as total FROM drive_items WHERE deletedAt IS NOT NULL")
+      .get() as { total?: number };
+
+    res.setHeader("Cache-Control", "no-store");
+    res.json({
+      items: visibleRows.map(driveItemToResponse),
+      nextCursor,
+      hasMore,
+      total: Number(totalRow?.total || 0),
     });
   });
 
@@ -1493,7 +1729,56 @@ export async function mountHello(
       return;
     }
 
-    db.prepare("UPDATE drive_items SET deletedAt = ? WHERE id = ?").run(Date.now(), req.params.itemId);
+    const userId = getDriveActorId(req);
+    const now = Date.now();
+    const allowance = getDriveDeleteAllowance(userId, now);
+    if (allowance.remaining <= 0) {
+      res.status(429).json({
+        error: "Daily Drive delete limit reached. You can delete more tomorrow.",
+        deleteLimit: allowance,
+      });
+      return;
+    }
+
+    const eventId = "drive_delete_" + Math.random().toString(36).slice(2, 11);
+    const moveToTrash = db.transaction(() => {
+      db.prepare("UPDATE drive_items SET deletedAt = ?, deletedBy = ? WHERE id = ?").run(now, userId, req.params.itemId);
+      db.prepare(
+        "INSERT INTO drive_delete_events (id, itemId, userId, deletedAt, deleteDay) VALUES (?, ?, ?, ?, ?)",
+      ).run(eventId, req.params.itemId, userId, now, allowance.deleteDay);
+    });
+    moveToTrash();
+
+    res.json({
+      ok: true,
+      item: driveItemToResponse({ ...item, deletedAt: now, deletedBy: userId }),
+      deleteLimit: getDriveDeleteAllowance(userId, now),
+    });
+  });
+
+  app.post("/api/drive/items/:itemId/restore", (req, res) => {
+    const item = db
+      .prepare("SELECT * FROM drive_items WHERE id = ? AND deletedAt IS NOT NULL")
+      .get(req.params.itemId) as any;
+    if (!item) {
+      res.status(404).json({ error: "Drive trash item not found" });
+      return;
+    }
+
+    db.prepare("UPDATE drive_items SET deletedAt = NULL, deletedBy = NULL WHERE id = ?").run(req.params.itemId);
+    const restored = db.prepare("SELECT * FROM drive_items WHERE id = ?").get(req.params.itemId);
+    res.json({ ok: true, item: driveItemToResponse(restored) });
+  });
+
+  app.delete("/api/drive/items/:itemId/permanent", (req, res) => {
+    const item = db
+      .prepare("SELECT * FROM drive_items WHERE id = ? AND deletedAt IS NOT NULL")
+      .get(req.params.itemId) as any;
+    if (!item) {
+      res.status(404).json({ error: "Drive trash item not found" });
+      return;
+    }
+
     if (item.path && fs.existsSync(item.path)) {
       try {
         fs.unlinkSync(item.path);
@@ -1501,6 +1786,7 @@ export async function mountHello(
         console.warn("[DRIVE_DELETE_FILE_FAILED]", error);
       }
     }
+    db.prepare("DELETE FROM drive_items WHERE id = ?").run(req.params.itemId);
     res.json({ ok: true });
   });
 

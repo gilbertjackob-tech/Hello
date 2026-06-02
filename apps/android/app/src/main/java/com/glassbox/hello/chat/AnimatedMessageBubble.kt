@@ -100,7 +100,7 @@ fun AnimatedMessageBubble(
     val statusColor by animateColorAsState(
         targetValue = when (message.status) {
             "read" -> HelloColors.ReadReceipt
-            "delivered" -> Color(0xFF7DC9F2)
+            "delivered" -> HelloColors.DarkTextMuted
             "failed" -> HelloColors.DarkDanger
             else -> HelloColors.DarkTextMuted
         },

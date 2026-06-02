@@ -126,9 +126,8 @@ fun MessageBubble(
                             append("  ")
                             append(
                                 when (message.status) {
-                                    "read" -> "Read"
-                                    "delivered" -> "Delivered"
-                                    else -> "Sent"
+                                    "read", "delivered" -> "\u2713\u2713"
+                                    else -> "\u2713"
                                 }
                             )
                         }

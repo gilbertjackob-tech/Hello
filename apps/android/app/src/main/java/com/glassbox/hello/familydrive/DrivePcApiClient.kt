@@ -22,12 +22,27 @@ class DrivePcApiClient : DrivePcApi {
     private val gson = Gson()
     private val driveBaseUrl = AppConfig.DRIVE_API_BASE
 
-    override suspend fun fetchDriveItems(limit: Int, before: Long?): Result<DriveItemsResponse> = safePcCall {
+    override suspend fun fetchDriveItems(limit: Int, before: Long?, sync: Boolean): Result<DriveItemsResponse> = safePcCall {
         val url = buildString {
             append("$driveBaseUrl/drive/items?limit=$limit")
             if (before != null) append("&before=$before")
+            if (sync) append("&sync=true")
         }
         gson.fromJson(get(url), DriveItemsResponse::class.java)
+    }
+
+    override suspend fun fetchDriveTrash(limit: Int, before: Long?, sync: Boolean): Result<DriveItemsResponse> = safePcCall {
+        val url = buildString {
+            append("$driveBaseUrl/drive/trash?limit=$limit")
+            if (before != null) append("&before=$before")
+            if (sync) append("&sync=true")
+        }
+        gson.fromJson(get(url), DriveItemsResponse::class.java)
+    }
+
+    override suspend fun fetchDriveDeleteLimit(userId: String): Result<DriveDeleteLimit> = safePcCall {
+        val url = "$driveBaseUrl/drive/delete-limit?userId=${encodePathValue(userId)}"
+        gson.fromJson(get(url), DriveDeleteLimit::class.java)
     }
 
     override suspend fun uploadDriveFile(
@@ -45,8 +60,20 @@ class DrivePcApiClient : DrivePcApi {
         gson.fromJson(response, DriveUploadResponse::class.java)
     }
 
-    override suspend fun deleteDriveItem(itemId: String): Result<Unit> = safePcCall {
-        request(Request.Builder().url("$driveBaseUrl/drive/items/${encodePathValue(itemId)}").delete().build())
+    override suspend fun deleteDriveItem(itemId: String, userId: String): Result<DriveDeleteResponse> = safePcCall {
+        val url = "$driveBaseUrl/drive/items/${encodePathValue(itemId)}?userId=${encodePathValue(userId)}"
+        val response = request(Request.Builder().url(url).delete().build())
+        gson.fromJson(response, DriveDeleteResponse::class.java)
+    }
+
+    override suspend fun restoreDriveItem(itemId: String): Result<DriveItem> = safePcCall {
+        val response = request(Request.Builder().url("$driveBaseUrl/drive/items/${encodePathValue(itemId)}/restore").post("".toRequestBody()).build())
+        gson.fromJson(response, DriveItemActionResponse::class.java).item
+            ?: throw Exception("Restore response was empty")
+    }
+
+    override suspend fun permanentlyDeleteDriveItem(itemId: String): Result<Unit> = safePcCall {
+        request(Request.Builder().url("$driveBaseUrl/drive/items/${encodePathValue(itemId)}/permanent").delete().build())
         Unit
     }
 

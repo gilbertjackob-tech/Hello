@@ -14,12 +14,37 @@ import java.util.Locale
 class FamilyDriveRepository(
     private val api: DrivePcApi = DrivePcApiClient()
 ) {
-    suspend fun fetchItems(limit: Int = 60, before: Long? = null): Result<DriveItemsResponse> {
-        return api.fetchDriveItems(limit = limit, before = before)
+    suspend fun fetchItems(limit: Int = 60, before: Long? = null, sync: Boolean = false): Result<DriveItemsResponse> {
+        return api.fetchDriveItems(limit = limit, before = before, sync = sync)
     }
 
-    suspend fun deleteItem(itemId: String): Result<Unit> {
-        return api.deleteDriveItem(itemId)
+    suspend fun fetchTrash(limit: Int = 60, before: Long? = null, sync: Boolean = false): Result<DriveItemsResponse> {
+        return api.fetchDriveTrash(limit = limit, before = before, sync = sync)
+    }
+
+    suspend fun fetchDeleteLimit(userId: String): Result<DriveDeleteLimit> {
+        return api.fetchDriveDeleteLimit(userId)
+    }
+
+    suspend fun deleteItem(itemId: String, userId: String): Result<DriveDeleteResponse> {
+        return api.deleteDriveItem(itemId, userId)
+    }
+
+    suspend fun restoreItem(itemId: String): Result<DriveItem> {
+        return api.restoreDriveItem(itemId)
+    }
+
+    suspend fun permanentlyDeleteItem(itemId: String): Result<Unit> {
+        return api.permanentlyDeleteDriveItem(itemId)
+    }
+
+    suspend fun removePendingUpload(context: Context, itemId: String): Result<Unit> = withContext(Dispatchers.IO) {
+        try {
+            pendingStore(context.applicationContext).delete(itemId)
+            Result.success(Unit)
+        } catch (error: Exception) {
+            Result.failure(error)
+        }
     }
 
     suspend fun uploadUris(

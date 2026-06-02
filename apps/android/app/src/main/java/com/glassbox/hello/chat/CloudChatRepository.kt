@@ -1,6 +1,7 @@
 package com.glassbox.hello.chat
 
 import android.content.Context
+import com.glassbox.hello.auth.CloudSessionManager
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 
@@ -8,6 +9,7 @@ class CloudChatRepository(
     context: Context,
     private val api: CloudChatApi = CloudChatApi()
 ) {
+    private val sessionManager = CloudSessionManager(context.applicationContext)
     private val prefs = context.applicationContext.getSharedPreferences("hello_cloud_chat_cache", Context.MODE_PRIVATE)
     private val gson = Gson()
 
@@ -45,14 +47,38 @@ class CloudChatRepository(
         }
     }
 
-    suspend fun fetchUsers(query: String? = null): Result<List<ChatModels.User>> =
-        api.fetchUsers(query)
+    suspend fun fetchUsers(query: String? = null): Result<List<ChatModels.User>> {
+        val usersResult = api.fetchUsers(query)
+        val contacts = sessionManager.token()
+            ?.let { token -> api.fetchContacts(token).getOrNull() }
+            .orEmpty()
+            .filter { contact ->
+                query.isNullOrBlank() ||
+                    contact.name.contains(query, ignoreCase = true) ||
+                    contact.id.contains(query, ignoreCase = true) ||
+                    contact.phone?.contains(query, ignoreCase = true) == true ||
+                    contact.email?.contains(query, ignoreCase = true) == true
+            }
+        val users = usersResult.getOrNull().orEmpty()
+        val merged = dedupeUsers(contacts + users)
+        return when {
+            merged.isNotEmpty() -> Result.success(merged)
+            usersResult.isFailure -> usersResult
+            else -> Result.success(emptyList())
+        }
+    }
 
-    suspend fun createDirectChat(currentUserId: String, targetUserId: String, currentUserName: String): Result<ChatModels.Chat> {
+    suspend fun createDirectChat(
+        currentUserId: String,
+        targetUserId: String,
+        currentUserName: String,
+        targetUserName: String? = null
+    ): Result<ChatModels.Chat> {
         val result = api.ensureDirectConversation(
             currentUserId = currentUserId,
             targetUserId = targetUserId,
-            currentUserName = currentUserName
+            currentUserName = currentUserName,
+            targetUserName = targetUserName
         )
         result.getOrNull()?.let {
             cacheDirectConversationId(currentUserId, targetUserId, it.id)
@@ -87,7 +113,7 @@ class CloudChatRepository(
             val targetUserId = chat.participants?.firstOrNull { it.id != senderId }?.id
                 ?: chat.members?.firstOrNull { it != senderId }
             if (targetUserId != null) {
-                createDirectChat(senderId, targetUserId, senderName).getOrElse { error ->
+                createDirectChat(senderId, targetUserId, senderName, chat.otherParticipant(senderId)?.name).getOrElse { error ->
                     return Result.failure(error)
                 }
             } else {
@@ -101,12 +127,26 @@ class CloudChatRepository(
             chat
         }
         val result = api.sendMessage(preparedChat.id, text, senderId, senderName, senderAvatar, attachmentId)
-        result.getOrNull()?.let { upsertCachedMessage(preparedChat.id, it) }
+        result.getOrNull()?.let { message ->
+            upsertCachedMessage(message.chatId, message)
+            upsertCachedChat(
+                senderId,
+                preparedChat.copy(
+                    id = message.chatId,
+                    lastMessage = messagePreview(message),
+                    lastMessageTime = message.timestamp,
+                    unreadCount = 0
+                )
+            )
+        }
         return result
     }
 
     suspend fun uploadAttachment(fileName: String, mimeType: String, bytes: ByteArray): Result<ChatModels.UploadedFile> =
         api.uploadAttachment(fileName, mimeType, bytes)
+
+    suspend fun reactToMessage(messageId: String, emoji: String, userId: String): Result<ChatModels.Message> =
+        api.reactToMessage(messageId, emoji, userId)
 
     fun cachedChats(userId: String): List<ChatModels.Chat> {
         val raw = prefs.getString(chatsCacheKey(userId), null) ?: return emptyList()
@@ -134,11 +174,20 @@ class CloudChatRepository(
         prefs.edit().putString(chatsCacheKey(userId), gson.toJson(recent)).apply()
     }
 
-    private fun upsertCachedChat(userId: String, chat: ChatModels.Chat) {
+    fun upsertCachedChat(userId: String, chat: ChatModels.Chat) {
         val next = dedupeChats(cachedChats(userId) + chat, userId)
             .sortedByDescending { it.lastMessageTime ?: 0L }
             .take(100)
         saveChats(userId, next)
+    }
+
+    fun clearCachedUnread(userId: String, chatId: String) {
+        saveChats(
+            userId,
+            cachedChats(userId).map { chat ->
+                if (chat.id == chatId) chat.copy(unreadCount = 0) else chat
+            }
+        )
     }
 
     private fun upsertCachedMessage(chatId: String, message: ChatModels.Message) {
@@ -173,7 +222,7 @@ class CloudChatRepository(
             val existing = merged[key]
             if (existing == null || (chat.lastMessageTime ?: 0L) >= (existing.lastMessageTime ?: 0L)) {
                 merged[key] = chat.copy(
-                    unreadCount = maxOf(existing?.unreadCount ?: 0, chat.unreadCount ?: 0)
+                    unreadCount = chat.unreadCount ?: existing?.unreadCount ?: 0
                 )
             }
         }
@@ -182,5 +231,31 @@ class CloudChatRepository(
 
     private fun cacheDirectConversationId(firstUserId: String, secondUserId: String, conversationId: String) {
         prefs.edit().putString("direct_${directKey(firstUserId, secondUserId)}", conversationId).apply()
+    }
+
+    private fun dedupeUsers(users: List<ChatModels.User>): List<ChatModels.User> =
+        users
+            .filter { it.id.isNotBlank() }
+            .fold(linkedMapOf<String, ChatModels.User>()) { acc, user ->
+                val existing = acc[user.id]
+                acc[user.id] = when {
+                    existing == null -> user
+                    existing.online != true && user.online == true -> user
+                    existing.name.isGeneratedIdentityName() && !user.name.isGeneratedIdentityName() -> user
+                    else -> existing
+                }
+                acc
+            }
+            .values
+            .toList()
+
+    private fun messagePreview(message: ChatModels.Message): String =
+        message.text.takeIf { it.isNotBlank() }
+            ?: message.attachmentName?.takeIf { it.isNotBlank() }
+            ?: if (message.attachmentUrl != null) "Attachment" else ""
+
+    private fun String.isGeneratedIdentityName(): Boolean {
+        val lower = trim().lowercase()
+        return lower.startsWith("usr_") || lower.startsWith("user_") || lower.startsWith("direct_")
     }
 }

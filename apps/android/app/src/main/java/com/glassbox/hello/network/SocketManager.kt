@@ -26,6 +26,7 @@ class SocketManager private constructor() : CallSocket {
     private var socket: Socket? = null
     private var cloudSocket: WebSocket? = null
     private var cloudConnected = false
+    private val pendingCloudSends = mutableListOf<String>()
     private val cloudClient = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(0, TimeUnit.SECONDS)
@@ -202,6 +203,7 @@ class SocketManager private constructor() : CallSocket {
             }
             cloudSocket?.close(1000, "reconnect")
             cloudConnected = false
+            pendingCloudSends.clear()
             isConnecting = true
         }
         val wsUrl = "${AppConfig.CHAT_CLOUD_BASE_URL}/api/calls/ws?token=${encode(token)}"
@@ -219,6 +221,7 @@ class SocketManager private constructor() : CallSocket {
                 identify()
                 emitCloudPresence("online")
                 currentChatId?.let { emitCloud("join_chat", JSONObject(mapOf("chatId" to it))) }
+                flushPendingCloudSends(webSocket)
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
@@ -502,12 +505,27 @@ class SocketManager private constructor() : CallSocket {
     }
 
     private fun emitCloud(event: String, payload: JSONObject) {
-        cloudSocket?.send(
-            JSONObject()
-                .put("event", event)
-                .put("payload", payload)
-                .toString()
-        )
+        val body = JSONObject()
+            .put("event", event)
+            .put("payload", payload)
+            .toString()
+        synchronized(socketLock) {
+            val socket = cloudSocket
+            if (cloudConnected && socket != null) {
+                socket.send(body)
+            } else {
+                pendingCloudSends += body
+            }
+        }
+    }
+
+    private fun flushPendingCloudSends(webSocket: WebSocket) {
+        val pending = synchronized(socketLock) {
+            val next = pendingCloudSends.toList()
+            pendingCloudSends.clear()
+            next
+        }
+        pending.forEach { webSocket.send(it) }
     }
 
     private fun emitCloudPresence(event: String) {

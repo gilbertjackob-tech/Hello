@@ -90,6 +90,18 @@ class CloudChatApi {
         gson.fromJson(response, type)
     }
 
+    suspend fun fetchContacts(token: String): Result<List<ChatModels.User>> = safeCloudCall {
+        val response = requestWithFallback { base ->
+            Request.Builder()
+                .url("$base/api/contacts")
+                .header("Authorization", "Bearer $token")
+                .get()
+                .build()
+        }
+        val type = object : TypeToken<List<ChatModels.User>>() {}.type
+        gson.fromJson(response, type)
+    }
+
     suspend fun fetchUser(userId: String): Result<ChatModels.User> = safeCloudCall {
         val response = getWithFallback("/api/users/${encode(userId)}")
         gson.fromJson(response, ChatModels.User::class.java)
@@ -135,6 +147,14 @@ class CloudChatApi {
     suspend fun markRead(messageId: String, userId: String): Result<Unit> = safeCloudCall {
         postWithFallback("/api/chat/messages/${encode(messageId)}/read", mapOf("userId" to userId))
         Unit
+    }
+
+    suspend fun reactToMessage(messageId: String, emoji: String, userId: String): Result<ChatModels.Message> = safeCloudCall {
+        val response = postWithFallback(
+            "/api/chat/messages/${encode(messageId)}/react",
+            mapOf("emoji" to emoji, "userId" to userId)
+        )
+        gson.fromJson(response, ChatModels.Message::class.java)
     }
 
     suspend fun uploadAttachment(fileName: String, mimeType: String, bytes: ByteArray): Result<ChatModels.UploadedFile> = safeCloudCall {

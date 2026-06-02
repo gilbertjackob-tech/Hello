@@ -3,20 +3,20 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
-  --hello-bg: #f3efe7;
-  --hello-bg-strong: #fbf8f2;
-  --hello-panel: rgba(255, 255, 255, 0.78);
-  --hello-panel-strong: rgba(255, 255, 255, 0.94);
-  --hello-panel-muted: rgba(255, 255, 255, 0.62);
+  --hello-bg: #f4f7f6;
+  --hello-bg-strong: #ffffff;
+  --hello-panel: rgba(255, 255, 255, 0.82);
+  --hello-panel-strong: rgba(255, 255, 255, 0.96);
+  --hello-panel-muted: rgba(244, 247, 246, 0.72);
   --hello-border: rgba(15, 23, 42, 0.08);
   --hello-border-strong: rgba(15, 23, 42, 0.14);
-  --hello-text: #172033;
-  --hello-text-muted: #5d6a82;
-  --hello-accent: #0f8f78;
-  --hello-accent-strong: #0a6e5d;
-  --hello-accent-soft: rgba(15, 143, 120, 0.12);
-  --hello-danger: #cf4d4d;
-  --hello-warning: #b77800;
+  --hello-text: #17202a;
+  --hello-text-muted: #5d6878;
+  --hello-accent: #0e7c86;
+  --hello-accent-strong: #075e66;
+  --hello-accent-soft: rgba(14, 124, 134, 0.14);
+  --hello-danger: #c44d58;
+  --hello-warning: #b7652c;
   --hello-shadow: 0 18px 44px rgba(18, 28, 45, 0.08);
   --hello-shadow-soft: 0 10px 28px rgba(18, 28, 45, 0.06);
   --hello-radius-xl: 28px;
@@ -26,20 +26,20 @@
 }
 
 .dark {
-  --hello-bg: #071219;
-  --hello-bg-strong: #0d1821;
-  --hello-panel: rgba(15, 26, 33, 0.8);
-  --hello-panel-strong: rgba(17, 27, 33, 0.94);
-  --hello-panel-muted: rgba(13, 24, 33, 0.7);
+  --hello-bg: #101820;
+  --hello-bg-strong: #16232c;
+  --hello-panel: rgba(23, 35, 44, 0.82);
+  --hello-panel-strong: rgba(28, 42, 52, 0.95);
+  --hello-panel-muted: rgba(34, 49, 59, 0.72);
   --hello-border: rgba(226, 232, 240, 0.08);
   --hello-border-strong: rgba(226, 232, 240, 0.14);
-  --hello-text: #edf4fb;
-  --hello-text-muted: #9aa9bd;
-  --hello-accent: #28c0a4;
-  --hello-accent-strong: #49d3bc;
-  --hello-accent-soft: rgba(40, 192, 164, 0.16);
-  --hello-danger: #ff7b84;
-  --hello-warning: #ffcb66;
+  --hello-text: #eef5f2;
+  --hello-text-muted: #a4b2be;
+  --hello-accent: #58c7b7;
+  --hello-accent-strong: #83dccf;
+  --hello-accent-soft: rgba(88, 199, 183, 0.17);
+  --hello-danger: #ff7a8a;
+  --hello-warning: #f0b35a;
   --hello-shadow: 0 24px 56px rgba(0, 0, 0, 0.34);
   --hello-shadow-soft: 0 12px 28px rgba(0, 0, 0, 0.24);
 }
@@ -57,10 +57,7 @@
 
   body {
     font-family: "Manrope", sans-serif;
-    background:
-      radial-gradient(circle at top left, rgba(15, 143, 120, 0.08), transparent 28%),
-      radial-gradient(circle at top right, rgba(230, 163, 76, 0.1), transparent 24%),
-      linear-gradient(180deg, var(--hello-bg-strong), var(--hello-bg));
+    background: linear-gradient(180deg, var(--hello-bg-strong), var(--hello-bg));
     color: var(--hello-text);
   }
 
