@@ -2,6 +2,7 @@ package com.glassbox.hello.settings
 
 import android.content.Intent
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -111,6 +112,13 @@ fun SettingsScreen(
 
     LaunchedEffect(page) {
         onDetailVisibilityChanged(page != SettingsPage.Home)
+    }
+
+    BackHandler(enabled = page != SettingsPage.Home) {
+        page = when (page) {
+            SettingsPage.ChatTheme -> SettingsPage.Appearance
+            else -> SettingsPage.Home
+        }
     }
 
     when (page) {

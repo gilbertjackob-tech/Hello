@@ -1,5 +1,6 @@
 package com.glassbox.hello.chat
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -46,6 +47,15 @@ fun ChatScreen(
 
     LaunchedEffect(route) {
         onChatRoomVisibilityChanged(route !is ChatRoute.List)
+    }
+
+    BackHandler(enabled = route !is ChatRoute.List) {
+        route = when (val currentRoute = route) {
+            ChatRoute.List -> ChatRoute.List
+            is ChatRoute.Room -> ChatRoute.List
+            is ChatRoute.ContactInfo -> ChatRoute.Room(currentRoute.chat)
+            is ChatRoute.SharedContent -> ChatRoute.ContactInfo(currentRoute.chat)
+        }
     }
 
     val user = currentUser

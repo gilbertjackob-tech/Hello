@@ -48,6 +48,12 @@ function getInitialRailTab() {
   return saved && VALID_RAIL_TABS.has(saved) ? saved : "chats";
 }
 
+function mergeUserIfChanged(existing: User | null, cloudUser: User): User {
+  if (!existing) return cloudUser;
+  const next = { ...existing, ...cloudUser };
+  return JSON.stringify(existing) === JSON.stringify(next) ? existing : next;
+}
+
 export default function App() {
   const [activeChat, setActiveChat] = useState<Chat | null>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
@@ -76,7 +82,7 @@ export default function App() {
     } else {
       localStorage.removeItem(storageKey);
     }
-  }, [currentUser]);
+  }, [currentUser?.id]);
 
   useEffect(() => {
     if (!currentUser) {
@@ -85,20 +91,29 @@ export default function App() {
     }
 
     localStorage.setItem("whatsclone_user_real", JSON.stringify(currentUser));
+  }, [currentUser]);
+
+  useEffect(() => {
+    if (!currentUser?.id) return;
 
     let cancelled = false;
+    const userId = currentUser.id;
 
     async function validateCurrentUser() {
       try {
-        const cloudUser = await fetchCloudCurrentUser().catch(() => fetchUser(currentUser.id));
+        const cloudUser = await fetchCloudCurrentUser().catch(() => fetchUser(userId));
 
         if (cancelled) return;
         if (cloudUser?.id) {
-          setCurrentUser((existing) => existing ? { ...existing, ...cloudUser } : cloudUser);
+          setCurrentUser((existing) => mergeUserIfChanged(existing, cloudUser));
         }
       } catch (err: any) {
         if (cancelled) return;
         console.error("Failed to validate current user", err);
+        localStorage.removeItem("whatsclone_user_real");
+        localStorage.removeItem(`${ACTIVE_CHAT_STORAGE_PREFIX}_${userId}`);
+        setActiveChat(null);
+        setCurrentUser(null);
       }
     }
 
@@ -107,7 +122,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [currentUser]);
+  }, [currentUser?.id]);
 
   useEffect(() => {
     if (VALID_RAIL_TABS.has(activeRailTab)) {

@@ -353,6 +353,71 @@ function driveItemToResponse(row: any) {
   };
 }
 
+function isDevResetAuthorized(req: express.Request) {
+  const enabled = String(process.env.ENABLE_DEV_RESET || "").toLowerCase() === "true";
+  const expectedSecret = process.env.DEV_RESET_SECRET || "";
+  const providedSecret = req.get("x-dev-reset-secret") || "";
+  return enabled && expectedSecret.length > 0 && providedSecret === expectedSecret;
+}
+
+function clearDirectoryContents(rootDir: string, expectedLeafName: string) {
+  const resolvedRoot = path.resolve(rootDir);
+  if (path.basename(resolvedRoot) !== expectedLeafName) {
+    throw new Error(`Refusing to clear unexpected ${expectedLeafName} path: ${resolvedRoot}`);
+  }
+
+  fs.mkdirSync(resolvedRoot, { recursive: true });
+  let deleted = 0;
+  for (const entry of fs.readdirSync(resolvedRoot, { withFileTypes: true })) {
+    if (entry.name === ".gitkeep") continue;
+    fs.rmSync(path.join(resolvedRoot, entry.name), { recursive: true, force: true });
+    deleted += 1;
+  }
+  return deleted;
+}
+
+function resetLocalHelloData() {
+  const tables = [
+    "status_views",
+    "statuses",
+    "call_rooms",
+    "call_logs",
+    "message_deleted_for",
+    "message_starred_by",
+    "reactions",
+    "chat_read_state",
+    "chat_deleted_for",
+    "chat_members",
+    "messages",
+    "chats",
+    "file_attachments",
+    "drive_items",
+    "users",
+  ];
+
+  const resetTransaction = db.transaction(() => {
+    for (const table of tables) {
+      db.prepare(`DELETE FROM ${table}`).run();
+    }
+  });
+  resetTransaction();
+
+  const deletedUploadEntries = clearDirectoryContents(UPLOAD_DIR, "uploads");
+  const deletedDriveEntries = clearDirectoryContents(FAMILY_DRIVE_DIR, "family-drive");
+  const counts = Object.fromEntries(
+    tables.map((table) => [
+      table,
+      Number((db.prepare(`SELECT COUNT(*) as count FROM ${table}`).get() as any)?.count || 0),
+    ]),
+  );
+
+  return {
+    deletedUploadEntries,
+    deletedDriveEntries,
+    counts,
+  };
+}
+
 function sendDriveItemFile(itemId: string, res: express.Response) {
   const item = db
     .prepare("SELECT * FROM drive_items WHERE id = ? AND deletedAt IS NULL")
@@ -2383,30 +2448,30 @@ export async function mountHello(
     res.json({ success: true });
   });
 
-  app.post("/api/dev/reset", (req, res) => {
-    db.prepare("DELETE FROM messages").run();
-    db.prepare("DELETE FROM chat_read_state").run();
-    db.prepare("DELETE FROM chat_members").run();
-    db.prepare("DELETE FROM chats").run();
-    
-    // Re-add "group_main" if needed or leave empty.
-    const id = "group_main";
-    db.prepare(
-      "INSERT INTO chats (id, name, lastMessage, lastMessageTime, unreadCount, isGroup) VALUES (?, ?, ?, ?, ?, ?)",
-    ).run(id, "Community Chat", "", Date.now(), 0, 1);
-    
-    // Add all existing users to group_main
-    const users = db.prepare("SELECT id FROM users").all() as any[];
-    const insertMember = db.prepare(
-      "INSERT INTO chat_members (chatId, userId) VALUES (?, ?)",
-    );
-    for (const u of users) {
-      insertMember.run(id, u.id);
-      upsertReadState(id, u.id, 0);
+  const handleLocalDevReset = (req: express.Request, res: express.Response) => {
+    if (!isDevResetAuthorized(req)) {
+      res.status(403).json({ error: "DEV reset is disabled or secret is invalid" });
+      return;
     }
-    
-    res.json({ message: "Database chats and messages reset successfully." });
-  });
+
+    try {
+      const result = resetLocalHelloData();
+      io.emit("dev_reset", { scope: "local" });
+      res.json({
+        ok: true,
+        scope: "local",
+        uploadsPath: UPLOAD_DIR,
+        familyDrivePath: FAMILY_DRIVE_DIR,
+        ...result,
+      });
+    } catch (error) {
+      console.error("[DEV_RESET_LOCAL_FAILED]", error);
+      res.status(500).json({ error: "Local DEV reset failed" });
+    }
+  };
+
+  app.post("/api/dev/reset", handleLocalDevReset);
+  app.post("/api/dev/reset-local", handleLocalDevReset);
 
   // Global socket error handler
   io.engine.on("connection_error", (err) => {

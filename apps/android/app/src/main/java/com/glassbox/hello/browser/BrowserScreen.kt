@@ -3,8 +3,10 @@ package com.glassbox.hello.browser
 import android.app.Activity
 import android.app.KeyguardManager
 import android.content.Context
+import android.content.ContextWrapper
 import android.content.Intent
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.Animatable
@@ -280,6 +282,17 @@ fun BrowserScreen(
     }
 
     val isHomeTab = uiState.activeTab?.url == DEFAULT_BROWSER_HOME_URL
+
+    BackHandler {
+        when {
+            toolsVisible -> toolsVisible = false
+            profileSwitcherVisible -> profileSwitcherVisible = false
+            tabsVisible -> tabsVisible = false
+            uiState.activeTab?.canGoBack == true -> uiState.activeTab?.let { runtime.goBack(it.id) }
+            onReturnToHello != null -> onReturnToHello()
+            else -> context.findActivity()?.finish()
+        }
+    }
 
     Box(
         modifier = modifier
@@ -1972,6 +1985,12 @@ private fun formatBrowserRelativeTime(timestamp: Long): String {
         elapsed < day -> "${elapsed / hour}h ago"
         else -> "${elapsed / day}d ago"
     }
+}
+
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
 }
 
 @Suppress("DEPRECATION")

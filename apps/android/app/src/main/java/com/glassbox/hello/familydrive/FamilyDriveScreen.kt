@@ -3,6 +3,7 @@ package com.glassbox.hello.familydrive
 import android.content.Intent
 import android.content.Context
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -145,6 +146,14 @@ fun FamilyDriveScreen(
         viewModel.startPendingObserver(context)
         viewModel.refresh()
         viewModel.retryPending(context, currentUserId)
+    }
+
+    BackHandler(enabled = deleteCandidate != null || selectedItem != null || mode != DriveMode.Home) {
+        when {
+            deleteCandidate != null -> deleteCandidate = null
+            selectedItem != null -> selectedItem = null
+            mode != DriveMode.Home -> mode = DriveMode.Home
+        }
     }
 
     Box(modifier = modifier.fillMaxSize()) {

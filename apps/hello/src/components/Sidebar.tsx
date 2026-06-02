@@ -7,7 +7,6 @@ import {
   File,
   Bell,
   HardDrive,
-  Info,
   MessageCircleMore,
   Paintbrush2,
   User as UserIcon,
@@ -21,8 +20,6 @@ import {
   CircleDashed,
   Star,
   Pin,
-  Shield,
-  Sparkles,
   ChevronDown,
   Download,
   Upload,
@@ -338,8 +335,6 @@ export function Sidebar({
           })),
         );
       }
-      refreshUserDiscovery(userSearchQuery);
-      import("../api").then(api => api.fetchChats(currentUser.id).then(setChats).catch(console.error));
     };
 
     socket.on("user_presence", handleUserUpdate);
@@ -354,7 +349,7 @@ export function Sidebar({
       socket.off("user_updated", handleUserUpdate);
       socket.off("presence_updated", handleUserUpdate);
     };
-  }, [socket, userSearchQuery, currentUser.id, refreshUserDiscovery, sortUsersForDiscovery]);
+  }, [socket, currentUser.id, sortUsersForDiscovery]);
 
   const handleNewChat = () => {
     setShowContacts(true);
@@ -1453,57 +1448,31 @@ export function Sidebar({
             </div>
 
             <div className="hello-card p-4">
-              <h4 className="mb-4 text-sm font-semibold text-[var(--hello-text)]">Settings map</h4>
-              <div className="grid grid-cols-1 gap-2 text-sm">
-                {[
-                  { label: "Account", icon: UserCircle2 },
-                  { label: "Privacy", icon: Shield },
-                  { label: "Chats", icon: MessageCircleMore },
-                  { label: "Notifications", icon: Bell },
-                  { label: "Calls", icon: Phone },
-                  { label: "Storage", icon: HardDrive },
-                  { label: "Appearance", icon: Paintbrush2 },
-                  { label: "GlassBox Integration", icon: Sparkles },
-                  { label: "About", icon: Info },
-                ].map(({ label, icon: Icon }) => (
-                  <button
-                    key={label}
-                    className="flex items-center gap-3 rounded-2xl px-3 py-3 text-left transition hover:bg-black/5 dark:hover:bg-white/5"
-                    onClick={() =>
-                      pushToast({
-                        title: label,
-                        description: "This settings section is staged for the next product pass.",
-                        tone: "loading",
-                      })
-                    }
-                  >
-                    <div className="flex h-9 w-9 items-center justify-center rounded-2xl bg-[var(--hello-accent-soft)] text-[var(--hello-accent)]">
-                      <Icon className="h-4 w-4" />
-                    </div>
-                    <span className="font-medium text-[var(--hello-text)]">{label}</span>
-                  </button>
-                ))}
+              <div className="mb-4 flex items-center justify-between">
+                <div>
+                  <h4 className="text-sm font-semibold text-[var(--hello-text)]">Account</h4>
+                  <p className="text-xs text-[var(--hello-text-muted)]">End this cloud session and return to login.</p>
+                </div>
+                <UserCircle2 className="h-4 w-4 text-[var(--hello-accent)]" />
               </div>
-            </div>
-          </div>
-
-          <div className="mt-8 border-y border-slate-100 dark:border-slate-700 bg-white dark:bg-[#111b21] text-slate-800 dark:text-slate-200">
-            <div
-              onClick={async () => {
-                try {
-                  await logoutCloudUser();
-                } catch (err) {
-                  console.error("Cloud logout failed:", err);
-                }
-                localStorage.removeItem("whatsclone_user_real");
-                localStorage.removeItem(CLOUD_SESSION_TOKEN_KEY);
-                onSelectChat(null);
-                setActiveRailTab("chats");
-                onUpdateUser(null);
-              }}
-              className="px-6 py-4 cursor-pointer text-sm font-medium hover:bg-slate-50 dark:hover:bg-[#202c33] text-red-500"
-            >
-              Log out
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    await logoutCloudUser();
+                  } catch (err) {
+                    console.error("Cloud logout failed:", err);
+                  }
+                  localStorage.removeItem("whatsclone_user_real");
+                  localStorage.removeItem(CLOUD_SESSION_TOKEN_KEY);
+                  onSelectChat(null);
+                  setActiveRailTab("chats");
+                  onUpdateUser(null);
+                }}
+                className="flex w-full items-center justify-center rounded-2xl border border-red-500/30 px-4 py-3 text-sm font-semibold text-red-500 transition hover:bg-red-500/10"
+              >
+                Log out
+              </button>
             </div>
           </div>
         </div>

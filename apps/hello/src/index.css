@@ -115,10 +115,6 @@
     box-shadow: var(--hello-shadow);
     backdrop-filter: blur(24px);
   }
-.relative.flex.h-full.w-full.flex-col.overflow-hidden.px-2.pb-2.pt-2.sm\:px-3.sm\:pb-3.sm\:pt-3.md\:flex-row.md\:gap-3
-{
-  margin-top: 80px;
-}
 
   .hello-muted-panel {
     background: var(--hello-panel-muted);

@@ -1,5 +1,10 @@
 package com.glassbox.hello.ui
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
+import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -15,6 +20,7 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -53,10 +59,13 @@ private enum class MainTab(val label: String, val icon: ImageVector) {
 @Composable
 fun HelloApp(darkTheme: Boolean = true) {
     val context = LocalContext.current
+    val activity = context.findActivity()
     val sessionManager = remember { SessionManager(context) }
     val cloudSessionManager = remember { CloudSessionManager(context) }
     val currentUser = remember { mutableStateOf<User?>(sessionManager.getCurrentUser() ?: cloudSessionManager.cachedUser()) }
     val selectedTab = remember { mutableIntStateOf(0) }
+    val tabBackStack = remember { mutableStateListOf<Int>() }
+    val lastExitBackAt = remember { mutableStateOf(0L) }
     val logoutToken = remember { mutableIntStateOf(0) }
     val isChatRoomVisible = remember { mutableStateOf(false) }
     val isSettingsDetailVisible = remember { mutableStateOf(false) }
@@ -67,6 +76,17 @@ fun HelloApp(darkTheme: Boolean = true) {
         else -> true
     }
 
+    fun selectMainTab(tab: MainTab) {
+        val current = selectedTab.intValue
+        if (tab.ordinal == current) return
+        tabBackStack.add(current)
+        selectedTab.intValue = tab.ordinal
+        isChatRoomVisible.value = false
+        if (tab != MainTab.Settings) {
+            isSettingsDetailVisible.value = false
+        }
+    }
+
     if (currentUser.value == null) {
         AuthScreen(
             onAuthSuccess = { user ->
@@ -74,10 +94,35 @@ fun HelloApp(darkTheme: Boolean = true) {
                 cloudSessionManager.save(user)
                 currentUser.value = user
                 selectedTab.intValue = MainTab.Chats.ordinal
+                tabBackStack.clear()
             },
             modifier = Modifier.fillMaxSize()
         )
         return
+    }
+
+    BackHandler {
+        if (tabBackStack.isNotEmpty()) {
+            selectedTab.intValue = tabBackStack.removeAt(tabBackStack.lastIndex)
+            isChatRoomVisible.value = false
+            isSettingsDetailVisible.value = false
+            return@BackHandler
+        }
+
+        if (selectedTab.intValue != MainTab.Chats.ordinal) {
+            selectedTab.intValue = MainTab.Chats.ordinal
+            isChatRoomVisible.value = false
+            isSettingsDetailVisible.value = false
+            return@BackHandler
+        }
+
+        val now = System.currentTimeMillis()
+        if (now - lastExitBackAt.value < 1800L) {
+            activity?.finish()
+        } else {
+            lastExitBackAt.value = now
+            Toast.makeText(context, "Tap back again to exit", Toast.LENGTH_SHORT).show()
+        }
     }
 
     val callViewModel: CallViewModel = viewModel(key = "hello-global-call")
@@ -119,6 +164,7 @@ fun HelloApp(darkTheme: Boolean = true) {
                             currentUser.value = null
                             logoutToken.intValue += 1
                             selectedTab.intValue = MainTab.Chats.ordinal
+                            tabBackStack.clear()
                         },
                         modifier = Modifier.fillMaxSize()
                     )
@@ -133,11 +179,7 @@ fun HelloApp(darkTheme: Boolean = true) {
                                 if (tab == MainTab.Browser) {
                                     context.startActivity(BrowserActivity.createIntent(context))
                                 } else {
-                                    selectedTab.intValue = tab.ordinal
-                                    isChatRoomVisible.value = false
-                                    if (tab != MainTab.Settings) {
-                                        isSettingsDetailVisible.value = false
-                                    }
+                                    selectMainTab(tab)
                                 }
                             },
                             contentPadding = PaddingValues(horizontal = 6.dp, vertical = 6.dp)
@@ -162,4 +204,10 @@ fun HelloApp(darkTheme: Boolean = true) {
         }
         GlobalCallOverlay(callViewModel = callViewModel, modifier = Modifier.fillMaxSize())
     }
+}
+
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
 }
