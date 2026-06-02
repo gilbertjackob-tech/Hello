@@ -26,7 +26,7 @@ type RealtimeSocket = {
   disconnect: () => void;
 };
 
-function createCloudRealtimeSocket(): RealtimeSocket {
+function createCloudRealtimeSocket(currentUser: User): RealtimeSocket {
   const listeners = new Map<string, Set<RealtimeHandler>>();
   let ws: WebSocket | null = null;
   let closed = false;
@@ -45,7 +45,12 @@ function createCloudRealtimeSocket(): RealtimeSocket {
       .replace(/^https:/, "wss:")
       .replace(/^http:/, "ws:");
     ws = new WebSocket(url);
-    ws.addEventListener("open", () => dispatch("connect"));
+    ws.addEventListener("open", () => {
+      dispatch("connect");
+      const payload = { userId: currentUser.id, name: currentUser.name, online: true, platform: "web" };
+      ws?.send(JSON.stringify({ event: "identify", payload }));
+      ws?.send(JSON.stringify({ event: "online", payload }));
+    });
     ws.addEventListener("close", () => {
       dispatch("disconnect");
       if (!closed) window.setTimeout(connect, 1500);
@@ -102,8 +107,14 @@ export const SocketProvider = ({ children, currentUser }: { children: ReactNode;
   const [isConnected, setIsConnected] = useState(false);
 
   useEffect(() => {
+    if (!currentUser?.id) {
+      setSocket(null);
+      setIsConnected(false);
+      return;
+    }
+
     if (!ENABLE_PC_SOCKET) {
-      const cloudSocket = createCloudRealtimeSocket();
+      const cloudSocket = createCloudRealtimeSocket(currentUser);
       cloudSocket.on("connect", () => setIsConnected(true));
       cloudSocket.on("disconnect", () => setIsConnected(false));
       setSocket(cloudSocket);

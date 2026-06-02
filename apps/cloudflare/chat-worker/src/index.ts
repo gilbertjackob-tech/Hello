@@ -3,6 +3,8 @@ export interface Env {
   TEMP_FILES: R2Bucket;
   REALTIME_ROOM: DurableObjectNamespace;
   ENABLE_DEBUG_BINDINGS?: string;
+  ENABLE_DEV_RESET?: string;
+  DEV_RESET_SECRET?: string;
   TURN_URLS?: string;
   TURN_USERNAME?: string;
   TURN_CREDENTIAL?: string;
@@ -12,6 +14,7 @@ type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string
 type JsonObject = { [key: string]: JsonValue };
 
 const ATTACHMENT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const ONLINE_TTL_MS = 60 * 1000;
 const PENDING_ATTACHMENT_USER_ID = "system_attachment_upload";
 const PENDING_ATTACHMENT_CONVERSATION_ID = "system_attachment_uploads";
 let cloudSchemaReady: Promise<void> | null = null;
@@ -21,7 +24,7 @@ function json(body: JsonValue, init: ResponseInit = {}): Response {
   headers.set("content-type", "application/json; charset=utf-8");
   headers.set("access-control-allow-origin", "*");
   headers.set("access-control-allow-methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
-  headers.set("access-control-allow-headers", "content-type,authorization");
+  headers.set("access-control-allow-headers", "content-type,authorization,x-dev-reset-secret");
   return new Response(JSON.stringify(body), { ...init, headers });
 }
 
@@ -102,7 +105,8 @@ function publicUser(row: any): JsonObject {
     about: row.about || null,
     status: row.profileStatus || row.profile_status || null,
     updatedAt: row.updatedAt || row.updated_at || null,
-    online: false,
+    lastActive: row.lastActive || row.last_active || row.lastSeenAt || row.last_seen_at || null,
+    online: row.online === true || row.online === 1,
   };
 }
 
@@ -117,12 +121,28 @@ async function userProfileFor(env: Env, userId: string): Promise<any> {
         COALESCE(p.avatar_url, u.avatar_url) AS avatarUrl,
         p.about,
         p.profile_status AS profileStatus,
-        COALESCE(p.updated_at, u.updated_at) AS updatedAt
+        COALESCE(p.updated_at, u.updated_at) AS updatedAt,
+        (
+          SELECT MAX(d.last_seen_at)
+          FROM devices d
+          JOIN sessions s ON s.device_id = d.id AND s.user_id = d.user_id
+          WHERE d.user_id = u.id
+            AND s.revoked_at IS NULL
+            AND (s.expires_at IS NULL OR s.expires_at > unixepoch() * 1000)
+        ) AS lastActive,
+        CASE WHEN (
+          SELECT MAX(d.last_seen_at)
+          FROM devices d
+          JOIN sessions s ON s.device_id = d.id AND s.user_id = d.user_id
+          WHERE d.user_id = u.id
+            AND s.revoked_at IS NULL
+            AND (s.expires_at IS NULL OR s.expires_at > unixepoch() * 1000)
+        ) > ? THEN 1 ELSE 0 END AS online
       FROM users u
       LEFT JOIN user_profiles p ON p.user_id = u.id
       WHERE u.id = ?
     `,
-  ).bind(userId).first<any>();
+  ).bind(Date.now() - ONLINE_TTL_MS, userId).first<any>();
 }
 
 async function ensureUserProfile(env: Env, userId: string, displayName: string, avatarUrl?: string | null): Promise<void> {
@@ -173,23 +193,25 @@ async function createSession(env: Env, userId: string, body: JsonObject = {}): P
   };
 }
 
-async function authenticatedUser(env: Env, request: Request): Promise<{ userId: string; sessionId: string } | null> {
+type AuthContext = { userId: string; sessionId: string; deviceId: string | null };
+
+async function authenticatedUser(env: Env, request: Request): Promise<AuthContext | null> {
   const token = bearerToken(request);
   if (!token) return null;
   const now = Date.now();
   const row = await env.DB.prepare(
     `
-      SELECT id, user_id AS userId
+      SELECT id, user_id AS userId, device_id AS deviceId
       FROM sessions
       WHERE token_hash = ?
         AND revoked_at IS NULL
         AND (expires_at IS NULL OR expires_at > ?)
     `,
   ).bind(await sha256Hex(token), now).first<any>();
-  return row ? { userId: row.userId, sessionId: row.id } : null;
+  return row ? { userId: row.userId, sessionId: row.id, deviceId: row.deviceId || null } : null;
 }
 
-async function requireAuth(env: Env, request: Request): Promise<{ userId: string; sessionId: string } | Response> {
+async function requireAuth(env: Env, request: Request): Promise<AuthContext | Response> {
   const auth = await authenticatedUser(env, request);
   return auth || json({ ok: false, error: "Unauthorized" }, { status: 401 });
 }
@@ -353,12 +375,67 @@ async function userFor(env: Env, userId: string): Promise<any> {
   return row ? publicUser(row) : null;
 }
 
+async function touchPresence(env: Env, auth: AuthContext, at = Date.now()): Promise<void> {
+  if (auth.deviceId) {
+    await env.DB.prepare("UPDATE devices SET last_seen_at = ? WHERE id = ? AND user_id = ?")
+      .bind(at, auth.deviceId, auth.userId)
+      .run()
+      .catch(() => undefined);
+    return;
+  }
+  await env.DB.prepare("UPDATE devices SET last_seen_at = ? WHERE user_id = ?")
+    .bind(at, auth.userId)
+    .run()
+    .catch(() => undefined);
+}
+
+async function userPresencePayload(env: Env, userId: string, online: boolean, at = Date.now()): Promise<JsonObject> {
+  const user = await userFor(env, userId);
+  return {
+    ...(user || { id: userId, name: userId, displayName: userId }),
+    id: userId,
+    userId,
+    online,
+    lastActive: at,
+    at,
+  };
+}
+
+async function allUserIds(env: Env): Promise<string[]> {
+  const rows = await env.DB.prepare("SELECT id FROM users").all<any>();
+  return (rows.results || []).map((row: any) => row.id).filter(Boolean);
+}
+
+async function recentOnlineUserIds(env: Env): Promise<string[]> {
+  const rows = await env.DB.prepare(
+    `
+      SELECT DISTINCT d.user_id AS userId
+      FROM devices d
+      JOIN sessions s ON s.device_id = d.id AND s.user_id = d.user_id
+      WHERE d.last_seen_at > ?
+        AND s.revoked_at IS NULL
+        AND (s.expires_at IS NULL OR s.expires_at > unixepoch() * 1000)
+    `,
+  ).bind(Date.now() - ONLINE_TTL_MS).all<any>();
+  return (rows.results || []).map((row: any) => row.userId).filter(Boolean);
+}
+
+async function broadcastUserPresence(env: Env, userId: string, online: boolean): Promise<void> {
+  const at = Date.now();
+  const payload = await userPresencePayload(env, userId, online, at);
+  const recipients = await allUserIds(env);
+  await Promise.all(recipients.map(async (recipientId) => {
+    await broadcastToDurableUser(env, recipientId, "user_presence", payload);
+    await broadcastToDurableUser(env, recipientId, "user_updated", payload);
+    await broadcastToDurableUser(env, recipientId, "presence_updated", payload);
+  }));
+}
+
 async function getChatUser(env: Env, userId: string): Promise<Response> {
   const user = await userFor(env, userId);
   if (!user) return json({ ok: false, error: "User not found" }, { status: 404 });
   return json({
     ...user,
-    online: false,
     privacy: "everyone",
   });
 }
@@ -444,12 +521,28 @@ async function conversationFor(env: Env, conversationId: string, viewerId?: stri
   const members = await env.DB.prepare(
     `
       SELECT u.id, u.display_name AS name, u.avatar_url AS avatar
+        , (
+          SELECT MAX(d.last_seen_at)
+          FROM devices d
+          JOIN sessions s ON s.device_id = d.id AND s.user_id = d.user_id
+          WHERE d.user_id = u.id
+            AND s.revoked_at IS NULL
+            AND (s.expires_at IS NULL OR s.expires_at > unixepoch() * 1000)
+        ) AS lastActive
+        , CASE WHEN (
+          SELECT MAX(d.last_seen_at)
+          FROM devices d
+          JOIN sessions s ON s.device_id = d.id AND s.user_id = d.user_id
+          WHERE d.user_id = u.id
+            AND s.revoked_at IS NULL
+            AND (s.expires_at IS NULL OR s.expires_at > unixepoch() * 1000)
+        ) > ? THEN 1 ELSE 0 END AS online
       FROM conversation_members cm
       JOIN users u ON u.id = cm.user_id
       WHERE cm.conversation_id = ?
       ORDER BY cm.joined_at ASC
     `,
-  ).bind(conversationId).all<any>();
+  ).bind(Date.now() - ONLINE_TTL_MS, conversationId).all<any>();
   const participants = members.results || [];
   const unread = viewerId
     ? await env.DB.prepare(
@@ -478,7 +571,7 @@ async function conversationFor(env: Env, conversationId: string, viewerId?: stri
     unreadCount: unread?.total || 0,
     isGroup: row.type === "group",
     members: participants.map((member: any) => member.id),
-    participants,
+    participants: participants.map((member: any) => ({ ...member, online: member.online === 1, lastActive: member.lastActive || null })),
   };
 }
 
@@ -653,7 +746,23 @@ async function listUsers(env: Env, url: URL): Promise<Response> {
         `
           SELECT u.id, COALESCE(p.display_name, u.display_name) AS displayName,
             p.username, p.phone, p.email, COALESCE(p.avatar_url, u.avatar_url) AS avatarUrl,
-            p.about, p.profile_status AS profileStatus, COALESCE(p.updated_at, u.updated_at) AS updatedAt
+            p.about, p.profile_status AS profileStatus, COALESCE(p.updated_at, u.updated_at) AS updatedAt,
+            (
+              SELECT MAX(d.last_seen_at)
+              FROM devices d
+              JOIN sessions s ON s.device_id = d.id AND s.user_id = d.user_id
+              WHERE d.user_id = u.id
+                AND s.revoked_at IS NULL
+                AND (s.expires_at IS NULL OR s.expires_at > unixepoch() * 1000)
+            ) AS lastActive,
+            CASE WHEN (
+              SELECT MAX(d.last_seen_at)
+              FROM devices d
+              JOIN sessions s ON s.device_id = d.id AND s.user_id = d.user_id
+              WHERE d.user_id = u.id
+                AND s.revoked_at IS NULL
+                AND (s.expires_at IS NULL OR s.expires_at > unixepoch() * 1000)
+            ) > ? THEN 1 ELSE 0 END AS online
           FROM users u
           LEFT JOIN user_profiles p ON p.user_id = u.id
           WHERE LOWER(COALESCE(p.display_name, u.display_name)) LIKE LOWER(?)
@@ -661,18 +770,34 @@ async function listUsers(env: Env, url: URL): Promise<Response> {
           ORDER BY COALESCE(p.display_name, u.display_name) ASC
           LIMIT 50
         `,
-      ).bind(`%${query}%`, `%${query}%`)
+      ).bind(Date.now() - ONLINE_TTL_MS, `%${query}%`, `%${query}%`)
     : env.DB.prepare(
         `
           SELECT u.id, COALESCE(p.display_name, u.display_name) AS displayName,
             p.username, p.phone, p.email, COALESCE(p.avatar_url, u.avatar_url) AS avatarUrl,
-            p.about, p.profile_status AS profileStatus, COALESCE(p.updated_at, u.updated_at) AS updatedAt
+            p.about, p.profile_status AS profileStatus, COALESCE(p.updated_at, u.updated_at) AS updatedAt,
+            (
+              SELECT MAX(d.last_seen_at)
+              FROM devices d
+              JOIN sessions s ON s.device_id = d.id AND s.user_id = d.user_id
+              WHERE d.user_id = u.id
+                AND s.revoked_at IS NULL
+                AND (s.expires_at IS NULL OR s.expires_at > unixepoch() * 1000)
+            ) AS lastActive,
+            CASE WHEN (
+              SELECT MAX(d.last_seen_at)
+              FROM devices d
+              JOIN sessions s ON s.device_id = d.id AND s.user_id = d.user_id
+              WHERE d.user_id = u.id
+                AND s.revoked_at IS NULL
+                AND (s.expires_at IS NULL OR s.expires_at > unixepoch() * 1000)
+            ) > ? THEN 1 ELSE 0 END AS online
           FROM users u
           LEFT JOIN user_profiles p ON p.user_id = u.id
           ORDER BY COALESCE(p.display_name, u.display_name) ASC
           LIMIT 50
         `,
-      );
+      ).bind(Date.now() - ONLINE_TTL_MS);
   const rows = await statement.all<any>();
   return json((rows.results || []).map(publicUser));
 }
@@ -681,6 +806,7 @@ async function logoutUser(env: Env, request: Request): Promise<Response> {
   const auth = await requireAuth(env, request);
   if (auth instanceof Response) return auth;
   await env.DB.prepare("UPDATE sessions SET revoked_at = ? WHERE id = ?").bind(Date.now(), auth.sessionId).run();
+  await broadcastUserPresence(env, auth.userId, false);
   return json({ ok: true });
 }
 
@@ -1537,6 +1663,68 @@ async function fetchAttachment(env: Env, attachmentId: string): Promise<Response
   return new Response(object.body, { headers });
 }
 
+async function deleteR2Prefix(bucket: R2Bucket, prefix: string): Promise<number> {
+  let cursor: string | undefined;
+  let deleted = 0;
+  do {
+    const listed = await bucket.list({ prefix, cursor, limit: 1000 });
+    const keys = listed.objects.map((object) => object.key);
+    if (keys.length > 0) {
+      await bucket.delete(keys);
+      deleted += keys.length;
+    }
+    cursor = listed.truncated ? listed.cursor : undefined;
+  } while (cursor);
+  return deleted;
+}
+
+async function resetCloudDevData(env: Env, request: Request): Promise<Response> {
+  const enabled = env.ENABLE_DEV_RESET === "true";
+  const expectedSecret = env.DEV_RESET_SECRET || "";
+  const providedSecret = request.headers.get("x-dev-reset-secret") || "";
+  if (!enabled || !expectedSecret || providedSecret !== expectedSecret) {
+    return json({ ok: false, error: "Forbidden" }, { status: 403 });
+  }
+
+  await ensureCloudAccountSchema(env);
+  const tables = [
+    "message_receipts",
+    "attachments",
+    "messages",
+    "conversation_preferences",
+    "conversation_members",
+    "conversations",
+    "contacts",
+    "user_chat_preferences",
+    "call_events",
+    "call_participants",
+    "call_sessions",
+    "sessions",
+    "devices",
+    "device_push_tokens",
+    "user_profiles",
+    "users",
+  ];
+  const deletedRows: Record<string, number> = {};
+  for (const table of tables) {
+    const result = await env.DB.prepare(`DELETE FROM ${table}`).run();
+    deletedRows[table] = result.meta?.changes || 0;
+  }
+
+  const deletedR2 = {
+    chat: await deleteR2Prefix(env.TEMP_FILES, "chat/"),
+    avatars: await deleteR2Prefix(env.TEMP_FILES, "avatars/"),
+  };
+
+  return json({
+    ok: true,
+    deletedRows,
+    deletedR2,
+    r2Prefixes: ["chat/", "avatars/"],
+    note: "Drive and PC files are not stored in this Worker and were not touched.",
+  });
+}
+
 async function getBindingDebug(env: Env): Promise<Response> {
   const d1 = {
     binding: "DB",
@@ -1651,7 +1839,10 @@ export class RealtimeRoom {
     const server = pair[1];
     server.accept();
     this.sockets.add(server);
+    await touchPresence(this.env, auth);
     server.send(JSON.stringify({ event: "connected", payload: { userId: auth.userId, at: Date.now() } }));
+    await broadcastUserPresence(this.env, auth.userId, true);
+    await this.sendPresenceSnapshot(server);
     server.addEventListener("message", (event) => {
       this.handleClientMessage(auth.userId, String(event.data)).catch((error) => {
         server.send(JSON.stringify({ event: "error", payload: { error: error?.message || "signaling_error" } }));
@@ -1659,9 +1850,15 @@ export class RealtimeRoom {
     });
     server.addEventListener("close", () => {
       this.sockets.delete(server);
+      if (this.sockets.size === 0) {
+        broadcastUserPresence(this.env, auth.userId, false).catch(() => undefined);
+      }
     });
     server.addEventListener("error", () => {
       this.sockets.delete(server);
+      if (this.sockets.size === 0) {
+        broadcastUserPresence(this.env, auth.userId, false).catch(() => undefined);
+      }
     });
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -1671,6 +1868,16 @@ export class RealtimeRoom {
     const event = callEventName(String(data.event || data.type || ""));
     const inputPayload = data.payload && typeof data.payload === "object" ? data.payload : data;
     const payload = inputPayload as JsonObject;
+    if (event === "identify" || event === "online" || event === "user_presence") {
+      const auth = await authenticatedUser(this.env, new Request("https://internal", {
+        headers: { authorization: `Bearer ${asString(payload.token, "")}` },
+      })).catch(() => null);
+      const at = Date.now();
+      const deviceId = auth?.userId === userId ? auth.deviceId : null;
+      await touchPresence(this.env, { userId, sessionId: auth?.sessionId || "", deviceId }, at);
+      await broadcastUserPresence(this.env, userId, payload.online !== false);
+      return;
+    }
     if (event === "join_chat" || event === "leave_chat" || event === "mark_messages_read") return;
     if (event === "typing") {
       const chatId = asString(payload.chatId || payload.conversationId, "");
@@ -1712,6 +1919,14 @@ export class RealtimeRoom {
     await relayCallEvent(this.env, event, outgoing);
   }
 
+  private async sendPresenceSnapshot(socket: WebSocket): Promise<void> {
+    const userIds = await recentOnlineUserIds(this.env);
+    for (const userId of userIds) {
+      const payload = await userPresencePayload(this.env, userId, true);
+      socket.send(JSON.stringify({ event: "user_presence", payload }));
+    }
+  }
+
   private broadcast(event: string, payload: JsonObject): void {
     const message = JSON.stringify({ event, payload });
     for (const socket of [...this.sockets]) {
@@ -1748,6 +1963,10 @@ export default {
 
     if (url.pathname === "/debug/bindings" && env.ENABLE_DEBUG_BINDINGS === "true") {
       return getBindingDebug(env);
+    }
+
+    if (url.pathname === "/api/dev/reset-cloud" && request.method === "POST") {
+      return resetCloudDevData(env, request);
     }
 
     if (url.pathname.startsWith("/rooms/")) {

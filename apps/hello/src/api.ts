@@ -5,6 +5,8 @@ const env = (import.meta as any).env || {};
 export const API_BASE = env.VITE_HELLO_API_BASE || "/hello/api";
 export const CHAT_CLOUD_BASE_URL = env.VITE_CHAT_CLOUD_BASE_URL || "https://chat.bookhelloctg.com";
 export const CHAT_CLOUD_FALLBACK_URL = env.VITE_CHAT_CLOUD_FALLBACK_URL || "https://hello-chat-worker.gilbert-jackob3.workers.dev";
+// DEPRECATED: Use fetchCloudChat() for chat/user/contact APIs. This is for legacy/backwards compatibility only.
+// Default is now cloud. To use local API: VITE_CHAT_API_BASE=/hello/api
 export const CHAT_API_BASE = env.VITE_CHAT_API_BASE || API_BASE;
 export const CALL_API_BASE = env.VITE_CALL_API_BASE || `${CHAT_CLOUD_BASE_URL}/api`;
 export const DRIVE_API_BASE = env.VITE_DRIVE_API_BASE || API_BASE;

@@ -38,6 +38,7 @@ import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -58,6 +59,8 @@ import com.glassbox.hello.chat.ChatModels.Chat
 import com.glassbox.hello.chat.ChatModels.User
 import com.glassbox.hello.core.HelloPreferences
 import com.glassbox.hello.core.ResultState
+import com.glassbox.hello.core.User as CoreUser
+import com.glassbox.hello.network.SocketManager
 import com.glassbox.hello.networkstatus.NetworkStatus
 import com.glassbox.hello.networkstatus.TailscaleHelper
 import com.glassbox.hello.networkstatus.checkCloudChatNetwork
@@ -110,6 +113,7 @@ fun ChatListScreen(
     val context = LocalContext.current
     val coroutineScope = androidx.compose.runtime.rememberCoroutineScope()
     val cloudChatEnabled = HelloPreferences.read(context).cloudChatEnabled
+    val socketManager = remember { SocketManager.getInstance() }
 
     var showNewChat by remember { mutableStateOf(false) }
     var showGroupChat by remember { mutableStateOf(false) }
@@ -141,6 +145,25 @@ fun ChatListScreen(
         vpnEnabled = pcProbe.status == NetworkStatus.Connected || pcProbe.status == NetworkStatus.HelloApiReachable
         vpnDetail = pcProbe.detail
         vpnChecking = false
+    }
+
+    DisposableEffect(currentUserId, currentUserName, cloudChatEnabled) {
+        socketManager.onChatUpdated = {
+            viewModel.loadChats(currentUserId, cloudChatEnabled = cloudChatEnabled)
+        }
+        socketManager.onMessageReceived = {
+            viewModel.loadChats(currentUserId, cloudChatEnabled = cloudChatEnabled)
+        }
+        socketManager.onPresenceUpdated = {
+            viewModel.loadChats(currentUserId, cloudChatEnabled = cloudChatEnabled)
+            viewModel.loadUsers(currentUserId, null, cloudChatEnabled = cloudChatEnabled)
+        }
+        socketManager.connect(context, CoreUser(id = currentUserId, name = currentUserName))
+        onDispose {
+            socketManager.onChatUpdated = null
+            socketManager.onMessageReceived = null
+            socketManager.onPresenceUpdated = null
+        }
     }
 
     LaunchedEffect(showNewChat, showGroupChat, userSearchQuery, groupSearchQuery) {

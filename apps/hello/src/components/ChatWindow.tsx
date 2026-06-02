@@ -304,7 +304,10 @@ export function ChatWindow({
   // ... (Rest of ChatWindow)
   useEffect(() => {
     let mounted = true;
-    setMessagesLoading(true);
+    // Only show loading if we don't have any messages cached yet
+    if (messages.length === 0) {
+      setMessagesLoading(true);
+    }
     fetchMessages(chat.id)
       .then((msgs) => {
         if (mounted) setMessages(msgs);
@@ -383,22 +386,25 @@ export function ChatWindow({
     };
 
     const handlePresenceUpdated = (data: {
+      id?: string;
       userId: string;
       online: boolean;
       lastActive: number;
-      privacy: string;
+      privacy?: string;
     }) => {
+      const presenceUserId = data.userId || data.id;
       // If we are looking at 1-1 chat
       if (
         !chat.isGroup &&
         chat.members &&
-        chat.members.includes(data.userId) &&
-        data.userId !== currentUser.id
+        presenceUserId &&
+        chat.members.includes(presenceUserId) &&
+        presenceUserId !== currentUser.id
       ) {
         setOtherUserPresence({
           online: data.online,
           lastActive: data.lastActive,
-          privacy: data.privacy,
+          privacy: data.privacy || "everyone",
         });
       }
     };
@@ -406,12 +412,14 @@ export function ChatWindow({
     socket.on("receive_message", handleNewMessage);
     socket.on("message_updated", handleMessageUpdated);
     socket.on("user_typing", handleUserTyping);
+    socket.on("user_presence", handlePresenceUpdated);
     socket.on("presence_updated", handlePresenceUpdated);
 
     return () => {
       socket.off("receive_message", handleNewMessage);
       socket.off("message_updated", handleMessageUpdated);
       socket.off("user_typing", handleUserTyping);
+      socket.off("user_presence", handlePresenceUpdated);
       socket.off("presence_updated", handlePresenceUpdated);
       socket.emit("leave_chat", chat.id);
     };

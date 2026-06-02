@@ -44,6 +44,8 @@ import {
   fetchCloudContacts,
   addCloudContact,
   fetchCloudCallHistory,
+  logoutCloudUser,
+  CLOUD_SESSION_TOKEN_KEY,
 } from "../api";
 import { cn, formatLastActive } from "../lib/utils";
 import { useTheme } from "../ThemeContext";
@@ -321,14 +323,26 @@ export function Sidebar({
       }
     });
 
-    const handleUserUpdate = () => {
-      // Re-fetch users and chats
-      if (showAddContact) {
-         refreshUserDiscovery(userSearchQuery);
+    const handleUserUpdate = (data?: Partial<User> & { userId?: string; lastActive?: number }) => {
+      const updatedUserId = data?.id || data?.userId;
+      if (updatedUserId) {
+        const patchUser = (user: User): User =>
+          user.id === updatedUserId
+            ? { ...user, ...data, id: user.id, online: data.online ?? user.online, lastActive: data.lastActive ?? user.lastActive }
+            : user;
+        setUsersToChat((prev) => sortUsersForDiscovery(prev.map(patchUser)));
+        setChats((prev) =>
+          prev.map((chat) => ({
+            ...chat,
+            participants: chat.participants?.map(patchUser),
+          })),
+        );
       }
+      refreshUserDiscovery(userSearchQuery);
       import("../api").then(api => api.fetchChats(currentUser.id).then(setChats).catch(console.error));
     };
 
+    socket.on("user_presence", handleUserUpdate);
     socket.on("user_updated", handleUserUpdate);
     socket.on("presence_updated", handleUserUpdate);
 
@@ -336,10 +350,11 @@ export function Sidebar({
       socket.off("chat_updated");
       socket.off("new_chat");
       socket.off("user_typing");
+      socket.off("user_presence", handleUserUpdate);
       socket.off("user_updated", handleUserUpdate);
       socket.off("presence_updated", handleUserUpdate);
     };
-  }, [socket, showAddContact, userSearchQuery, currentUser.id, refreshUserDiscovery]);
+  }, [socket, userSearchQuery, currentUser.id, refreshUserDiscovery, sortUsersForDiscovery]);
 
   const handleNewChat = () => {
     setShowContacts(true);
@@ -1474,8 +1489,16 @@ export function Sidebar({
 
           <div className="mt-8 border-y border-slate-100 dark:border-slate-700 bg-white dark:bg-[#111b21] text-slate-800 dark:text-slate-200">
             <div
-              onClick={() => {
+              onClick={async () => {
+                try {
+                  await logoutCloudUser();
+                } catch (err) {
+                  console.error("Cloud logout failed:", err);
+                }
                 localStorage.removeItem("whatsclone_user_real");
+                localStorage.removeItem(CLOUD_SESSION_TOKEN_KEY);
+                onSelectChat(null);
+                setActiveRailTab("chats");
                 onUpdateUser(null);
               }}
               className="px-6 py-4 cursor-pointer text-sm font-medium hover:bg-slate-50 dark:hover:bg-[#202c33] text-red-500"

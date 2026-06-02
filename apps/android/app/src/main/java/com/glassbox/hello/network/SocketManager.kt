@@ -129,6 +129,12 @@ class SocketManager private constructor() : CallSocket {
             s.on("new_chat") { args ->
                 parse<ChatModels.Chat>(args.firstOrNull())?.let { onChatUpdated?.invoke(it) }
             }
+            s.on("user_presence") { args ->
+                parseJsonObject(args.firstOrNull())?.let { onPresenceUpdated?.invoke(it) }
+            }
+            s.on("user_updated") { args ->
+                parseJsonObject(args.firstOrNull())?.let { onPresenceUpdated?.invoke(it) }
+            }
             s.on("presence_updated") { args ->
                 (args.firstOrNull() as? JSONObject)?.let { onPresenceUpdated?.invoke(it) }
             }
@@ -210,6 +216,8 @@ class SocketManager private constructor() : CallSocket {
                 }
                 Log.d(TAG, "Cloud chat realtime connected for ${user.id}")
                 onConnectedChanged?.invoke(true)
+                identify()
+                emitCloudPresence("online")
                 currentChatId?.let { emitCloud("join_chat", JSONObject(mapOf("chatId" to it))) }
             }
 
@@ -244,7 +252,12 @@ class SocketManager private constructor() : CallSocket {
     }
 
     fun identify() {
-        currentUser?.id?.let { socket?.emit("identify", it) }
+        val user = currentUser ?: return
+        if (cloudConnected) {
+            emitCloudPresence("identify")
+            return
+        }
+        socket?.emit("identify", user.id)
     }
 
     fun joinChat(chatId: String) {
@@ -479,7 +492,7 @@ class SocketManager private constructor() : CallSocket {
                 messageUpdateListeners.forEach { listener -> listener(it) }
             }
             "chat_updated", "new_chat" -> parse<ChatModels.Chat>(payload)?.let { onChatUpdated?.invoke(it) }
-            "presence_updated" -> onPresenceUpdated?.invoke(payload)
+            "user_presence", "user_updated", "presence_updated" -> onPresenceUpdated?.invoke(payload)
             "user_typing" -> {
                 onTyping?.invoke(payload)
                 typingListeners.forEach { listener -> listener(payload) }
@@ -494,6 +507,19 @@ class SocketManager private constructor() : CallSocket {
                 .put("event", event)
                 .put("payload", payload)
                 .toString()
+        )
+    }
+
+    private fun emitCloudPresence(event: String) {
+        val user = currentUser ?: return
+        emitCloud(
+            event,
+            JSONObject()
+                .put("userId", user.id)
+                .put("id", user.id)
+                .put("name", user.name)
+                .put("online", true)
+                .put("platform", "android")
         )
     }
 
