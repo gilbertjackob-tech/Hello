@@ -1334,6 +1334,16 @@ export async function mountHello(
     });
   });
 
+  app.get("/api/drive/health", (_req, res) => {
+    const relativeDriveRoot = path.relative(HELLO_ROOT, FAMILY_DRIVE_DIR).replace(/\\/g, "/");
+    res.json({
+      ok: true,
+      service: "pc-drive",
+      storage: "local-pc",
+      driveRoot: relativeDriveRoot || "data/hello/family-drive",
+    });
+  });
+
   // File Upload API
   app.post("/api/files/upload", upload.single("file"), (req, res) => {
     if (!req.file) {
@@ -2526,7 +2536,7 @@ export async function startStandaloneHello(port = PORT, host = HOST) {
     console.log(`  Hello Local Server     `);
     console.log(`=================================`);
     console.log(`Local Access:      http://localhost:${port}`);
-    console.log(`Network/Tailscale: http://${host}:${port}`);
+    console.log(`Tunnel service:    http://${host}:${port} -> https://home.bookhelloctg.com`);
     console.log(`Database Path:     ${DB_PATH}`);
     console.log(`Uploads Directory: ${UPLOAD_DIR}`);
     console.log(`=================================\n`);

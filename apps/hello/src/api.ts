@@ -5,11 +5,9 @@ const env = (import.meta as any).env || {};
 export const API_BASE = env.VITE_HELLO_API_BASE || "/hello/api";
 export const CHAT_CLOUD_BASE_URL = env.VITE_CHAT_CLOUD_BASE_URL || "https://chat.bookhelloctg.com";
 export const CHAT_CLOUD_FALLBACK_URL = env.VITE_CHAT_CLOUD_FALLBACK_URL || "https://hello-chat-worker.gilbert-jackob3.workers.dev";
-// DEPRECATED: Use fetchCloudChat() for chat/user/contact APIs. This is for legacy/backwards compatibility only.
-// Default is now cloud. To use local API: VITE_CHAT_API_BASE=/hello/api
-export const CHAT_API_BASE = env.VITE_CHAT_API_BASE || API_BASE;
+export const CHAT_API_BASE = env.VITE_CHAT_API_BASE || `${CHAT_CLOUD_BASE_URL}/api`;
 export const CALL_API_BASE = env.VITE_CALL_API_BASE || `${CHAT_CLOUD_BASE_URL}/api`;
-export const DRIVE_API_BASE = env.VITE_DRIVE_API_BASE || API_BASE;
+export const DRIVE_API_BASE = env.VITE_DRIVE_API_BASE || "https://home.bookhelloctg.com/hello/api";
 export const CLOUD_SESSION_TOKEN_KEY = "hello_cloud_session_token";
 
 function getCloudSessionToken(): string | null {
@@ -33,6 +31,17 @@ export async function checkChatCloudHealth(useFallback = false): Promise<{
   const baseUrl = useFallback ? CHAT_CLOUD_FALLBACK_URL : CHAT_CLOUD_BASE_URL;
   const res = await fetch(`${baseUrl}/health`);
   if (!res.ok) throw new Error("Cloud chat health check failed");
+  return res.json();
+}
+
+export async function checkDriveHealth(): Promise<{
+  ok: boolean;
+  service?: string;
+  storage?: string;
+  driveRoot?: string;
+}> {
+  const res = await fetch(`${DRIVE_API_BASE}/drive/health`);
+  if (!res.ok) throw new Error("PC Drive health check failed");
   return res.json();
 }
 
@@ -356,17 +365,21 @@ export async function fetchUsers(query?: string): Promise<User[]> {
 export async function createDirectChat(
   currentUserId: string,
   targetUserId: string,
+  options: {
+    currentUserName?: string;
+    targetUserName?: string;
+  } = {},
 ): Promise<Chat> {
-  const conversationId = `direct_${[currentUserId, targetUserId].sort().join("_")}`;
-  const res = await fetchCloudChat("/api/chat/conversations", {
+  const res = await fetchCloudChat("/api/chat/conversations/direct", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      id: conversationId,
       type: "direct",
       createdBy: currentUserId,
-      createdByName: currentUserId,
+      createdByName: options.currentUserName || currentUserId,
+      targetUserId,
       memberIds: [currentUserId, targetUserId],
+      title: options.targetUserName || "",
     }),
   });
   if (!res.ok) throw new Error("Failed to create direct chat");

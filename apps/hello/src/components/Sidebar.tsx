@@ -6,7 +6,6 @@ import {
   Search,
   File,
   Bell,
-  HardDrive,
   MessageCircleMore,
   Paintbrush2,
   User as UserIcon,
@@ -21,13 +20,10 @@ import {
   Star,
   Pin,
   ChevronDown,
-  Download,
-  Upload,
   RefreshCw,
   Video as VideoIcon,
   WifiOff,
 } from "lucide-react";
-import CryptoJS from "crypto-js";
 import { useSocket } from "../SocketContext";
 import { CallHistoryItem, Chat, User, Contact } from "../types";
 import {
@@ -63,6 +59,34 @@ interface SidebarProps {
 }
 
 import { StatusPane } from "./StatusPane";
+
+function directKeyForChat(chat: Chat, currentUserId: string): string | null {
+  if (chat.isGroup) return null;
+  if (chat.directKey) return chat.directKey;
+  const memberIds = chat.members?.length
+    ? chat.members
+    : chat.participants?.map((participant) => participant.id) || [];
+  const uniqueIds = Array.from(new Set(memberIds.filter(Boolean))).sort();
+  if (uniqueIds.length === 2) return uniqueIds.join(":");
+  const otherId = chat.participants?.find((participant) => participant.id !== currentUserId)?.id;
+  return otherId ? [currentUserId, otherId].sort().join(":") : null;
+}
+
+function mergeChats(chats: Chat[], currentUserId: string): Chat[] {
+  const merged = new Map<string, Chat>();
+  for (const chat of chats) {
+    const key = directKeyForChat(chat, currentUserId) || chat.id;
+    const existing = merged.get(key);
+    if (!existing || (chat.lastMessageTime || 0) >= (existing.lastMessageTime || 0)) {
+      merged.set(key, {
+        ...existing,
+        ...chat,
+        unreadCount: Math.max(existing?.unreadCount || 0, chat.unreadCount || 0),
+      });
+    }
+  }
+  return Array.from(merged.values()).sort((a, b) => (b.lastMessageTime || 0) - (a.lastMessageTime || 0));
+}
 
 export function Sidebar({
   activeChatId,
@@ -232,7 +256,7 @@ export function Sidebar({
     fetchChats(currentUser.id)
       .then((loadedChats) => {
         if (cancelled) return;
-        setChats(loadedChats);
+        setChats(mergeChats(loadedChats, currentUser.id));
 
         if (!activeChatId && restoreActiveChatId) {
           const restoredChat = loadedChats.find((chat) => (
@@ -284,16 +308,14 @@ export function Sidebar({
               });
             }
           }
-          return newChats.sort(
-            (a, b) => (b.lastMessageTime || 0) - (a.lastMessageTime || 0),
-          );
+          return mergeChats(newChats, currentUser.id);
         }
-        return [updatedChat, ...prev];
+        return mergeChats([updatedChat, ...prev], currentUser.id);
       });
     });
 
     socket.on("new_chat", (newChat: Chat) => {
-      setChats((prev) => [newChat, ...prev]);
+      setChats((prev) => mergeChats([newChat, ...prev], currentUser.id));
     });
 
     socket.on("user_typing", (data: { chatId: string; senderName: string; isTyping?: boolean }) => {
@@ -360,14 +382,19 @@ export function Sidebar({
   };
 
   const handleCreateContactChat = async (contact: Contact) => {
-    const existing = chats.find((c) => c.name === contact.name && !c.isGroup);
+    const targetDirectKey = [currentUser.id, contact.id].sort().join(":");
+    const existing = chats.find((chat) => directKeyForChat(chat, currentUser.id) === targetDirectKey);
     if (existing) {
       onSelectChat(existing);
       setShowContacts(false);
       setActiveRailTab("chats");
       return;
     }
-    const newChat = await createChat(contact.name, false);
+    const newChat = await createDirectChat(currentUser.id, contact.id, {
+      currentUserName: currentUser.name,
+      targetUserName: contact.name,
+    });
+    setChats((prev) => mergeChats([newChat, ...prev], currentUser.id));
     onSelectChat(newChat);
     setShowContacts(false);
     setActiveRailTab("chats");
@@ -392,14 +419,52 @@ export function Sidebar({
   }, [showAddContact, userSearchQuery, refreshUserDiscovery]);
 
   const handleStartDirectChat = async (targetUserId: string) => {
+    const targetUser = usersToChat.find((user) => user.id === targetUserId);
+    const targetDirectKey = [currentUser.id, targetUserId].sort().join(":");
+    const existingChat = chats.find((chat) => directKeyForChat(chat, currentUser.id) === targetDirectKey);
+
     try {
-      const newChat = await createDirectChat(currentUser.id, targetUserId);
-      onSelectChat(newChat);
+      const newChat = existingChat || await createDirectChat(currentUser.id, targetUserId, {
+        currentUserName: currentUser.name,
+        targetUserName: targetUser?.name,
+      });
+      const participants = newChat.participants?.length
+        ? newChat.participants
+        : [
+            currentUser,
+            targetUser || {
+              id: targetUserId,
+              name: newChat.name || "Unknown user",
+              avatar: newChat.avatar || "",
+              online: false,
+            },
+          ];
+      const normalizedChat: Chat = {
+        ...newChat,
+        directKey: newChat.directKey || targetDirectKey,
+        name: newChat.name || targetUser?.name || "Direct chat",
+        avatar: newChat.avatar || targetUser?.avatar,
+        isGroup: false,
+        members: newChat.members?.length ? newChat.members : [currentUser.id, targetUserId],
+        participants,
+        lastMessage: newChat.lastMessage || "",
+        lastMessageTime: newChat.lastMessageTime || Date.now(),
+        unreadCount: newChat.unreadCount || 0,
+      };
+      setChats((prev) => {
+        return mergeChats([normalizedChat, ...prev], currentUser.id);
+      });
+      onSelectChat(normalizedChat);
       setShowAddContact(false);
       setShowContacts(false);
       setActiveRailTab("chats");
     } catch (err) {
       console.error(err);
+      pushToast({
+        title: "Could not open chat",
+        description: "The contact is still visible. Try refresh users, then open the chat again.",
+        tone: "error",
+      });
     }
   };
 
@@ -441,113 +506,6 @@ export function Sidebar({
     }
   };
 
-  const handleExportData = async () => {
-    try {
-      const res = await fetch("/hello/api/export", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId: currentUser.id }),
-      });
-      if (!res.ok) throw new Error("Failed to export data");
-      const data = await res.json();
-
-      const keyArray = new Uint8Array(16);
-      window.crypto.getRandomValues(keyArray);
-      const key = Array.from(keyArray)
-        .map((b) => b.toString(16).padStart(2, "0"))
-        .join("");
-
-      const encrypted = CryptoJS.AES.encrypt(
-        JSON.stringify(data),
-        key,
-      ).toString();
-
-      const blob = new Blob([encrypted], { type: "text/plain" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `whatsclone_export_${Date.now()}.enc`;
-      a.click();
-      URL.revokeObjectURL(url);
-
-      pushToast({
-        title: "Encrypted backup exported",
-        description: `Your key starts with ${key.slice(0, 6)}. A text file with the full key was downloaded too.`,
-        tone: "success",
-        durationMs: 5200,
-      });
-
-      const keyBlob = new Blob([`Encryption Key for imported file:\n${key}`], {
-        type: "text/plain",
-      });
-      const keyUrl = URL.createObjectURL(keyBlob);
-      const keyA = document.createElement("a");
-      keyA.href = keyUrl;
-      keyA.download = `whatsclone_export_key_${Date.now()}.txt`;
-      keyA.click();
-      URL.revokeObjectURL(keyUrl);
-    } catch (err) {
-      console.error(err);
-      pushToast({
-        title: "Export failed",
-        description: "We could not generate your backup.",
-        tone: "error",
-      });
-    }
-  };
-
-  const handleImportData = () => {
-    const input = document.createElement("input");
-    input.type = "file";
-    input.accept = ".enc";
-    input.onchange = async (e: any) => {
-      const file = e.target.files?.[0];
-      if (!file) return;
-
-      const key = prompt(
-        "Please enter the decryption key for your export file:",
-      );
-      if (!key) return;
-
-      const reader = new FileReader();
-      reader.onload = async (re) => {
-        try {
-          const encryptedText = re.target?.result as string;
-          const decrypted = CryptoJS.AES.decrypt(encryptedText, key).toString(
-            CryptoJS.enc.Utf8,
-          );
-          if (!decrypted) throw new Error("Invalid key or corrupt file");
-
-          const data = JSON.parse(decrypted);
-
-          const res = await fetch("/hello/api/import", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ userId: currentUser.id, data }),
-          });
-
-          if (!res.ok) throw new Error("Failed to import");
-          pushToast({
-            title: "Backup imported",
-            description: "Reloading Hello to apply your data.",
-            tone: "success",
-          });
-          window.location.reload();
-        } catch (err) {
-          console.error(err);
-          pushToast({
-            title: "Import failed",
-            description: "Check the decryption key and try again.",
-            tone: "error",
-            durationMs: 4600,
-          });
-        }
-      };
-      reader.readAsText(file);
-    };
-    input.click();
-  };
-
   const toggleBlockContact = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     setContacts(
@@ -557,7 +515,7 @@ export function Sidebar({
     );
   };
 
-  const visibleChats = chats.filter((chat) => !chat.deletedFor?.includes(currentUser.id));
+  const visibleChats = mergeChats(chats, currentUser.id).filter((chat) => !chat.deletedFor?.includes(currentUser.id));
   const chatMatchesSearch = (chat: Chat) => {
     const needle = search.toLowerCase();
     if (!needle) return true;
@@ -932,7 +890,7 @@ export function Sidebar({
                   ? "Try another name, file, or message keyword."
                   : chatFilter === "pinned"
                     ? "Pin important conversations so they stay anchored at the top."
-                    : "Start a direct chat, make a group, or import an old backup."
+                    : "Start a direct chat or make a group."
             }
             className="mt-4 min-h-[280px]"
           />
@@ -1418,38 +1376,6 @@ export function Sidebar({
             <div className="hello-card p-4">
               <div className="mb-4 flex items-center justify-between">
                 <div>
-                  <h4 className="text-sm font-semibold text-[var(--hello-text)]">Storage and backup</h4>
-                  <p className="text-xs text-[var(--hello-text-muted)]">Encrypted export/import and local persistence.</p>
-                </div>
-                <HardDrive className="h-4 w-4 text-[var(--hello-accent)]" />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <button
-                  onClick={handleExportData}
-                  className="rounded-2xl border border-[var(--hello-border)] px-3 py-3 text-left text-sm font-semibold transition hover:bg-black/5 dark:hover:bg-white/5"
-                >
-                  <div className="mb-2 flex items-center gap-2 text-indigo-500">
-                    <Download className="h-4 w-4" />
-                    Export
-                  </div>
-                  <p className="text-xs font-medium text-[var(--hello-text-muted)]">Download an encrypted backup.</p>
-                </button>
-                <button
-                  onClick={handleImportData}
-                  className="rounded-2xl border border-[var(--hello-border)] px-3 py-3 text-left text-sm font-semibold transition hover:bg-black/5 dark:hover:bg-white/5"
-                >
-                  <div className="mb-2 flex items-center gap-2 text-[var(--hello-accent)]">
-                    <Upload className="h-4 w-4" />
-                    Import
-                  </div>
-                  <p className="text-xs font-medium text-[var(--hello-text-muted)]">Restore a previously exported archive.</p>
-                </button>
-              </div>
-            </div>
-
-            <div className="hello-card p-4">
-              <div className="mb-4 flex items-center justify-between">
-                <div>
                   <h4 className="text-sm font-semibold text-[var(--hello-text)]">Account</h4>
                   <p className="text-xs text-[var(--hello-text-muted)]">End this cloud session and return to login.</p>
                 </div>
@@ -1620,7 +1546,7 @@ export function Sidebar({
 
             {usersToChat.length === 0 ? (
               <div className="text-center text-sm text-slate-500 mt-4">
-                No users found in local database. Open GlassChat on another device and register a username first.
+                No users found. Register another cloud account, then refresh users.
               </div>
             ) : (
               <div className="flex flex-col space-y-4">

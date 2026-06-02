@@ -37,8 +37,9 @@ class CloudChatRepository(
 
     suspend fun fetchChats(userId: String): Result<List<ChatModels.Chat>> {
         val result = api.fetchConversations(userId)
-        result.getOrNull()?.let { saveChats(userId, it) }
-        return if (result.isSuccess) result else {
+        val deduped = result.getOrNull()?.let { dedupeChats(it, userId) }
+        deduped?.let { saveChats(userId, it) }
+        return if (deduped != null) Result.success(deduped) else {
             val cached = cachedChats(userId)
             if (cached.isNotEmpty()) Result.success(cached) else result
         }
@@ -48,16 +49,15 @@ class CloudChatRepository(
         api.fetchUsers(query)
 
     suspend fun createDirectChat(currentUserId: String, targetUserId: String, currentUserName: String): Result<ChatModels.Chat> {
-        val conversationId = directConversationId(currentUserId, targetUserId)
-        val result = api.ensureConversation(
-            conversationId = conversationId,
-            title = "",
-            isGroup = false,
-            createdBy = currentUserId,
-            createdByName = currentUserName,
-            memberIds = listOf(currentUserId, targetUserId)
+        val result = api.ensureDirectConversation(
+            currentUserId = currentUserId,
+            targetUserId = targetUserId,
+            currentUserName = currentUserName
         )
-        result.getOrNull()?.let { upsertCachedChat(currentUserId, it) }
+        result.getOrNull()?.let {
+            cacheDirectConversationId(currentUserId, targetUserId, it.id)
+            upsertCachedChat(currentUserId, it)
+        }
         return result
     }
 
@@ -83,10 +83,25 @@ class CloudChatRepository(
         senderAvatar: String?,
         attachmentId: String? = null
     ): Result<ChatModels.Message> {
-        val ensure = runCatching { ensureConversation(chat, senderId, senderName, senderAvatar) }
-        if (ensure.isFailure) return Result.failure(ensure.exceptionOrNull() ?: Exception("Failed to prepare cloud conversation"))
-        val result = api.sendMessage(chat.id, text, senderId, senderName, senderAvatar, attachmentId)
-        result.getOrNull()?.let { upsertCachedMessage(chat.id, it) }
+        val preparedChat = if (!chat.isGroup) {
+            val targetUserId = chat.participants?.firstOrNull { it.id != senderId }?.id
+                ?: chat.members?.firstOrNull { it != senderId }
+            if (targetUserId != null) {
+                createDirectChat(senderId, targetUserId, senderName).getOrElse { error ->
+                    return Result.failure(error)
+                }
+            } else {
+                val ensure = runCatching { ensureConversation(chat, senderId, senderName, senderAvatar) }
+                if (ensure.isFailure) return Result.failure(ensure.exceptionOrNull() ?: Exception("Failed to prepare cloud conversation"))
+                chat
+            }
+        } else {
+            val ensure = runCatching { ensureConversation(chat, senderId, senderName, senderAvatar) }
+            if (ensure.isFailure) return Result.failure(ensure.exceptionOrNull() ?: Exception("Failed to prepare cloud conversation"))
+            chat
+        }
+        val result = api.sendMessage(preparedChat.id, text, senderId, senderName, senderAvatar, attachmentId)
+        result.getOrNull()?.let { upsertCachedMessage(preparedChat.id, it) }
         return result
     }
 
@@ -115,12 +130,12 @@ class CloudChatRepository(
     }
 
     private fun saveChats(userId: String, chats: List<ChatModels.Chat>) {
-        val recent = chats.distinctBy { it.id }.sortedByDescending { it.lastMessageTime ?: 0L }.take(100)
+        val recent = dedupeChats(chats, userId).sortedByDescending { it.lastMessageTime ?: 0L }.take(100)
         prefs.edit().putString(chatsCacheKey(userId), gson.toJson(recent)).apply()
     }
 
     private fun upsertCachedChat(userId: String, chat: ChatModels.Chat) {
-        val next = (cachedChats(userId).filterNot { it.id == chat.id } + chat)
+        val next = dedupeChats(cachedChats(userId) + chat, userId)
             .sortedByDescending { it.lastMessageTime ?: 0L }
             .take(100)
         saveChats(userId, next)
@@ -137,6 +152,35 @@ class CloudChatRepository(
 
     private fun chatsCacheKey(userId: String): String = "chats_$userId"
 
-    private fun directConversationId(firstUserId: String, secondUserId: String): String =
-        listOf(firstUserId, secondUserId).sorted().joinToString(separator = "_", prefix = "direct_")
+    private fun directKey(firstUserId: String, secondUserId: String): String =
+        listOf(firstUserId, secondUserId).sorted().joinToString(separator = ":")
+
+    private fun directKeyForChat(chat: ChatModels.Chat, currentUserId: String): String? {
+        if (chat.isGroup) return null
+        chat.directKey?.takeIf { it.isNotBlank() }?.let { return it }
+        val members = chat.members?.takeIf { it.size >= 2 }
+            ?: chat.participants?.map { it.id }
+        val unique = members.orEmpty().filter { it.isNotBlank() }.distinct().sorted()
+        if (unique.size == 2) return unique.joinToString(":")
+        val other = chat.participants?.firstOrNull { it.id != currentUserId }?.id
+        return other?.let { directKey(currentUserId, it) }
+    }
+
+    private fun dedupeChats(chats: List<ChatModels.Chat>, currentUserId: String): List<ChatModels.Chat> {
+        val merged = linkedMapOf<String, ChatModels.Chat>()
+        chats.sortedByDescending { it.lastMessageTime ?: 0L }.forEach { chat ->
+            val key = directKeyForChat(chat, currentUserId) ?: chat.id
+            val existing = merged[key]
+            if (existing == null || (chat.lastMessageTime ?: 0L) >= (existing.lastMessageTime ?: 0L)) {
+                merged[key] = chat.copy(
+                    unreadCount = maxOf(existing?.unreadCount ?: 0, chat.unreadCount ?: 0)
+                )
+            }
+        }
+        return merged.values.toList()
+    }
+
+    private fun cacheDirectConversationId(firstUserId: String, secondUserId: String, conversationId: String) {
+        prefs.edit().putString("direct_${directKey(firstUserId, secondUserId)}", conversationId).apply()
+    }
 }

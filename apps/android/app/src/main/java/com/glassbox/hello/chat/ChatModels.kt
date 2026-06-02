@@ -5,6 +5,8 @@ import com.google.gson.annotations.SerializedName
 object ChatModels {
     data class Chat(
         @SerializedName("id") val id: String,
+        @SerializedName("type") val type: String? = null,
+        @SerializedName("directKey") val directKey: String? = null,
         @SerializedName("name") val name: String,
         @SerializedName("avatar") val avatar: String? = null,
         @SerializedName("lastMessage") val lastMessage: String? = null,

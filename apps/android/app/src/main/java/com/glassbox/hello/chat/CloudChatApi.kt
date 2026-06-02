@@ -53,6 +53,26 @@ class CloudChatApi {
         gson.fromJson(response, ChatModels.Chat::class.java)
     }
 
+    suspend fun ensureDirectConversation(
+        currentUserId: String,
+        targetUserId: String,
+        currentUserName: String,
+        targetUserName: String? = null
+    ): Result<ChatModels.Chat> = safeCloudCall {
+        val response = postWithFallback(
+            "/api/chat/conversations/direct",
+            mapOf(
+                "type" to "direct",
+                "createdBy" to currentUserId,
+                "createdByName" to currentUserName,
+                "targetUserId" to targetUserId,
+                "memberIds" to listOf(currentUserId, targetUserId),
+                "title" to targetUserName
+            ).filterValues { it != null }
+        )
+        gson.fromJson(response, ChatModels.Chat::class.java)
+    }
+
     suspend fun fetchConversations(userId: String): Result<List<ChatModels.Chat>> = safeCloudCall {
         val response = getWithFallback("/api/chat/conversations?userId=${encode(userId)}")
         val type = object : TypeToken<List<ChatModels.Chat>>() {}.type

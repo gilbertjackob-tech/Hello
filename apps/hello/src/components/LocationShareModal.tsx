@@ -33,7 +33,7 @@ export function LocationShareModal({
         <div className="p-4 space-y-4">
           {!isSecure && (
             <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg p-3 text-sm text-amber-800 dark:text-amber-200 mb-4">
-              <strong>Warning:</strong> Location, camera, and microphone require HTTPS. Use your Tailscale Serve HTTPS URL, or use manual location fallback below.
+              <strong>Warning:</strong> Location, camera, and microphone require HTTPS. Use the Cloudflare Tunnel HTTPS URL, or use manual location fallback below.
             </div>
           )}
 

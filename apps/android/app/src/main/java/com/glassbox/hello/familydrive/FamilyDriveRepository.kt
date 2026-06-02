@@ -78,7 +78,7 @@ class FamilyDriveRepository(
                         bytes = picked.bytes,
                         uploaderId = uploaderId
                     ).getOrThrow()
-                    store.delete(item.id)
+                    store.updateStatus(item.id, PendingDriveStatus.SYNCED, null)
                     uploadedCount += 1
                 } catch (error: Exception) {
                     store.markRetryable(

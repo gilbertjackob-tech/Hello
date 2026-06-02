@@ -32,6 +32,32 @@ fun Chat.presenceSubtitle(currentUserId: String): String {
     }
 }
 
+fun Chat.directDedupeKey(currentUserId: String): String {
+    if (isGroup) return id
+    directKey?.takeIf { it.isNotBlank() }?.let { return it }
+    val memberIds = members?.takeIf { it.size >= 2 }
+        ?: participants?.map { it.id }
+    val unique = memberIds.orEmpty().filter { it.isNotBlank() }.distinct().sorted()
+    if (unique.size == 2) return unique.joinToString(":")
+    return otherParticipant(currentUserId)?.id
+        ?.let { listOf(currentUserId, it).sorted().joinToString(":") }
+        ?: id
+}
+
+fun List<Chat>.dedupeDirectChats(currentUserId: String): List<Chat> {
+    return sortedByDescending { it.lastMessageTime ?: 0L }
+        .fold(linkedMapOf<String, Chat>()) { acc, chat ->
+            val key = chat.directDedupeKey(currentUserId)
+            val existing = acc[key]
+            if (existing == null || (chat.lastMessageTime ?: 0L) >= (existing.lastMessageTime ?: 0L)) {
+                acc[key] = chat.copy(unreadCount = maxOf(existing?.unreadCount ?: 0, chat.unreadCount ?: 0))
+            }
+            acc
+        }
+        .values
+        .toList()
+}
+
 fun String.avatarInitial(): String {
     return trim().firstOrNull()?.uppercase() ?: "?"
 }

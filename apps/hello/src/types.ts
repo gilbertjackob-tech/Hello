@@ -26,6 +26,8 @@ export interface Contact {
 
 export interface Chat {
   id: string;
+  type?: "direct" | "group";
+  directKey?: string | null;
   name: string;
   avatar?: string;
   lastMessage?: string;

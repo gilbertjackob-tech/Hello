@@ -41,6 +41,11 @@ android {
             ?: false
         buildConfigField("Boolean", "WEBRTC_FORCE_RELAY", forceRelay.toString())
 
+        val drivePcBaseUrl = providers.gradleProperty("drivePcBaseUrl").orNull
+            ?: System.getenv("DRIVE_PC_BASE_URL")
+            ?: "https://home.bookhelloctg.com/hello/api"
+        buildConfigField("String", "DRIVE_PC_BASE_URL", drivePcBaseUrl.asBuildConfigString())
+
         val planGeminiKeys = geminiKeysFromPlan()
         val geminiKeys = listOf(
             providers.gradleProperty("gemini_api1").orNull

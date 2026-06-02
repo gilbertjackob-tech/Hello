@@ -217,6 +217,6 @@ class FamilyDriveViewModel : ViewModel() {
 
     companion object {
         const val LOCAL_SAVE_MESSAGE: String =
-            "Saved locally. Waiting for PC connection. Please don't delete the original photos/videos until upload is complete."
+            "Please don't delete the original photos/videos until upload is complete."
     }
 }

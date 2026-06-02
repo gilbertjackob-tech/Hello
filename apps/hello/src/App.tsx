@@ -2,7 +2,7 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  */
-import { useCallback, useEffect, useState } from "react";
+import { Component, ReactNode, useCallback, useEffect, useState } from "react";
 import { SocketProvider } from "./SocketContext";
 import { Sidebar } from "./components/Sidebar";
 import { ChatWindow } from "./components/ChatWindow";
@@ -52,6 +52,42 @@ function mergeUserIfChanged(existing: User | null, cloudUser: User): User {
   if (!existing) return cloudUser;
   const next = { ...existing, ...cloudUser };
   return JSON.stringify(existing) === JSON.stringify(next) ? existing : next;
+}
+
+class ChatPaneErrorBoundary extends Component<
+  { children: ReactNode; resetKey?: string; onReset: () => void },
+  { hasError: boolean }
+> {
+  state = { hasError: false };
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidUpdate(previousProps: { resetKey?: string }) {
+    if (previousProps.resetKey !== this.props.resetKey && this.state.hasError) {
+      this.setState({ hasError: false });
+    }
+  }
+
+  render() {
+    if (!this.state.hasError) return this.props.children;
+    return (
+      <div className="flex h-full w-full flex-col items-center justify-center gap-4 px-6 text-center">
+        <h2 className="text-xl font-semibold text-[var(--hello-text)]">Chat could not open</h2>
+        <p className="max-w-sm text-sm leading-6 text-[var(--hello-text-muted)]">
+          The conversation data was incomplete. Go back to chats and try opening it again.
+        </p>
+        <button
+          type="button"
+          onClick={this.props.onReset}
+          className="rounded-full bg-[var(--hello-accent)] px-5 py-2 text-sm font-semibold text-white"
+        >
+          Back to chats
+        </button>
+      </div>
+    );
+  }
 }
 
 export default function App() {
@@ -345,13 +381,15 @@ export default function App() {
             {isBrowserRailTab ? (
               <HelloBrowser />
             ) : activeChat ? (
-              <ChatWindow
-                key={activeChat.id}
-                chat={activeChat}
-                currentUser={currentUser}
-                onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
-                isSidebarOpen={isSidebarOpen}
-              />
+              <ChatPaneErrorBoundary resetKey={activeChat.id} onReset={() => selectChat(null)}>
+                <ChatWindow
+                  key={activeChat.id}
+                  chat={activeChat}
+                  currentUser={currentUser}
+                  onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
+                  isSidebarOpen={isSidebarOpen}
+                />
+              </ChatPaneErrorBoundary>
             ) : (
               <div className="relative flex h-full w-full flex-col items-center justify-center overflow-hidden bg-[radial-gradient(circle_at_top,rgba(15,143,120,0.1),transparent_35%),linear-gradient(180deg,rgba(255,255,255,0.34),transparent)] px-8 text-center transition-colors duration-300 dark:bg-[radial-gradient(circle_at_top,rgba(40,192,164,0.08),transparent_30%),linear-gradient(180deg,rgba(255,255,255,0.02),transparent)]">
                 {/* When no chat is active, we STILL need to toggle sidebar on desktop if they collapse it */}

@@ -65,7 +65,6 @@ class FamilyDrivePendingStore private constructor(context: Context) {
     private suspend fun getActive(): List<PendingDriveItem> = withContext(Dispatchers.IO) {
         synchronized(lock) {
             readAllLocked()
-                .filter { it.status != PendingDriveStatus.SYNCED }
                 .sortedByDescending { it.createdAt }
         }
     }

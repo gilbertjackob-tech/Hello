@@ -70,11 +70,11 @@ function isTrustedHelloPermissionUrl(rawUrl: string) {
     const isLocalIntegrated =
       url.origin === 'http://127.0.0.1:3000' ||
       url.origin === 'http://localhost:3000';
-    const isTailscaleHttps =
+    const isPcDriveTunnel =
       url.protocol === 'https:' &&
-      (url.hostname.endsWith('.ts.net') || url.hostname.endsWith('.tailnet.ts.net'));
+      url.hostname === 'home.bookhelloctg.com';
 
-    return isHelloRoute && (isLocalIntegrated || isTailscaleHttps);
+    return isHelloRoute && (isLocalIntegrated || isPcDriveTunnel);
   } catch {
     return false;
   }

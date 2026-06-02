@@ -10,15 +10,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material.icons.filled.WifiOff
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -46,18 +41,8 @@ import com.glassbox.hello.ui.theme.HelloColors
 import com.glassbox.hello.ui.theme.HelloShapes
 import com.glassbox.hello.ui.theme.HelloSpacing
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import org.json.JSONObject
-import java.net.HttpURLConnection
-import java.net.URL
-
-private data class ProbeResult(
-    val status: NetworkStatus,
-    val checkedUrl: String,
-    val detail: String
-)
 
 @Composable
 fun NetworkStatusScreen(
@@ -67,12 +52,11 @@ fun NetworkStatusScreen(
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     var networkStatus by remember { mutableStateOf<NetworkStatus>(NetworkStatus.Checking) }
-    var checkedUrl by remember { mutableStateOf(AppConfig.HELLO_STATUS_URL) }
+    var checkedUrl by remember { mutableStateOf(AppConfig.DRIVE_HEALTH_URL) }
     var diagnosticText by remember { mutableStateOf("Not checked yet") }
     var cloudChatDiagnostic by remember { mutableStateOf("Cloud chat not checked yet") }
     var cloudChatOnline by remember { mutableStateOf(false) }
     var cloudAccountStatus by remember { mutableStateOf("Checking") }
-    var vpnToggleMessage by remember { mutableStateOf<String?>(null) }
     val pendingUploads by FamilyDrivePendingStore.getInstance(context).observeActive().collectAsState(initial = emptyList())
 
     fun checkNetworkStatus() {
@@ -83,7 +67,7 @@ fun NetworkStatusScreen(
             cloudChatDiagnostic = "Checking cloud chat..."
             cloudAccountStatus = "Checking"
             try {
-                val result = withContext(Dispatchers.IO) { checkHelloStatus() }
+                val result = withContext(Dispatchers.IO) { checkPcDriveNetwork() }
                 val cloudResult = withContext(Dispatchers.IO) { checkCloudChatNetwork() }
                 val token = CloudSessionManager(context).token()
                 val cloudAccountResult = if (token.isNullOrBlank()) {
@@ -99,28 +83,11 @@ fun NetworkStatusScreen(
                 cloudAccountStatus = cloudAccountResult
                 networkStatus = result.status
             } catch (e: Exception) {
-                checkedUrl = AppConfig.HELLO_STATUS_URL
+                checkedUrl = AppConfig.DRIVE_HEALTH_URL
                 diagnosticText = e.message ?: "Unknown error"
                 cloudAccountStatus = "Offline: cached session"
                 networkStatus = NetworkStatus.Offline
             }
-        }
-    }
-
-    fun requestVpnStateChange(enable: Boolean) {
-        networkStatus = NetworkStatus.Checking
-        diagnosticText = if (enable) "Requesting Family Network connection..." else "Requesting Family Network disconnect..."
-        val triggered = if (enable) TailscaleHelper.connectVpn(context) else TailscaleHelper.disconnectVpn(context)
-        if (!triggered) {
-            diagnosticText = "Tailscale toggle could not be sent. Open VPN settings and confirm the tunnel there."
-            vpnToggleMessage = diagnosticText
-            TailscaleHelper.openTailscaleSettings(context)
-            checkNetworkStatus()
-            return
-        }
-        coroutineScope.launch {
-            delay(1400)
-            checkNetworkStatus()
         }
     }
 
@@ -170,7 +137,7 @@ fun NetworkStatusScreen(
                     tint = if (networkStatus == NetworkStatus.Offline || networkStatus == NetworkStatus.Error) HelloColors.DarkDanger else HelloColors.DarkAccent
                 )
                 Text(
-                    text = "Cloud Account: $cloudAccountStatus\nCloud Chat: ${if (cloudChatOnline) "Online" else "Offline"}\nPC Drive: ${pcDriveLabel(networkStatus, pendingUploads.size)}",
+                    text = "Cloud Account: $cloudAccountStatus\nCloud Chat: ${if (cloudChatOnline) "Online" else "Offline"}\nCloud Calls: ${if (cloudChatOnline) "Available" else "Offline"}\nPC Drive: ${pcDriveLabel(networkStatus, pendingUploads.size)}",
                     color = HelloColors.DarkText,
                     textAlign = TextAlign.Center
                 )
@@ -195,126 +162,26 @@ fun NetworkStatusScreen(
 
         HelloSettingsCard {
             HelloSettingsRow(
-                title = "PC Drive network",
-                subtitle = "Optional. Chat and app startup do not depend on this.",
-                onClick = {
-                    requestVpnStateChange(networkStatus != NetworkStatus.Connected && networkStatus != NetworkStatus.HelloApiReachable)
-                },
-                leading = {
-                    HelloIconButton(
-                        onClick = {
-                            requestVpnStateChange(networkStatus != NetworkStatus.Connected && networkStatus != NetworkStatus.HelloApiReachable)
-                        },
-                        active = networkStatus == NetworkStatus.Connected || networkStatus == NetworkStatus.HelloApiReachable
-                    ) {
-                        Icon(Icons.Default.Public, contentDescription = null, tint = HelloColors.DarkAccent)
-                    }
-                },
-                trailing = {
-                    Switch(
-                        checked = networkStatus == NetworkStatus.Connected || networkStatus == NetworkStatus.HelloApiReachable,
-                        enabled = networkStatus != NetworkStatus.Checking,
-                        onCheckedChange = { requestVpnStateChange(it) },
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = HelloColors.DarkAccent,
-                            checkedTrackColor = HelloColors.DarkAccentSoft,
-                            uncheckedThumbColor = HelloColors.DarkTextMuted,
-                            uncheckedTrackColor = HelloColors.DarkPanelMuted
-                        )
-                    )
-                }
-            )
-            HelloSettingsRow(
-                title = "Open Tailscale app",
-                subtitle = "Only needed for PC Drive uploads while away from home.",
-                onClick = { TailscaleHelper.openTailscale(context) }
+                title = "Cloud Account",
+                subtitle = cloudAccountStatus
             )
             HelloSettingsRow(title = "Cloud Chat", subtitle = if (cloudChatOnline) "Online" else "Offline")
-            HelloSettingsRow(title = "Cloud Account", subtitle = cloudAccountStatus)
+            HelloSettingsRow(title = "Cloud Calls", subtitle = if (cloudChatOnline) "Available through Cloudflare" else "Offline")
             HelloSettingsRow(title = "Cloud chat health", subtitle = cloudChatDiagnostic)
             HelloSettingsRow(title = "Cloud chat fallback", subtitle = AppConfig.CHAT_CLOUD_FALLBACK_URL)
             HelloSettingsRow(title = "PC Drive", subtitle = pcDriveLabel(networkStatus, pendingUploads.size))
             HelloSettingsRow(title = "PC Drive backend", subtitle = AppConfig.DRIVE_SERVER_ORIGIN)
-            HelloSettingsRow(title = "PC Drive health", subtitle = AppConfig.HELLO_HEALTH_URL)
+            HelloSettingsRow(title = "PC Drive connection", subtitle = "Cloudflare Tunnel to home.bookhelloctg.com")
+            HelloSettingsRow(title = "PC Drive health", subtitle = AppConfig.DRIVE_HEALTH_URL)
         }
     }
-
-    vpnToggleMessage?.let { message ->
-        AlertDialog(
-            onDismissRequest = { vpnToggleMessage = null },
-            containerColor = HelloColors.DarkPanelStrong,
-            title = { Text("Family Network", color = HelloColors.DarkText) },
-            text = { Text(message, color = HelloColors.DarkTextMuted) },
-            confirmButton = {
-                TextButton(onClick = { vpnToggleMessage = null }) {
-                    Text("OK", color = HelloColors.DarkAccent)
-                }
-            }
-        )
-    }
-}
-
-private fun checkHelloStatus(): ProbeResult {
-    val statusProbe = probeJsonOk(AppConfig.HELLO_STATUS_URL)
-    if (statusProbe.status == NetworkStatus.Connected) {
-        return statusProbe.copy(
-            detail = "${statusProbe.detail}\n${AppConfig.HELLO_STATUS_URL}"
-        )
-    }
-
-    val healthProbe = probeJsonOk(AppConfig.HELLO_HEALTH_URL)
-    if (healthProbe.status == NetworkStatus.Connected) {
-        return healthProbe.copy(
-            status = NetworkStatus.HelloApiReachable,
-            detail = "Status failed: ${statusProbe.detail}\nHealth succeeded: ${healthProbe.detail}"
-        )
-    }
-
-    return ProbeResult(
-        status = NetworkStatus.Offline,
-        checkedUrl = "${AppConfig.HELLO_STATUS_URL}\n${AppConfig.HELLO_HEALTH_URL}",
-        detail = "Status failed: ${statusProbe.detail}\nHealth failed: ${healthProbe.detail}"
-    )
 }
 
 private fun pcDriveLabel(status: NetworkStatus, pendingCount: Int): String {
     val base = when (status) {
         NetworkStatus.Checking -> "Checking"
-        NetworkStatus.Connected, NetworkStatus.HelloApiReachable -> "Online"
-        else -> "Offline"
+        NetworkStatus.Connected, NetworkStatus.HelloApiReachable -> "Online through Cloudflare Tunnel"
+        else -> "Offline / pending sync"
     }
     return if (pendingCount > 0) "$base / $pendingCount pending uploads" else base
-}
-
-private fun probeJsonOk(urlText: String): ProbeResult {
-    var connection: HttpURLConnection? = null
-    return try {
-        val url = URL(urlText)
-        connection = url.openConnection() as HttpURLConnection
-        connection.connectTimeout = 4000
-        connection.readTimeout = 4000
-        connection.requestMethod = "GET"
-
-        val responseCode = connection.responseCode
-        val body = if (responseCode in 200..299) {
-            connection.inputStream.bufferedReader().use { it.readText() }
-        } else {
-            connection.errorStream?.bufferedReader()?.use { it.readText() }.orEmpty()
-        }
-        val ok = responseCode == 200 && JSONObject(body).optBoolean("ok", false)
-
-        ProbeResult(
-            status = if (ok) NetworkStatus.Connected else NetworkStatus.Error,
-            checkedUrl = urlText,
-            detail = "HTTP $responseCode${if (ok) ", ok=true" else ""}"
-        )
-    } catch (e: Exception) {
-        ProbeResult(
-            status = NetworkStatus.Offline,
-            checkedUrl = urlText,
-            detail = e.message ?: "Unknown error"
-        )
-    } finally {
-        connection?.disconnect()
-    }
 }

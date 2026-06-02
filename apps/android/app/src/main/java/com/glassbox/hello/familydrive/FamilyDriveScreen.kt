@@ -33,6 +33,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.CloudUpload
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Favorite
@@ -380,7 +381,7 @@ private fun AllPhotosContent(
     modifier: Modifier = Modifier
 ) {
     val gridState = rememberLazyGridState()
-    val pendingCount = state.pendingItems.size
+    val pendingCount = state.pendingItems.count { it.status != PendingDriveStatus.SYNCED }
     val gridItems = remember(state.items, state.pendingItems) {
         (state.pendingItems.map { DriveGridItem.Pending(it) } + state.items.map { DriveGridItem.Synced(it) })
             .sortedByDescending { it.createdAt }
@@ -668,6 +669,7 @@ private fun PendingUploadBadge(
     val tint = when (item.status) {
         PendingDriveStatus.FAILED_RETRYABLE -> Color(0xFFFFC107)
         PendingDriveStatus.UPLOADING -> HelloColors.DarkAccent
+        PendingDriveStatus.SYNCED -> Color(0xFF22C55E)
         else -> Color.White
     }
     Box(
@@ -680,6 +682,13 @@ private fun PendingUploadBadge(
     ) {
         if (isRetrying || item.status == PendingDriveStatus.UPLOADING) {
             CircularProgressIndicator(color = HelloColors.DarkAccent, strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
+        } else if (item.status == PendingDriveStatus.SYNCED) {
+            Icon(
+                Icons.Default.Check,
+                contentDescription = "Synced to PC",
+                tint = tint,
+                modifier = Modifier.size(16.dp)
+            )
         } else {
             Icon(
                 Icons.Default.CloudUpload,
@@ -700,6 +709,7 @@ private fun PendingUploadBadge(
             text = when (item.status) {
                 PendingDriveStatus.FAILED_RETRYABLE -> "Retry"
                 PendingDriveStatus.UPLOADING -> "Syncing"
+                PendingDriveStatus.SYNCED -> "Saved"
                 else -> "Pending"
             },
             color = Color.White,

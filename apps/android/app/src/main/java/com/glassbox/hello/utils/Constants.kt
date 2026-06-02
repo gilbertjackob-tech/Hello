@@ -21,8 +21,8 @@ object Constants {
     const val OUTLOOK_REDIRECT_URI: String = "$APP_SCHEME://$OAUTH_HOST/outlook/callback"
     const val ICLOUD_REDIRECT_URI: String = "$APP_SCHEME://$OAUTH_HOST/icloud/callback"
 
-    const val API_BASE_URL: String = AppConfig.HELLO_API_BASE
-    const val SYNC_WEB_SOCKET_URL: String = "$API_BASE_URL/sync/ws"
+    val API_BASE_URL: String = AppConfig.HELLO_API_BASE
+    val SYNC_WEB_SOCKET_URL: String = "$API_BASE_URL/sync/ws"
     const val REQUEST_TIMEOUT_MILLIS: Long = 30_000L
     const val CALL_TIMEOUT_MILLIS: Long = 60_000L
     const val TOKEN_EXPIRY_BUFFER_MILLIS: Long = 5 * 60 * 1000L

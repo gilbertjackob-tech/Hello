@@ -33,8 +33,6 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -62,7 +60,6 @@ import com.glassbox.hello.core.ResultState
 import com.glassbox.hello.core.User as CoreUser
 import com.glassbox.hello.network.SocketManager
 import com.glassbox.hello.networkstatus.NetworkStatus
-import com.glassbox.hello.networkstatus.TailscaleHelper
 import com.glassbox.hello.networkstatus.checkCloudChatNetwork
 import com.glassbox.hello.networkstatus.checkHelloNetwork
 import com.glassbox.hello.ui.components.ErrorView
@@ -81,7 +78,6 @@ import com.glassbox.hello.ui.theme.HelloColors
 import com.glassbox.hello.ui.theme.HelloShapes
 import com.glassbox.hello.ui.theme.HelloSpacing
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
@@ -132,7 +128,6 @@ fun ChatListScreen(
     var vpnDetail by remember { mutableStateOf("PC Drive not checked yet") }
     var cloudChatOnline by remember { mutableStateOf(false) }
     var cloudChatDetail by remember { mutableStateOf("Cloud Chat not checked yet") }
-    var vpnActionMessage by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(currentUserId, cloudChatEnabled) {
         viewModel.configureCloudChat(context)
@@ -197,27 +192,6 @@ fun ChatListScreen(
             if (showNetworkDiagnostics) {
                 showNetworkDiagnostics = true
             }
-        }
-    }
-
-    fun requestVpnStateChange(enable: Boolean) {
-        vpnChecking = true
-        val triggered = if (enable) {
-            TailscaleHelper.connectVpn(context)
-        } else {
-            TailscaleHelper.disconnectVpn(context)
-        }
-        if (!triggered) {
-            vpnChecking = false
-            vpnActionMessage = "Tailscale toggle could not be sent. Opening VPN settings may be required."
-            TailscaleHelper.openTailscaleSettings(context)
-            refreshNetworkStatus()
-            return
-        }
-        vpnActionMessage = if (enable) "Requesting Family Network connection..." else "Requesting Family Network disconnect..."
-        coroutineScope.launch {
-            delay(1400)
-            refreshNetworkStatus()
         }
     }
 
@@ -358,6 +332,7 @@ fun ChatListScreen(
                 is ResultState.Success -> {
                     val chats = (chatsState as ResultState.Success<List<Chat>>)
                         .data
+                        .dedupeDirectChats(currentUserId)
                         .sortedByDescending { it.lastMessageTime ?: 0L }
                         .filter { chat ->
                             val title = chat.displayName(currentUserId)
@@ -475,23 +450,7 @@ fun ChatListScreen(
                 detail = vpnDetail,
                 cloudDetail = cloudChatDetail,
                 onRetry = { refreshNetworkStatus() },
-                onToggleVpn = { requestVpnStateChange(it) },
-                onOpenTailscale = { TailscaleHelper.openTailscale(context) },
                 onDismiss = { showNetworkDiagnostics = false }
-            )
-        }
-
-        if (vpnActionMessage != null) {
-            AlertDialog(
-                onDismissRequest = { vpnActionMessage = null },
-                containerColor = HelloColors.DarkPanelStrong,
-                title = { Text("Family Network", color = HelloColors.DarkText, fontWeight = FontWeight.Bold) },
-                text = { Text(vpnActionMessage.orEmpty(), color = HelloColors.DarkTextMuted) },
-                confirmButton = {
-                    TextButton(onClick = { vpnActionMessage = null }) {
-                        Text("OK", color = HelloColors.DarkAccent)
-                    }
-                }
             )
         }
 
@@ -790,8 +749,6 @@ private fun NetworkDiagnosticsDialog(
     detail: String,
     cloudDetail: String,
     onRetry: () -> Unit,
-    onToggleVpn: (Boolean) -> Unit,
-    onOpenTailscale: () -> Unit,
     onDismiss: () -> Unit
 ) {
     AlertDialog(
@@ -809,25 +766,11 @@ private fun NetworkDiagnosticsDialog(
                     fontWeight = FontWeight.Bold
                 )
                 Text(text = "Cloud Chat:\n$cloudDetail", color = HelloColors.DarkTextMuted)
-                Text(text = detail, color = HelloColors.DarkTextMuted)
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text("Device VPN switch", color = HelloColors.DarkText, fontWeight = FontWeight.Bold)
-                    Switch(
-                        checked = enabled,
-                        enabled = !checking,
-                        onCheckedChange = onToggleVpn,
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = HelloColors.DarkAccent,
-                            checkedTrackColor = HelloColors.DarkAccentSoft,
-                            uncheckedThumbColor = HelloColors.DarkTextMuted,
-                            uncheckedTrackColor = HelloColors.DarkPanelMuted
-                        )
-                    )
-                }
+                Text(text = "PC Drive:\n$detail", color = HelloColors.DarkTextMuted)
+                Text(
+                    text = "PC Drive uses home.bookhelloctg.com through Cloudflare Tunnel. Chat and calls stay cloud-backed.",
+                    color = HelloColors.DarkTextMuted
+                )
             }
         },
         confirmButton = {
@@ -836,8 +779,8 @@ private fun NetworkDiagnosticsDialog(
             }
         },
         dismissButton = {
-            TextButton(onClick = onOpenTailscale) {
-                Text("Open Tailscale", color = HelloColors.DarkAccent)
+            TextButton(onClick = onDismiss) {
+                Text("Close", color = HelloColors.DarkAccent)
             }
         }
     )

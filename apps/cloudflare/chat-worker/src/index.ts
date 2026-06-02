@@ -57,6 +57,11 @@ function asStringList(value: JsonValue | undefined): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
 
+function directKeyForUsers(userIds: string[]): string | null {
+  const uniqueIds = [...new Set(userIds.map((id) => id.trim()).filter(Boolean))].sort();
+  return uniqueIds.length === 2 ? uniqueIds.join(":") : null;
+}
+
 function asBoolean(value: JsonValue | undefined, fallback = false): boolean {
   return typeof value === "boolean" ? value : fallback;
 }
@@ -231,6 +236,14 @@ async function ensureCloudAccountSchema(env: Env): Promise<void> {
       await ensureColumn(env, "users", "security_answer", "TEXT").catch(() => undefined);
       await ensureColumn(env, "users", "security_answer_hash", "TEXT").catch(() => undefined);
       await ensureColumn(env, "users", "security_answer_salt", "TEXT").catch(() => undefined);
+      await ensureColumn(env, "conversations", "direct_key", "TEXT").catch(() => undefined);
+      await env.DB.prepare(
+        `
+          CREATE INDEX IF NOT EXISTS idx_conversations_direct_key
+          ON conversations (direct_key)
+          WHERE type = 'direct' AND direct_key IS NOT NULL
+        `,
+      ).run().catch(() => undefined);
       await env.DB.prepare(
         `
           CREATE TABLE IF NOT EXISTS sessions (
@@ -499,7 +512,7 @@ async function fetchUserAvatar(env: Env, userId: string): Promise<Response> {
 async function conversationFor(env: Env, conversationId: string, viewerId?: string): Promise<JsonObject | null> {
   const row = await env.DB.prepare(
     `
-      SELECT c.id, c.type, c.title, c.updated_at AS updatedAt,
+      SELECT c.id, c.type, c.title, c.direct_key AS directKey, c.updated_at AS updatedAt,
         (
           SELECT body FROM messages
           WHERE conversation_id = c.id AND deleted_at IS NULL
@@ -561,9 +574,18 @@ async function conversationFor(env: Env, conversationId: string, viewerId?: stri
   const directOther = row.type === "direct" && viewerId
     ? participants.find((member: any) => member.id !== viewerId)
     : null;
+  const directKey = row.directKey || (row.type === "direct" ? directKeyForUsers(participants.map((member: any) => member.id)) : null);
+  if (row.type === "direct" && directKey && !row.directKey) {
+    await env.DB.prepare("UPDATE conversations SET direct_key = ? WHERE id = ? AND direct_key IS NULL")
+      .bind(directKey, conversationId)
+      .run()
+      .catch(() => undefined);
+  }
 
   return {
     id: row.id,
+    type: row.type,
+    directKey,
     name: row.title || directOther?.name || participants.map((member: any) => member.name).join(", ") || "Cloud chat",
     avatar: directOther?.avatar || null,
     lastMessage: row.lastMessage || "",
@@ -1161,7 +1183,7 @@ async function relayCallEvent(env: Env, event: string, payload: JsonObject): Pro
   const callId = asString(payload.callId || payload.id, "");
   if (!callId) return;
   const eventId = asString(payload.eventId, "") || randomId("evt");
-  const outgoing = { ...payload, eventId, timestamp: Date.now(), event };
+  const outgoing: JsonObject = { ...payload, eventId, timestamp: Date.now(), event };
   await recordCallEvent(env, callId, event, outgoing);
   await updateCallStateForEvent(env, callId, event, asString(outgoing.reason, ""));
   const toUserId = asString(outgoing.toUserId, "");
@@ -1465,19 +1487,78 @@ async function listConversations(env: Env, url: URL): Promise<Response> {
       ORDER BY c.updated_at DESC
     `,
   ).bind(userId).all<any>();
-  const conversations = await Promise.all((rows.results || []).map((row: any) => conversationFor(env, row.id, userId)));
-  return json(conversations.filter(Boolean) as JsonObject[]);
+  const conversations = (await Promise.all((rows.results || []).map((row: any) => conversationFor(env, row.id, userId))))
+    .filter(Boolean) as JsonObject[];
+  const deduped = new Map<string, JsonObject>();
+  for (const conversation of conversations) {
+    const key = conversation.isGroup
+      ? asString(conversation.id, "")
+      : asString(conversation.directKey, "") || asString(conversation.id, "");
+    const existing = deduped.get(key);
+    if (!existing || Number(conversation.lastMessageTime || 0) > Number(existing.lastMessageTime || 0)) {
+      deduped.set(key, conversation);
+    }
+  }
+  return json([...deduped.values()].sort((a, b) => Number(b.lastMessageTime || 0) - Number(a.lastMessageTime || 0)));
+}
+
+async function findDirectConversationByPair(env: Env, userIds: string[]): Promise<string | null> {
+  const directKey = directKeyForUsers(userIds);
+  if (!directKey) return null;
+  const byKey = await env.DB.prepare(
+    "SELECT id FROM conversations WHERE type = 'direct' AND direct_key = ? ORDER BY updated_at DESC LIMIT 1",
+  ).bind(directKey).first<any>();
+  if (byKey?.id) return byKey.id;
+
+  const rows = await env.DB.prepare(
+    `
+      SELECT c.id
+      FROM conversations c
+      JOIN conversation_members cm ON cm.conversation_id = c.id
+      WHERE c.type = 'direct'
+      GROUP BY c.id
+      HAVING COUNT(DISTINCT cm.user_id) = 2
+        AND SUM(CASE WHEN cm.user_id IN (?, ?) THEN 1 ELSE 0 END) = 2
+      ORDER BY c.updated_at DESC
+      LIMIT 1
+    `,
+  ).bind(userIds[0], userIds[1]).all<any>();
+  const id = rows.results?.[0]?.id || null;
+  if (id) {
+    await env.DB.prepare("UPDATE conversations SET direct_key = ? WHERE id = ?")
+      .bind(directKey, id)
+      .run()
+      .catch(() => undefined);
+  }
+  return id;
 }
 
 async function createConversation(env: Env, body: JsonObject): Promise<Response> {
-  const id = asString(body.id) || randomId("conv");
   const isGroup = body.isGroup === true || body.type === "group";
   const type = isGroup ? "group" : "direct";
   const title = asString(body.title || body.name, "");
   const createdBy = asString(body.createdBy || body.currentUserId || body.userId, "");
-  const memberIds = asStringList(body.memberIds || body.members).concat(createdBy ? [createdBy] : []).filter(Boolean);
+  const targetUserId = asString(body.targetUserId || body.participantId || body.contactUserId, "");
+  const memberIds = asStringList(body.memberIds || body.members)
+    .concat(createdBy ? [createdBy] : [])
+    .concat(targetUserId ? [targetUserId] : [])
+    .filter(Boolean);
   const uniqueMemberIds = [...new Set(memberIds)];
   if (uniqueMemberIds.length === 0) return badRequest("at least one member is required");
+  if (type === "direct" && uniqueMemberIds.length !== 2) {
+    return badRequest("direct conversations require exactly two distinct members");
+  }
+  const directKey = type === "direct" ? directKeyForUsers(uniqueMemberIds) : null;
+  if (type === "direct" && directKey) {
+    const existingId = await findDirectConversationByPair(env, uniqueMemberIds);
+    if (existingId) {
+      const existing = await conversationFor(env, existingId, createdBy || uniqueMemberIds[0]);
+      return json(existing || { id: existingId });
+    }
+  }
+  const id = type === "direct" && directKey
+    ? `direct_${directKey.replace(/[^a-zA-Z0-9_-]/g, "_")}`
+    : asString(body.id) || randomId("conv");
 
   const now = Date.now();
   if (createdBy) {
@@ -1493,13 +1574,14 @@ async function createConversation(env: Env, body: JsonObject): Promise<Response>
 
   await env.DB.prepare(
     `
-      INSERT INTO conversations (id, type, title, created_by, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO conversations (id, type, title, created_by, direct_key, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         title = COALESCE(NULLIF(excluded.title, ''), conversations.title),
+        direct_key = COALESCE(excluded.direct_key, conversations.direct_key),
         updated_at = excluded.updated_at
     `,
-  ).bind(id, type, title || null, createdBy || null, now, now).run();
+  ).bind(id, type, title || null, createdBy || null, directKey, now, now).run();
   for (const memberId of uniqueMemberIds) {
     await env.DB.prepare(
       "INSERT OR IGNORE INTO conversation_members (conversation_id, user_id, role, joined_at) VALUES (?, ?, 'member', ?)",
@@ -1510,6 +1592,11 @@ async function createConversation(env: Env, body: JsonObject): Promise<Response>
     await Promise.all(uniqueMemberIds
       .filter((userId) => userId !== createdBy)
       .map((userId) => broadcastToDurableUser(env, userId, "new_chat", conversation)));
+    await Promise.all(uniqueMemberIds
+      .map(async (userId) => {
+        const payload = await conversationFor(env, id, userId);
+        if (payload) await broadcastToDurableUser(env, userId, "chat_updated", payload);
+      }));
   }
   return json(conversation || { id }, { status: 201 });
 }
@@ -1523,6 +1610,12 @@ async function createMessage(env: Env, conversationId: string, body: JsonObject)
   if (!text.trim() && !asString(body.attachmentId)) return badRequest("text or attachmentId is required");
 
   const now = Date.now();
+  const conversationRow = await env.DB.prepare("SELECT id FROM conversations WHERE id = ?").bind(conversationId).first<any>();
+  if (!conversationRow) return json({ ok: false, error: "Conversation not found" }, { status: 404 });
+  const senderMember = await env.DB.prepare(
+    "SELECT 1 FROM conversation_members WHERE conversation_id = ? AND user_id = ?",
+  ).bind(conversationId, senderId).first<any>();
+  if (!senderMember) return json({ ok: false, error: "Sender is not a conversation member" }, { status: 403 });
   await env.DB.prepare(
     `
       INSERT INTO users (id, display_name, avatar_url, created_at, updated_at)
@@ -1533,10 +1626,6 @@ async function createMessage(env: Env, conversationId: string, body: JsonObject)
         updated_at = excluded.updated_at
     `,
   ).bind(senderId, senderName, senderAvatar || null, now, now).run();
-  await env.DB.prepare(
-    "INSERT OR IGNORE INTO conversation_members (conversation_id, user_id, role, joined_at) VALUES (?, ?, 'member', ?)",
-  ).bind(conversationId, senderId, now).run();
-
   const messageId = asString(body.id) || randomId("msg");
   await env.DB.prepare(
     `
@@ -1562,15 +1651,13 @@ async function createMessage(env: Env, conversationId: string, body: JsonObject)
     status: "sent",
   };
   const memberIds = await conversationMemberIds(env, conversationId);
-  const conversation = await conversationFor(env, conversationId, senderId);
   await Promise.all(memberIds.map((userId) =>
-    broadcastToDurableUser(env, userId, "receive_message", message),
+    userId === senderId ? Promise.resolve() : broadcastToDurableUser(env, userId, "receive_message", message),
   ));
-  if (conversation) {
-    await Promise.all(memberIds.map((userId) =>
-      broadcastToDurableUser(env, userId, "chat_updated", conversation),
-    ));
-  }
+  await Promise.all(memberIds.map(async (userId) => {
+    const payload = await conversationFor(env, conversationId, userId);
+    if (payload) await broadcastToDurableUser(env, userId, "chat_updated", payload);
+  }));
   return json(message, { status: 201 });
 }
 
@@ -1722,6 +1809,115 @@ async function resetCloudDevData(env: Env, request: Request): Promise<Response> 
     deletedR2,
     r2Prefixes: ["chat/", "avatars/"],
     note: "Drive and PC files are not stored in this Worker and were not touched.",
+  });
+}
+
+async function repairDirectConversations(env: Env, request: Request): Promise<Response> {
+  const enabled = env.ENABLE_DEV_RESET === "true";
+  const expectedSecret = env.DEV_RESET_SECRET || "";
+  const providedSecret = request.headers.get("x-dev-reset-secret") || "";
+  if (!enabled || !expectedSecret || providedSecret !== expectedSecret) {
+    return json({ ok: false, error: "Forbidden" }, { status: 403 });
+  }
+
+  await ensureCloudAccountSchema(env);
+  const conversationRows = await env.DB.prepare(
+    `
+      SELECT c.id, c.created_at AS createdAt, c.updated_at AS updatedAt,
+        COUNT(m.id) AS messageCount
+      FROM conversations c
+      LEFT JOIN messages m ON m.conversation_id = c.id
+      WHERE c.type = 'direct'
+      GROUP BY c.id
+    `,
+  ).all<any>();
+  const memberRows = await env.DB.prepare(
+    `
+      SELECT conversation_id AS conversationId, user_id AS userId
+      FROM conversation_members
+      ORDER BY conversation_id, user_id
+    `,
+  ).all<any>();
+  const membersByConversation = new Map<string, string[]>();
+  for (const row of memberRows.results || []) {
+    const list = membersByConversation.get(row.conversationId) || [];
+    list.push(row.userId);
+    membersByConversation.set(row.conversationId, list);
+  }
+
+  const groups = new Map<string, any[]>();
+  for (const row of conversationRows.results || []) {
+    const directKey = directKeyForUsers(membersByConversation.get(row.id) || []);
+    if (!directKey) continue;
+    await env.DB.prepare("UPDATE conversations SET direct_key = ? WHERE id = ?")
+      .bind(directKey, row.id)
+      .run()
+      .catch(() => undefined);
+    const list = groups.get(directKey) || [];
+    list.push({ ...row, directKey });
+    groups.set(directKey, list);
+  }
+
+  let pairsFixed = 0;
+  let conversationsDeleted = 0;
+  let messagesMoved = 0;
+  const details: JsonObject[] = [];
+
+  for (const [directKey, conversations] of groups) {
+    if (conversations.length <= 1) continue;
+    pairsFixed += 1;
+    const sorted = conversations.sort((a, b) => {
+      const byMessages = Number(b.messageCount || 0) - Number(a.messageCount || 0);
+      if (byMessages !== 0) return byMessages;
+      return Number(a.createdAt || 0) - Number(b.createdAt || 0);
+    });
+    const canonical = sorted[0];
+    const duplicates = sorted.slice(1);
+
+    for (const duplicate of duplicates) {
+      const move = await env.DB.prepare("UPDATE messages SET conversation_id = ? WHERE conversation_id = ?")
+        .bind(canonical.id, duplicate.id)
+        .run();
+      messagesMoved += move.meta?.changes || 0;
+      await env.DB.prepare("DELETE FROM conversation_preferences WHERE conversation_id = ?").bind(duplicate.id).run().catch(() => undefined);
+      await env.DB.prepare("DELETE FROM conversation_members WHERE conversation_id = ?").bind(duplicate.id).run();
+      const deleted = await env.DB.prepare("DELETE FROM conversations WHERE id = ?").bind(duplicate.id).run();
+      conversationsDeleted += deleted.meta?.changes || 0;
+    }
+
+    const latest = await env.DB.prepare(
+      `
+        SELECT COALESCE(MAX(created_at), ?) AS updatedAt
+        FROM messages
+        WHERE conversation_id = ?
+      `,
+    ).bind(canonical.updatedAt || Date.now(), canonical.id).first<any>();
+    await env.DB.prepare("UPDATE conversations SET direct_key = ?, updated_at = ? WHERE id = ?")
+      .bind(directKey, latest?.updatedAt || Date.now(), canonical.id)
+      .run();
+    details.push({
+      directKey,
+      canonicalConversationId: canonical.id,
+      deletedConversationIds: duplicates.map((item) => item.id).join(","),
+    });
+  }
+
+  const uniqueIndex = await env.DB.prepare(
+    `
+      CREATE UNIQUE INDEX IF NOT EXISTS ux_conversations_direct_key
+      ON conversations (direct_key)
+      WHERE type = 'direct' AND direct_key IS NOT NULL
+    `,
+  ).run().then(() => true).catch(() => false);
+
+  return json({
+    ok: true,
+    pairsFixed,
+    conversationsDeleted,
+    messagesMoved,
+    uniqueIndex,
+    details,
+    note: "Drive and PC files were not touched.",
   });
 }
 
@@ -1969,6 +2165,10 @@ export default {
       return resetCloudDevData(env, request);
     }
 
+    if (url.pathname === "/api/dev/repair-direct-conversations" && request.method === "POST") {
+      return repairDirectConversations(env, request);
+    }
+
     if (url.pathname.startsWith("/rooms/")) {
       const roomName = decodeURIComponent(url.pathname.split("/")[2] || "default");
       const roomId = env.REALTIME_ROOM.idFromName(roomName);
@@ -2140,6 +2340,10 @@ export default {
 
     if (url.pathname === "/api/chat/conversations" && request.method === "POST") {
       return createConversation(env, await readJson(request));
+    }
+
+    if (url.pathname === "/api/chat/conversations/direct" && request.method === "POST") {
+      return createConversation(env, { ...(await readJson(request)), type: "direct" });
     }
 
     const conversationMessagesMatch = url.pathname.match(/^\/api\/chat\/conversations\/([^/]+)\/messages$/);

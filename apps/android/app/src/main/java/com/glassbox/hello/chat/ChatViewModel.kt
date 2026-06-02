@@ -123,6 +123,7 @@ class ChatViewModel : ViewModel() {
                 _chatsState.value = ResultState.Success(
                     result.getOrNull()
                         .orEmpty()
+                        .dedupeDirectChats(userId)
                         .filter { it.isProfessionalInboxItem(userId) }
                 )
             } else if (!hasCached) {

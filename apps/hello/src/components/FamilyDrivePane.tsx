@@ -13,7 +13,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { deleteDriveItem, fetchDriveItems, uploadDriveFiles } from "../api";
+import { DRIVE_API_BASE, checkDriveHealth, deleteDriveItem, fetchDriveItems, uploadDriveFiles } from "../api";
 import { DriveItem, User } from "../types";
 import { cn } from "../lib/utils";
 import { EmptyState, SkeletonBlock } from "./HelloUi";
@@ -37,6 +37,7 @@ export function FamilyDrivePane({ currentUser, visible }: FamilyDrivePaneProps) 
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState("");
   const [error, setError] = useState("");
+  const [driveOnline, setDriveOnline] = useState<boolean | null>(null);
   const [viewerItem, setViewerItem] = useState<DriveItem | null>(null);
   const [deleteCandidate, setDeleteCandidate] = useState<DriveItem | null>(null);
   const [deletingId, setDeletingId] = useState("");
@@ -62,6 +63,25 @@ export function FamilyDrivePane({ currentUser, visible }: FamilyDrivePaneProps) 
     localStorage.setItem(favoritesKey, JSON.stringify(Array.from(favoriteIds)));
   }, [favoriteIds, favoritesKey]);
 
+  const offlineUploadMessage = "PC Drive is offline. Drive upload is unavailable while the PC connection is offline.";
+
+  const refreshDriveHealth = useCallback(async () => {
+    try {
+      const health = await checkDriveHealth();
+      setDriveOnline(Boolean(health.ok));
+    } catch {
+      setDriveOnline(false);
+    }
+  }, []);
+
+  const openUploadPicker = useCallback(() => {
+    if (driveOnline === false) {
+      setError(offlineUploadMessage);
+      return;
+    }
+    fileInputRef.current?.click();
+  }, [driveOnline]);
+
   const loadItems = useCallback(async (mode: "refresh" | "more" = "refresh") => {
     if (mode === "more") {
       if (!hasMore || !nextCursor || loadingMore) return;
@@ -73,6 +93,7 @@ export function FamilyDrivePane({ currentUser, visible }: FamilyDrivePaneProps) 
 
     try {
       const response = await fetchDriveItems(60, mode === "more" ? nextCursor : null);
+      setDriveOnline(true);
       setTotal(response.total);
       setNextCursor(response.nextCursor);
       setHasMore(response.hasMore);
@@ -81,6 +102,7 @@ export function FamilyDrivePane({ currentUser, visible }: FamilyDrivePaneProps) 
         return Array.from(new Map(nextItems.map((item) => [item.id, item])).values());
       });
     } catch (err) {
+      setDriveOnline(false);
       setError(err instanceof Error ? err.message : "Drive could not load");
     } finally {
       setLoading(false);
@@ -90,9 +112,10 @@ export function FamilyDrivePane({ currentUser, visible }: FamilyDrivePaneProps) 
 
   useEffect(() => {
     if (visible && items.length === 0 && !loading) {
+      void refreshDriveHealth();
       void loadItems("refresh");
     }
-  }, [items.length, loadItems, loading, visible]);
+  }, [items.length, loadItems, loading, refreshDriveHealth, visible]);
 
   const groups = useMemo(() => {
     return items.reduce<Record<string, DriveItem[]>>((acc, item) => {
@@ -106,17 +129,23 @@ export function FamilyDrivePane({ currentUser, visible }: FamilyDrivePaneProps) 
   const uploadFiles = async (files: File[]) => {
     const mediaFiles = files.filter((file) => file.type.startsWith("image/") || file.type.startsWith("video/"));
     if (!mediaFiles.length || uploading) return;
+    if (driveOnline === false) {
+      setError(offlineUploadMessage);
+      return;
+    }
 
     setUploading(true);
     setUploadProgress(`Uploading ${mediaFiles.length} item${mediaFiles.length === 1 ? "" : "s"}...`);
     setError("");
     try {
       await uploadDriveFiles(mediaFiles, currentUser.id);
+      setDriveOnline(true);
       setUploadProgress("Upload complete");
       setView("all");
       await loadItems("refresh");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Upload failed");
+      setDriveOnline(false);
+      setError(offlineUploadMessage);
     } finally {
       window.setTimeout(() => {
         setUploading(false);
@@ -201,8 +230,9 @@ export function FamilyDrivePane({ currentUser, visible }: FamilyDrivePaneProps) 
         <DriveHome
           total={total}
           loading={loading}
-          onUpload={() => fileInputRef.current?.click()}
+          onUpload={openUploadPicker}
           onOpenAll={() => setView("all")}
+          driveOnline={driveOnline}
         />
       ) : (
         <DriveLibrary
@@ -214,9 +244,10 @@ export function FamilyDrivePane({ currentUser, visible }: FamilyDrivePaneProps) 
           onRefresh={() => loadItems("refresh")}
           onScroll={handleScroll}
           onOpenItem={setViewerItem}
-          onUpload={() => fileInputRef.current?.click()}
+          onUpload={openUploadPicker}
           favoriteIds={favoriteIds}
           onToggleFavorite={toggleFavorite}
+          driveOnline={driveOnline}
         />
       )}
 
@@ -255,11 +286,13 @@ function DriveHome({
   loading,
   onUpload,
   onOpenAll,
+  driveOnline,
 }: {
   total: number;
   loading: boolean;
   onUpload: () => void;
   onOpenAll: () => void;
+  driveOnline: boolean | null;
 }) {
   return (
     <div className="relative z-20 flex h-full flex-col px-5 py-6">
@@ -268,11 +301,22 @@ function DriveHome({
       <p className="mt-3 text-sm leading-6 text-[var(--hello-text-muted)]">
         All our family memories in one place.
       </p>
+      <p className={cn(
+        "mt-3 rounded-[14px] px-3 py-2 text-xs font-bold",
+        driveOnline === false
+          ? "bg-red-500/10 text-[var(--hello-danger)]"
+          : "bg-[var(--hello-accent-soft)] text-[var(--hello-accent)]",
+      )}>
+        {driveOnline === false
+          ? "PC Drive is offline. Drive upload is unavailable while the PC connection is offline."
+          : "PC Drive is online through Cloudflare Tunnel."}
+      </p>
 
       <button
         type="button"
         onClick={onUpload}
-        className="mt-7 flex w-full items-center justify-center gap-3 rounded-[18px] bg-[var(--hello-accent)] px-4 py-4 text-sm font-extrabold text-white shadow-[0_18px_38px_rgba(15,143,120,0.28)] transition hover:bg-[var(--hello-accent-strong)]"
+        disabled={driveOnline === false}
+        className="mt-7 flex w-full items-center justify-center gap-3 rounded-[18px] bg-[var(--hello-accent)] px-4 py-4 text-sm font-extrabold text-white shadow-[0_18px_38px_rgba(15,143,120,0.28)] transition hover:bg-[var(--hello-accent-strong)] disabled:cursor-not-allowed disabled:opacity-50"
       >
         <CloudUpload className="h-5 w-5" />
         Upload Photos
@@ -319,6 +363,7 @@ function DriveLibrary({
   onUpload,
   favoriteIds,
   onToggleFavorite,
+  driveOnline,
 }: {
   groups: Record<string, DriveItem[]>;
   total: number;
@@ -331,6 +376,7 @@ function DriveLibrary({
   onUpload: () => void;
   favoriteIds: Set<string>;
   onToggleFavorite: (itemId: string) => void;
+  driveOnline: boolean | null;
 }) {
   const hasItems = Object.keys(groups).length > 0;
 
@@ -360,8 +406,17 @@ function DriveLibrary({
       </div>
 
       <div className="flex items-center justify-between px-5 py-3 text-xs text-[var(--hello-text-muted)]">
-        <span>Grouped by month</span>
-        <button type="button" onClick={onUpload} className="font-bold text-[var(--hello-accent)]">
+        <span>
+          {driveOnline === false
+            ? "PC Drive offline - uploads unavailable"
+            : "Grouped by month"}
+        </span>
+        <button
+          type="button"
+          onClick={onUpload}
+          disabled={driveOnline === false}
+          className="font-bold text-[var(--hello-accent)] disabled:cursor-not-allowed disabled:opacity-50"
+        >
           Upload
         </button>
       </div>
@@ -382,7 +437,8 @@ function DriveLibrary({
               <button
                 type="button"
                 onClick={onUpload}
-                className="rounded-full bg-[var(--hello-accent)] px-4 py-2 text-xs font-bold text-white"
+                disabled={driveOnline === false}
+                className="rounded-full bg-[var(--hello-accent)] px-4 py-2 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-50"
               >
                 Upload Now
               </button>
@@ -637,7 +693,10 @@ function ErrorBanner({ message, onClose }: { message: string; onClose: () => voi
 function resolveDriveUrl(value: string) {
   if (!value) return "";
   if (value.startsWith("http://") || value.startsWith("https://") || value.startsWith("data:")) return value;
-  return value.startsWith("/") ? value : `/${value}`;
+  const path = value.startsWith("/") ? value : `/${value}`;
+  if (path.startsWith("/hello/api/drive/")) return `${DRIVE_API_BASE}${path.slice("/hello/api".length)}`;
+  if (path.startsWith("/api/drive/")) return `${DRIVE_API_BASE}${path.slice("/api".length)}`;
+  return path;
 }
 
 function isVideo(item: DriveItem) {

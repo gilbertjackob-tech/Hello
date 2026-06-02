@@ -11,24 +11,21 @@ data class NetworkProbeResult(
     val detail: String
 )
 
-fun checkHelloNetwork(): NetworkProbeResult {
-    val statusProbe = probeJsonOk(AppConfig.HELLO_STATUS_URL)
-    if (statusProbe.status == NetworkStatus.Connected) {
-        return statusProbe.copy(detail = "${statusProbe.detail}\n${AppConfig.HELLO_STATUS_URL}")
-    }
+fun checkHelloNetwork(): NetworkProbeResult = checkPcDriveNetwork()
 
-    val healthProbe = probeJsonOk(AppConfig.HELLO_HEALTH_URL)
+fun checkPcDriveNetwork(): NetworkProbeResult {
+    val healthProbe = probeJsonOk(AppConfig.DRIVE_HEALTH_URL)
     if (healthProbe.status == NetworkStatus.Connected) {
         return healthProbe.copy(
             status = NetworkStatus.HelloApiReachable,
-            detail = "Status failed: ${statusProbe.detail}\nHealth succeeded: ${healthProbe.detail}"
+            detail = "PC Drive health succeeded: ${healthProbe.detail}"
         )
     }
 
     return NetworkProbeResult(
         status = NetworkStatus.Offline,
-        checkedUrl = "${AppConfig.HELLO_STATUS_URL}\n${AppConfig.HELLO_HEALTH_URL}",
-        detail = "Status failed: ${statusProbe.detail}\nHealth failed: ${healthProbe.detail}"
+        checkedUrl = AppConfig.DRIVE_HEALTH_URL,
+        detail = "PC Drive health failed: ${healthProbe.detail}"
     )
 }
 

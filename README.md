@@ -28,16 +28,10 @@ Hello web app:  http://127.0.0.1:3000/hello
 Hello status:   http://127.0.0.1:3000/api/hello/status
 ```
 
-For phone browser access through Tailscale:
-
-```powershell
-tailscale serve --bg 3000
-```
-
-Then open:
+For PC Drive access from mobile/web, run the PC backend and Cloudflare Tunnel, then open:
 
 ```text
-https://desktop-8u23cj0.tail69a9e8.ts.net/hello
+https://home.bookhelloctg.com/hello
 ```
 
 ## Common Commands
@@ -408,7 +402,7 @@ API_BASE                 VITE_HELLO_API_BASE || "/hello/api"
 CHAT_CLOUD_BASE_URL     VITE_CHAT_CLOUD_BASE_URL || "https://chat.bookhelloctg.com"
 CHAT_CLOUD_FALLBACK_URL VITE_CHAT_CLOUD_FALLBACK_URL || "https://hello-chat-worker.gilbert-jackob3.workers.dev"
 CALL_API_BASE           VITE_CALL_API_BASE || "https://chat.bookhelloctg.com/api"
-DRIVE_API_BASE          VITE_DRIVE_API_BASE || "/hello/api"
+DRIVE_API_BASE          VITE_DRIVE_API_BASE || "https://home.bookhelloctg.com/hello/api"
 VITE_ENABLE_PC_SOCKET   false by default; true enables /hello/socket.io
 ```
 
@@ -422,7 +416,7 @@ localhost
 3420
 ```
 
-Use relative paths for PC-backed app calls so the same build works in Electron, PC browser, and Tailscale HTTPS.
+Use Cloudflare-backed URLs for chat/auth/calls and the PC Drive tunnel URL for Drive. Local development may override Drive with `VITE_DRIVE_API_BASE=http://127.0.0.1:3000/hello/api`.
 
 ## Camera, Microphone, And Calls
 
@@ -449,8 +443,7 @@ Allowed trusted Hello origins:
 ```text
 http://127.0.0.1:3000/hello
 http://localhost:3000/hello
-https://*.ts.net/hello
-https://*.tailnet.ts.net/hello
+https://home.bookhelloctg.com/hello
 ```
 
 Do not allow camera/mic for arbitrary BrowserView tabs. The tab permission handler must deny permissions unless the requesting URL is trusted Hello.
@@ -497,7 +490,7 @@ Common call test matrix:
    Settings -> Camera / Microphone -> Test Camera/Mic
 
 3. Phone browser:
-   Open https://desktop-8u23cj0.tail69a9e8.ts.net/hello
+   Open https://home.bookhelloctg.com/hello
    Settings -> Camera / Microphone -> Test Camera/Mic
 
 4. Direct call:
@@ -622,11 +615,12 @@ apps/android/app/src/main/java/com/glassbox/hello/core/AppConfig.kt
 Current Android network targets:
 
 ```text
-SERVER_ORIGIN                 https://desktop-8u23cj0.tail69a9e8.ts.net
+SERVER_ORIGIN                 https://home.bookhelloctg.com
 CHAT_CLOUD_BASE_URL           https://chat.bookhelloctg.com
 CHAT_CLOUD_FALLBACK_URL       https://hello-chat-worker.gilbert-jackob3.workers.dev
-HELLO_API_BASE                SERVER_ORIGIN/hello/api
-DRIVE_API_BASE                SERVER_ORIGIN/hello/api
+CHAT_API_BASE                 https://chat.bookhelloctg.com/api
+CALL_API_BASE                 https://chat.bookhelloctg.com/api
+DRIVE_API_BASE                https://home.bookhelloctg.com/hello/api
 HELLO_WEB_URL                 SERVER_ORIGIN/hello
 ENABLE_PC_CALL_SIGNALING      false
 ```
@@ -853,8 +847,8 @@ Before merging future updates:
    npm run build
    .\gradlew.bat :app:assembleDebug --console=plain
 
-10. For mobile/Tailscale changes, verify:
-    https://desktop-8u23cj0.tail69a9e8.ts.net/hello
+10. For mobile PC Drive changes, verify:
+    https://home.bookhelloctg.com/hello/api/drive/health
 ```
 
 When resolving merge conflicts, protect these contracts first:
@@ -955,9 +949,9 @@ Check apps/hello/server.ts still registers /api/files/:fileId when basePath is /
 Phone cannot connect to PC features:
 
 ```text
-Use the Tailscale HTTPS URL, not localhost.
+Use the Cloudflare Tunnel HTTPS URL, not localhost.
 Phone localhost means the phone itself, not the PC.
-Verify Tailscale Serve forwards to local 127.0.0.1:3000.
+Verify Cloudflare Tunnel forwards `home.bookhelloctg.com` to local 127.0.0.1:3000.
 Drive requires the PC backend to be reachable.
 ```
 
