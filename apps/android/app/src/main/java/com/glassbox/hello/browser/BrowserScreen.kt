@@ -111,6 +111,7 @@ import com.glassbox.hello.ui.components.HelloFilterChip
 import com.glassbox.hello.ui.components.HelloIconButton
 import com.glassbox.hello.ui.components.HelloListItem
 import com.glassbox.hello.ui.components.HelloPanel
+import com.glassbox.hello.ui.theme.HelloAppThemes
 import com.glassbox.hello.ui.theme.HelloColors
 import com.glassbox.hello.ui.theme.HelloShapes
 import com.glassbox.hello.ui.theme.HelloSpacing
@@ -1486,16 +1487,17 @@ private fun BrowserToolsSheet(
         }
 
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(HelloSpacing.Sm),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text("Theme", color = HelloColors.DarkText, fontWeight = FontWeight.Medium)
-            listOf("system", "light", "dark").forEach { mode ->
+            val selectedTheme = HelloAppThemes.normalizeId(themeMode)
+            HelloAppThemes.All.forEach { palette ->
                 HelloFilterChip(
-                    label = mode.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() },
-                    active = themeMode.equals(mode, ignoreCase = true),
-                    onClick = { onSetThemeMode(mode) },
+                    label = palette.label,
+                    active = selectedTheme == palette.id,
+                    onClick = { onSetThemeMode(palette.id) },
                     dark = true
                 )
             }

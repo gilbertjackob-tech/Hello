@@ -19,8 +19,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -33,6 +31,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.glassbox.hello.chat.ChatModels
+import com.glassbox.hello.ui.components.DateSeparator
+import com.glassbox.hello.ui.components.ScrollToBottomFab
 import com.glassbox.hello.ui.theme.HelloColors
 import com.glassbox.hello.ui.theme.HelloShapes
 import com.glassbox.hello.ui.theme.HelloSpacing
@@ -122,17 +122,11 @@ fun ChatMessageList(
                 .align(Alignment.BottomEnd)
                 .padding(end = HelloSpacing.Lg, bottom = HelloSpacing.Lg)
         ) {
-            Box(
-                modifier = Modifier
-                    .size(44.dp)
-                    .clip(CircleShape)
-                    .background(HelloColors.DarkPanelStrong)
-                    .border(1.dp, HelloColors.DarkBorderStrong, CircleShape)
-                    .clickable(onClick = onJumpToLatest),
-                contentAlignment = Alignment.Center
-            ) {
-                androidx.compose.material3.Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Jump to latest", tint = HelloColors.DarkAccent)
-            }
+            ScrollToBottomFab(
+                visible = true,
+                unreadBelow = unreadCount,
+                onClick = onJumpToLatest
+            )
         }
     }
 }
@@ -159,22 +153,10 @@ private fun OlderMessagesRow(isLoading: Boolean) {
 
 @Composable
 private fun DateDivider(label: String) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = HelloSpacing.Sm),
-        horizontalArrangement = Arrangement.Center
-    ) {
-        Text(
-            text = label,
-            color = HelloColors.DarkTextMuted,
-            style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
-            modifier = Modifier
-                .clip(HelloShapes.Pill)
-                .background(HelloColors.DarkPanelMuted.copy(alpha = 0.92f))
-                .padding(horizontal = 12.dp, vertical = 6.dp)
-        )
-    }
+    DateSeparator(
+        label = label,
+        modifier = Modifier.padding(vertical = HelloSpacing.Sm)
+    )
 }
 
 @Composable

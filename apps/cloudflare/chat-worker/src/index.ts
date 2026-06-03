@@ -15,6 +15,8 @@ export interface Env {
   FCM_SERVICE_ACCOUNT_JSON?: string;
 }
 
+import * as statusApi from "./status";
+
 type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
 type JsonObject = { [key: string]: JsonValue };
 
@@ -586,6 +588,20 @@ async function fetchUserAvatar(env: Env, userId: string): Promise<Response> {
   headers.set("cache-control", "public, max-age=3600");
   headers.set("access-control-allow-origin", "*");
   return new Response(object.body, { headers });
+}
+
+async function fetchThemeAsset(env: Env, fileName: string, headOnly = false): Promise<Response> {
+  const safeName = fileName.replace(/[^a-z0-9_.-]/gi, "").toLowerCase();
+  if (!safeName || !safeName.endsWith(".png")) return notFound(`/api/theme-assets/${fileName}`);
+  const key = `themes/${safeName}`;
+  const object = await env.TEMP_FILES.get(key);
+  if (!object) return notFound(`/api/theme-assets/${safeName}`);
+  const headers = new Headers();
+  object.writeHttpMetadata(headers);
+  headers.set("content-type", headers.get("content-type") || "image/png");
+  headers.set("cache-control", "public, max-age=31536000, immutable");
+  headers.set("access-control-allow-origin", "*");
+  return new Response(headOnly ? null : object.body, { headers });
 }
 
 async function conversationFor(env: Env, conversationId: string, viewerId?: string): Promise<JsonObject | null> {
@@ -2934,6 +2950,11 @@ export default {
       return fetchUserAvatar(env, decodeURIComponent(cloudAvatarMatch[1]));
     }
 
+    const themeAssetMatch = url.pathname.match(/^\/api\/theme-assets\/([^/]+)$/);
+    if (themeAssetMatch && (request.method === "GET" || request.method === "HEAD")) {
+      return fetchThemeAsset(env, decodeURIComponent(themeAssetMatch[1]), request.method === "HEAD");
+    }
+
     if (url.pathname === "/api/contacts" && request.method === "GET") {
       return listContacts(env, request);
     }
@@ -2961,6 +2982,71 @@ export default {
 
     if (url.pathname === "/api/calls/start" && request.method === "POST") {
       return startCall(env, request);
+    }
+
+    if (url.pathname === "/api/statuses" && request.method === "GET") {
+      return statusApi.getLegacyStatuses(env, url);
+    }
+
+    if (url.pathname === "/api/statuses" && request.method === "POST") {
+      return statusApi.createLegacyStatus(env, request);
+    }
+
+    const legacyStatusViewMatch = url.pathname.match(/^\/api\/statuses\/([^/]+)\/view$/);
+    if (legacyStatusViewMatch && request.method === "POST") {
+      return statusApi.viewLegacyStatus(env, request, decodeURIComponent(legacyStatusViewMatch[1]));
+    }
+
+    if (url.pathname === "/api/files/upload" && request.method === "POST") {
+      return uploadAttachment(env, request);
+    }
+
+    if (url.pathname === "/api/status/feed" && request.method === "GET") {
+      const auth = await requireAuth(env, request);
+      if (auth instanceof Response) return auth;
+      return statusApi.getStatusFeed(env, url, auth);
+    }
+
+    if (url.pathname === "/api/status/media" && request.method === "POST") {
+      const auth = await requireAuth(env, request);
+      if (auth instanceof Response) return auth;
+      return statusApi.uploadStatusMedia(env, request, auth);
+    }
+
+    if (url.pathname === "/api/status" && request.method === "POST") {
+      const auth = await requireAuth(env, request);
+      if (auth instanceof Response) return auth;
+      return statusApi.createStatus(env, request, auth);
+    }
+
+    const statusActionMatch = url.pathname.match(/^\/api\/status\/([^/]+)\/(view|react|reply)$/);
+    if (statusActionMatch && request.method === "POST") {
+      const auth = await requireAuth(env, request);
+      if (auth instanceof Response) return auth;
+      const statusId = decodeURIComponent(statusActionMatch[1]);
+      const action = statusActionMatch[2];
+      if (action === "view") return statusApi.viewStatus(env, request, auth, statusId);
+      if (action === "react") return statusApi.reactStatus(env, request, auth, statusId);
+      return statusApi.replyStatus(env, request, auth, statusId);
+    }
+
+    const statusDeleteMatch = url.pathname.match(/^\/api\/status\/([^/]+)$/);
+    if (statusDeleteMatch && request.method === "DELETE") {
+      const auth = await requireAuth(env, request);
+      if (auth instanceof Response) return auth;
+      return statusApi.deleteStatus(env, request, auth, decodeURIComponent(statusDeleteMatch[1]));
+    }
+
+    if (url.pathname === "/api/status/archive/pending" && request.method === "GET") {
+      const auth = await requireAuth(env, request);
+      if (auth instanceof Response) return auth;
+      return statusApi.getArchivePending(env, url, auth);
+    }
+
+    if (url.pathname === "/api/status/archive/ack" && request.method === "POST") {
+      const auth = await requireAuth(env, request);
+      if (auth instanceof Response) return auth;
+      return statusApi.ackArchive(env, request, auth);
     }
 
     if (url.pathname === "/api/calls/group/start" && request.method === "POST") {

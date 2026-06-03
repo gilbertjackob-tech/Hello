@@ -1,6 +1,5 @@
 package com.glassbox.hello.ui.theme
 
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
@@ -8,56 +7,56 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.graphics.Color
 
-private val DarkColorScheme = darkColorScheme(
-    primary = HelloMint,
-    onPrimary = Color(0xFF062F31),
-    primaryContainer = Color(0xFF17484D),
-    onPrimaryContainer = HelloDarkText,
-    secondary = Color(0xFFF0B35A),
-    onSecondary = Color.White,
-    background = HelloDarkBackground,
-    onBackground = HelloDarkText,
-    surface = HelloDarkSurface,
-    onSurface = HelloDarkText,
-    surfaceVariant = HelloDarkSurfaceAlt,
-    onSurfaceVariant = HelloMutedText,
-    outline = Color(0xFF70818B),
-    error = Color(0xFFFF7A8A)
-)
-
-private val LightColorScheme = lightColorScheme(
-    primary = HelloGreenDark,
-    onPrimary = Color.White,
-    primaryContainer = Color(0xFFCFEFEB),
-    onPrimaryContainer = Color(0xFF07383D),
-    secondary = Color(0xFFB7652C),
-    onSecondary = Color.White,
-    background = HelloLightBackground,
-    onBackground = HelloLightText,
-    surface = HelloLightSurface,
-    onSurface = HelloLightText,
-    surfaceVariant = Color(0xFFE7ECEB),
-    onSurfaceVariant = Color(0xFF5D6878),
-    outline = Color(0xFF7C898D),
-    error = Color(0xFFC44D58)
-)
-
 @Composable
 fun HelloTheme(
-    themeMode: String = "system",
+    themeMode: String = HelloAppThemes.DefaultId,
     content: @Composable (Boolean) -> Unit
 ) {
-    val darkTheme = when (themeMode.lowercase()) {
-        "dark" -> true
-        "light" -> false
-        else -> isSystemInDarkTheme()
+    val palette = HelloAppThemes.byId(themeMode)
+    val scheme = if (palette.isDark) {
+        darkColorScheme(
+            primary = palette.accent,
+            onPrimary = if (palette.id == "ember") Color(0xFF1B1002) else Color(0xFF001A14),
+            primaryContainer = palette.outgoing,
+            onPrimaryContainer = palette.outgoingText,
+            secondary = palette.warm,
+            onSecondary = if (palette.id == "arctic") Color.White else Color(0xFF111827),
+            background = palette.bgDeep,
+            onBackground = palette.text,
+            surface = palette.surface,
+            onSurface = palette.text,
+            surfaceVariant = palette.elevated,
+            onSurfaceVariant = palette.textSecondary,
+            outline = palette.borderStrong,
+            error = palette.danger
+        )
+    } else {
+        lightColorScheme(
+            primary = palette.accent,
+            onPrimary = Color.White,
+            primaryContainer = palette.accentSoft,
+            onPrimaryContainer = palette.accentStrong,
+            secondary = palette.warm,
+            onSecondary = Color.White,
+            background = palette.bgDeep,
+            onBackground = palette.text,
+            surface = palette.surface,
+            onSurface = palette.text,
+            surfaceVariant = palette.elevated,
+            onSurfaceVariant = palette.textSecondary,
+            outline = palette.borderStrong,
+            error = palette.danger
+        )
     }
+
     SideEffect {
-        HelloThemeRuntime.darkMode.value = darkTheme
+        HelloThemeRuntime.activePalette.value = palette
+        HelloThemeRuntime.darkMode.value = palette.isDark
     }
+
     MaterialTheme(
-        colorScheme = if (darkTheme) DarkColorScheme else LightColorScheme,
+        colorScheme = scheme,
         typography = HelloTypography.MaterialTypography,
-        content = { content(darkTheme) }
+        content = { content(palette.isDark) }
     )
 }

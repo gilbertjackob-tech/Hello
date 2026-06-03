@@ -1,6 +1,7 @@
 package com.glassbox.hello.ui.components
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -15,6 +16,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
@@ -22,6 +24,7 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.InsertDriveFile
 import androidx.compose.material3.CircularProgressIndicator
@@ -37,9 +40,11 @@ import androidx.compose.material3.TextButton
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
@@ -56,6 +61,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.layout.ContentScale
 import com.glassbox.hello.core.UrlResolver
 import com.glassbox.hello.ui.theme.HelloColors
+import com.glassbox.hello.ui.theme.HelloDimens
+import com.glassbox.hello.ui.theme.HelloMotion
 import com.glassbox.hello.ui.theme.HelloShapes
 import com.glassbox.hello.ui.theme.HelloSpacing
 
@@ -213,9 +220,9 @@ fun HelloSearchBar(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .clip(HelloShapes.Lg)
-            .background(if (dark) HelloColors.DarkPanelStrong else HelloColors.PanelStrong)
-            .border(1.dp, if (dark) HelloColors.DarkBorder else HelloColors.Border, HelloShapes.Lg)
+            .clip(HelloShapes.Pill)
+            .background(if (dark) HelloColors.GlassBgMedium else HelloColors.PanelStrong)
+            .border(1.dp, if (dark) HelloColors.GlassBorderStrong else HelloColors.Border, HelloShapes.Pill)
             .padding(horizontal = HelloSpacing.InputHorizontal, vertical = HelloSpacing.InputVertical),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -258,18 +265,23 @@ fun HelloFilterChip(
     count: Int? = null,
     dark: Boolean = true
 ) {
+    val scale by animateFloatAsState(
+        targetValue = if (active) 1f else 0.97f,
+        animationSpec = HelloMotion.SpringSnappy,
+        label = "helloFilterChipScale"
+    )
     val bg = if (active) {
-        if (dark) HelloColors.DarkAccent else HelloColors.Accent
+        if (dark) HelloColors.TealDeep else HelloColors.Accent
     } else {
-        if (dark) HelloColors.DarkPanelMuted else HelloColors.PanelMuted
+        if (dark) HelloColors.GlassBg else HelloColors.PanelMuted
     }
-    val fg = if (active) Color.White else if (dark) HelloColors.DarkTextMuted else HelloColors.TextMuted
+    val fg = if (active) HelloColors.TextOnTeal else if (dark) HelloColors.TextSecondary else HelloColors.TextMuted
     Surface(
         onClick = onClick,
-        modifier = modifier,
+        modifier = modifier.scale(scale),
         shape = HelloShapes.Pill,
         color = bg,
-        border = BorderStroke(1.dp, if (active) Color.Transparent else if (dark) HelloColors.DarkBorder else HelloColors.Border)
+        border = BorderStroke(1.dp, if (active) HelloColors.TealPrimary else if (dark) HelloColors.GlassBorder else HelloColors.Border)
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
@@ -296,17 +308,19 @@ fun HelloFilterChip(
 fun HelloAvatar(
     name: String,
     modifier: Modifier = Modifier,
-    size: Dp = HelloSpacing.Avatar,
+    size: Dp = HelloDimens.AvatarM,
     online: Boolean = false,
     dark: Boolean = true,
     imageUrl: String? = null
 ) {
-    Box(modifier = modifier.size(size)) {
+    val dotSize = (size.value * 0.28f).dp
+    Box(modifier = modifier.size(size + dotSize / 4)) {
         Box(
             modifier = Modifier
-                .fillMaxSize()
+                .size(size)
                 .clip(CircleShape)
-                .background(if (dark) HelloColors.MessageOtherDark else Color(0xFFE2E8F0)),
+                .background(HelloColors.BgElevated)
+                .border(1.dp, HelloColors.GlassBorder, CircleShape),
             contentAlignment = Alignment.Center
         ) {
             val resolved = UrlResolver.resolve(imageUrl)
@@ -331,11 +345,18 @@ fun HelloAvatar(
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
-                    .size(12.dp)
+                    .size(dotSize)
                     .clip(CircleShape)
-                    .background(Color(0xFF10B981))
-                    .border(2.dp, if (dark) HelloColors.AuthPanel else Color.White, CircleShape)
-            )
+                    .background(HelloColors.BgDeep)  // gap ring
+                    .padding(2.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clip(CircleShape)
+                        .background(HelloColors.OnlineGreen)
+                )
+            }
         }
     }
 }
@@ -345,7 +366,8 @@ private fun AvatarInitial(name: String, dark: Boolean) {
     Text(
         text = name.firstOrNull()?.uppercaseChar()?.toString().orEmpty(),
         color = if (dark) HelloColors.DarkTextMuted else HelloColors.Text,
-        style = MaterialTheme.typography.titleSmall
+        style = MaterialTheme.typography.titleSmall,
+        fontWeight = FontWeight.Bold
     )
 }
 
@@ -361,16 +383,23 @@ fun HelloChatCard(
     avatarUrl: String? = null,
     online: Boolean = false
 ) {
-    HelloPanel(
-        modifier = modifier.fillMaxWidth(),
-        dark = dark,
-        strong = true,
-        shape = HelloShapes.Lg
+    val pressScale by animateFloatAsState(
+        targetValue = if (active) 1f else 0.985f,
+        animationSpec = HelloMotion.SpringSnappy,
+        label = "chatCardScale"
+    )
+    GlassCard(
+        modifier = modifier
+            .fillMaxWidth()
+            .scale(pressScale),
+        cornerRadius = HelloDimens.CornerL,
+        bgAlpha = if (dark) HelloColors.GlassBg else HelloColors.PanelStrong,
+        borderColor = if (active) HelloColors.TealPrimary else HelloColors.GlassBorder
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = HelloSpacing.Lg, vertical = HelloSpacing.Md),
+            modifier = Modifier.padding(horizontal = HelloDimens.SpaceL, vertical = HelloDimens.SpaceM),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(HelloSpacing.Md)
+            horizontalArrangement = Arrangement.spacedBy(HelloDimens.SpaceM)
         ) {
             HelloAvatar(name = title, dark = dark, imageUrl = avatarUrl, online = online)
             Column(modifier = Modifier.weight(1f)) {
@@ -381,13 +410,14 @@ fun HelloChatCard(
                         style = MaterialTheme.typography.titleSmall,
                         color = if (dark) HelloColors.DarkText else HelloColors.Text,
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        overflow = TextOverflow.Ellipsis,
+                        fontWeight = FontWeight.Bold
                     )
                     Text(
                         time,
                         style = MaterialTheme.typography.labelSmall,
                         color = if (unreadCount > 0 || active) {
-                            if (dark) HelloColors.DarkAccent else HelloColors.Accent
+                            HelloColors.TealPrimary
                         } else if (dark) HelloColors.DarkTextMuted else HelloColors.TextMuted
                     )
                 }
@@ -396,26 +426,19 @@ fun HelloChatCard(
                     subtitle,
                     style = MaterialTheme.typography.bodyMedium,
                     color = if (active) {
-                        if (dark) HelloColors.DarkAccent else HelloColors.Accent
+                        HelloColors.TealLight
                     } else if (dark) HelloColors.DarkTextMuted else HelloColors.TextMuted,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
             }
             if (unreadCount > 0) {
-                Text(
-                    text = unreadCount.toString(),
-                    color = Color.White,
-                    style = MaterialTheme.typography.labelSmall,
-                    modifier = Modifier
-                        .clip(HelloShapes.Pill)
-                        .background(if (dark) HelloColors.DarkAccent else HelloColors.Accent)
-                        .padding(horizontal = 8.dp, vertical = 3.dp)
-                )
+                UnreadBadge(count = unreadCount)
             }
         }
     }
 }
+
 
 @Composable
 fun HelloMessageBubble(
@@ -615,18 +638,32 @@ fun HelloBottomNav(
     dark: Boolean = true,
     content: @Composable RowScope.() -> Unit
 ) {
-    HelloPanel(
+    Box(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = HelloSpacing.Lg, vertical = HelloSpacing.Sm),
-        strong = true,
-        dark = dark,
-        shape = HelloShapes.HeaderPanel
+            .background(
+                Brush.verticalGradient(
+                    listOf(
+                        Color.Transparent,
+                        if (dark) HelloColors.BgBase.copy(alpha = 0.95f) else HelloColors.Bg.copy(alpha = 0.95f)
+                    )
+                )
+            )
+            .padding(
+                start = HelloDimens.SpaceL,
+                end = HelloDimens.SpaceL,
+                top = 8.dp,
+                bottom = 12.dp
+            )
     ) {
         Row(
             modifier = Modifier
-                .height(HelloSpacing.BottomRailHeight)
-                .padding(horizontal = HelloSpacing.Sm),
+                .height(HelloDimens.BottomNavHeight)
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(HelloDimens.CornerXL))
+                .background(HelloColors.GlassBgMedium)
+                .border(0.5.dp, HelloColors.GlassBorder, RoundedCornerShape(HelloDimens.CornerXL))
+                .padding(horizontal = HelloDimens.SpaceM),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceAround,
             content = content

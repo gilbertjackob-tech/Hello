@@ -7,16 +7,32 @@ import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
+import com.glassbox.hello.R
+import com.glassbox.hello.core.AppConfig
 
 object HelloWallpapers {
     const val Default = "default"
     const val None = "none"
+    const val ThemeMidnight = "theme midnight"
+    const val ThemeAmoled = "theme amoled"
+    const val ThemeTwilight = "theme twilight"
+    const val ThemeEmber = "theme ember"
+    const val ThemeArctic = "theme arctic"
+    const val ThemeDusk = "theme dusk"
+    const val ThemeLight = "theme light"
+    const val ThemeDark = "theme dark"
     const val SilkGlow = "silk glow"
     const val PaperGrain = "paper grain"
     const val Aurora = "aurora"
@@ -29,6 +45,14 @@ object HelloWallpapers {
 
     val Options = listOf(
         Default,
+        ThemeMidnight,
+        ThemeAmoled,
+        ThemeTwilight,
+        ThemeEmber,
+        ThemeArctic,
+        ThemeDusk,
+        ThemeLight,
+        ThemeDark,
         SilkGlow,
         PaperGrain,
         Aurora,
@@ -56,10 +80,18 @@ fun ChatWallpaperBackground(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(if (dark) HelloColors.DarkBg else HelloColors.Bg)
+            .background(Color.Transparent)
     ) {
         when (normalized) {
             HelloWallpapers.None -> Unit
+            HelloWallpapers.ThemeMidnight,
+            HelloWallpapers.ThemeAmoled,
+            HelloWallpapers.ThemeTwilight,
+            HelloWallpapers.ThemeEmber,
+            HelloWallpapers.ThemeArctic,
+            HelloWallpapers.ThemeDusk,
+            HelloWallpapers.ThemeLight,
+            HelloWallpapers.ThemeDark -> ThemeImageLayer(normalized, alpha)
             HelloWallpapers.SilkGlow -> {
                 GradientLayer(alpha, if (dark) listOf(Color(0xFF10232B), Color(0xFF08131B), Color(0xFF16353B)) else listOf(Color(0xFFF6F0E8), Color(0xFFFDF8F1), Color(0xFFECEAE2)))
                 GlowBlobLayer(alpha, if (dark) Color(0x3328C0A4) else Color(0x26C99A4A))
@@ -104,6 +136,41 @@ fun ChatWallpaperBackground(
                 .background((if (dark) HelloColors.DarkBg else HelloColors.Bg).copy(alpha = if (dark) 0.14f else 0.07f))
         )
         content()
+    }
+}
+
+@Composable
+private fun ThemeImageLayer(wallpaper: String, alpha: Float) {
+    val asset = themeImageAsset(wallpaper)
+    val fallback = painterResource(asset.resId)
+    AsyncImage(
+        model = ImageRequest.Builder(LocalContext.current)
+            .data("${AppConfig.CHAT_API_BASE}/theme-assets/${asset.fileName}")
+            .crossfade(true)
+            .build(),
+        contentDescription = null,
+        placeholder = fallback,
+        error = fallback,
+        fallback = fallback,
+        contentScale = ContentScale.Crop,
+        modifier = Modifier
+            .fillMaxSize()
+            .alpha(alpha.coerceIn(0.05f, 1f))
+    )
+}
+
+private data class ThemeImageAsset(val fileName: String, val resId: Int)
+
+private fun themeImageAsset(wallpaper: String): ThemeImageAsset {
+    return when (wallpaper) {
+        HelloWallpapers.ThemeAmoled -> ThemeImageAsset("theme_amoled.png", R.drawable.theme_amoled)
+        HelloWallpapers.ThemeTwilight -> ThemeImageAsset("theme_twilight.png", R.drawable.theme_twilight)
+        HelloWallpapers.ThemeEmber -> ThemeImageAsset("theme_ember.png", R.drawable.theme_ember)
+        HelloWallpapers.ThemeArctic -> ThemeImageAsset("theme_arctic.png", R.drawable.theme_arctic)
+        HelloWallpapers.ThemeDusk -> ThemeImageAsset("theme_dusk.png", R.drawable.theme_dusk)
+        HelloWallpapers.ThemeLight -> ThemeImageAsset("theme_light.png", R.drawable.theme_light)
+        HelloWallpapers.ThemeDark -> ThemeImageAsset("theme_dark.png", R.drawable.theme_dark)
+        else -> ThemeImageAsset("theme_midnight.png", R.drawable.theme_midnight)
     }
 }
 

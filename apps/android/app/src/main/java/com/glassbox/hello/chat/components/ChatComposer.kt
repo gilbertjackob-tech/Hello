@@ -1,6 +1,14 @@
 package com.glassbox.hello.chat.components
 
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.ExperimentalAnimationApi
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -12,6 +20,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.shadow
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
@@ -25,7 +34,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
@@ -35,9 +46,12 @@ import androidx.compose.ui.text.input.ImeAction
 import com.glassbox.hello.chat.VoiceRecordingState
 import com.glassbox.hello.ui.components.HelloIconButton
 import com.glassbox.hello.ui.theme.HelloColors
+import com.glassbox.hello.ui.theme.HelloDimens
+import com.glassbox.hello.ui.theme.HelloMotion
 import com.glassbox.hello.ui.theme.HelloShapes
 import com.glassbox.hello.ui.theme.HelloSpacing
 
+@OptIn(ExperimentalAnimationApi::class)
 @Composable
 fun ChatComposer(
     text: String,
@@ -55,20 +69,31 @@ fun ChatComposer(
     enterSends: Boolean,
     onKeyboardSend: () -> Unit
 ) {
+    val actionScale = animateFloatAsState(
+        targetValue = if (hasPayload || voiceState.active) 1.05f else 1f,
+        animationSpec = HelloMotion.SpringSnappy,
+        label = "composerActionScale"
+    )
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = HelloSpacing.Md, vertical = HelloSpacing.Xs)
-            .shadow(4.dp, HelloShapes.Lg, ambientColor = Color.Black.copy(alpha = 0.14f))
-            .clip(HelloShapes.Lg)
-            .background(HelloColors.DarkPanelStrong)
-            .border(1.dp, HelloColors.DarkBorderStrong, HelloShapes.Lg)
+            .background(
+                Brush.verticalGradient(
+                    listOf(
+                        Color.Transparent,
+                        HelloColors.BgBase.copy(alpha = 0.92f),
+                        HelloColors.BgDeep
+                    )
+                )
+            )
+            .padding(
+                start = HelloDimens.SpaceL,
+                end = HelloDimens.SpaceL,
+                top = HelloDimens.SpaceM,
+                bottom = HelloDimens.SpaceL
+            )
     ) {
-        Column(
-            modifier = Modifier
-                .padding(horizontal = HelloSpacing.Sm, vertical = HelloSpacing.Xs)
-                .animateContentSize()
-        ) {
+        Column(modifier = Modifier.animateContentSize()) {
             if (voiceState.active) {
                 VoiceRecordingBar(elapsedSeconds = recordingElapsedSeconds, onCancel = onCancelVoice)
             }
@@ -83,36 +108,66 @@ fun ChatComposer(
 
             Row(
                 verticalAlignment = Alignment.Bottom,
-                horizontalArrangement = Arrangement.spacedBy(HelloSpacing.Xs)
+                horizontalArrangement = Arrangement.spacedBy(HelloDimens.SpaceS)
             ) {
-                HelloIconButton(onClick = onToggleEmoji) {
-                    Icon(Icons.Default.EmojiEmotions, contentDescription = "Emoji", tint = if (showEmojiRow) HelloColors.DarkAccent else HelloColors.DarkTextMuted)
-                }
-                HelloIconButton(onClick = onAttach) {
-                    Icon(Icons.Default.AttachFile, contentDescription = "Attach", tint = HelloColors.DarkTextMuted)
-                }
-                ComposerInput(
-                    value = text,
-                    onValueChange = onTextChange,
-                    placeholder = placeholder,
-                    enterSends = enterSends,
-                    onKeyboardSend = onKeyboardSend,
-                    modifier = Modifier.weight(1f)
-                )
-                HelloIconButton(onClick = onSendOrRecord, active = hasPayload || voiceState.active) {
+                HelloIconButton(
+                    onClick = onToggleEmoji,
+                    modifier = Modifier.padding(bottom = 2.dp)
+                ) {
                     Icon(
-                        if (hasPayload) Icons.AutoMirrored.Filled.Send else Icons.Default.Mic,
-                        contentDescription = if (hasPayload) "Send message" else "Voice note",
-                        tint = if (hasPayload || voiceState.active) HelloColors.DarkAccent else HelloColors.DarkTextMuted
+                        Icons.Default.EmojiEmotions,
+                        contentDescription = "Emoji",
+                        tint = if (showEmojiRow) HelloColors.TealPrimary else HelloColors.DarkTextMuted
                     )
                 }
+
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(HelloDimens.CornerXL))
+                        .background(HelloColors.GlassBgMedium)
+                        .border(0.5.dp, HelloColors.GlassBorderStrong, RoundedCornerShape(HelloDimens.CornerXL))
+                        .padding(horizontal = HelloDimens.SpaceS)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        ComposerInput(
+                            value = text,
+                            onValueChange = onTextChange,
+                            placeholder = placeholder,
+                            enterSends = enterSends,
+                            onKeyboardSend = onKeyboardSend,
+                            modifier = Modifier.weight(1f)
+                        )
+                        
+                        HelloIconButton(onClick = onAttach) {
+                            Icon(Icons.Default.AttachFile, contentDescription = "Attach", tint = HelloColors.DarkTextMuted)
+                        }
+                    }
+                }
+
+                HelloIconButton(
+                    onClick = onSendOrRecord,
+                    active = hasPayload || voiceState.active,
+                    modifier = Modifier
+                        .scale(actionScale.value)
+                        .padding(bottom = 2.dp)
+                ) {
+                    AnimatedContent(
+                        targetState = hasPayload,
+                        transitionSpec = {
+                            (fadeIn(HelloMotion.fast()) + scaleIn(initialScale = 0.8f)) togetherWith
+                                (fadeOut(HelloMotion.fast()) + scaleOut(targetScale = 0.8f))
+                        },
+                        label = "sendMicMorph"
+                    ) { sending ->
+                        Icon(
+                            if (sending) Icons.AutoMirrored.Filled.Send else Icons.Default.Mic,
+                            contentDescription = if (sending) "Send message" else "Voice note",
+                            tint = if (sending || voiceState.active) HelloColors.TealPrimary else HelloColors.DarkTextMuted
+                        )
+                    }
+                }
             }
-            Text(
-                text = if (hasPayload) "Ready to send" else "Emoji, GIFs, stickers, files, and voice notes",
-                color = HelloColors.DarkTextMuted,
-                style = MaterialTheme.typography.labelSmall,
-                modifier = Modifier.padding(start = 56.dp, top = 4.dp, bottom = 2.dp)
-            )
         }
     }
 }
@@ -132,16 +187,13 @@ private fun ComposerInput(
         textStyle = MaterialTheme.typography.bodyMedium.copy(color = HelloColors.DarkText),
         modifier = modifier
             .heightIn(min = 44.dp, max = 124.dp)
-            .clip(HelloShapes.ComposerInput)
-            .background(HelloColors.DarkBgStrong)
-            .border(1.dp, HelloColors.DarkBorderStrong, HelloShapes.ComposerInput)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            .padding(horizontal = 12.dp, vertical = 12.dp),
         keyboardOptions = if (enterSends) KeyboardOptions(imeAction = ImeAction.Send) else KeyboardOptions.Default,
         keyboardActions = if (enterSends) KeyboardActions(onSend = { onKeyboardSend() }) else KeyboardActions.Default,
         singleLine = false,
         maxLines = 5,
         decorationBox = { innerTextField ->
-            Box {
+            Box(contentAlignment = Alignment.CenterStart) {
                 if (value.isEmpty()) {
                     Text(
                         text = placeholder,

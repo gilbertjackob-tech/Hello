@@ -7,6 +7,8 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.media.AudioAttributes
 import android.media.RingtoneManager
 import android.net.Uri
@@ -14,15 +16,24 @@ import android.os.Build
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.app.Person
 import androidx.core.content.ContextCompat
+import androidx.core.graphics.drawable.IconCompat
 import com.glassbox.hello.MainActivity
 import com.glassbox.hello.R
 import com.glassbox.hello.calls.CallSignal
 import com.glassbox.hello.chat.ChatModels
 import com.glassbox.hello.network.SocketManager
+import java.net.HttpURLConnection
+import java.net.URL
 import java.time.LocalTime
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
 data class InAppMessageNotification(
@@ -68,6 +79,7 @@ object HelloNotificationCenter {
     const val EXTRA_CALL_ACTION = "hello_call_action"
     const val CALL_ACTION_ACCEPT = "accept"
     const val CALL_ACTION_DECLINE = "decline"
+    private const val CHANNEL_CALLS_RINGTONE = "incoming_calls_ringtone_v2"
 
     private val _bannerState = MutableStateFlow<InAppMessageNotification?>(null)
     val bannerState: StateFlow<InAppMessageNotification?> = _bannerState
@@ -79,6 +91,7 @@ object HelloNotificationCenter {
     private var initializedForUserId: String? = null
     private var appForeground = true
     private var openChatId: String? = null
+    private val notificationScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private val messageListener: (ChatModels.Message) -> Unit = { message ->
         handleIncomingMessage(message)
@@ -156,6 +169,7 @@ object HelloNotificationCenter {
             channel = NotificationPrefs.CHANNEL_MESSAGES,
             priority = "high",
             senderName = message.senderName.ifBlank { "New message" },
+            senderAvatar = message.senderAvatar,
             groupName = null,
             previewText = body,
             emoji = null,
@@ -174,7 +188,10 @@ object HelloNotificationCenter {
             channel = normalizeChannel(raw.optString("channel")),
             priority = raw.optString("priority", "default"),
             senderName = raw.optString("senderName", "Hello"),
-            senderAvatar = raw.optString("senderAvatar").ifBlank { null },
+            senderAvatar = raw.optString("senderAvatar")
+                .ifBlank { raw.optString("callerAvatar") }
+                .ifBlank { raw.optString("avatarUrl") }
+                .ifBlank { null },
             groupName = raw.optString("groupName").ifBlank { null },
             previewText = raw.optString("previewText", ""),
             emoji = raw.optString("emoji").ifBlank { null },
@@ -211,7 +228,9 @@ object HelloNotificationCenter {
             return
         }
         if ((!appForeground || isCall || forceSystemNotification) && canPostNotifications(context)) {
-            postSystemNotification(context, payload, title, body)
+            notificationScope.launch {
+                postSystemNotification(context.applicationContext, payload, title, body)
+            }
         }
     }
 
@@ -231,7 +250,9 @@ object HelloNotificationCenter {
         return duplicate
     }
 
-    private fun postSystemNotification(context: Context, payload: HelloPushPayload, title: String, body: String) {
+    private suspend fun postSystemNotification(context: Context, payload: HelloPushPayload, title: String, body: String) {
+        val isCall = payload.channel == NotificationPrefs.CHANNEL_CALLS || payload.type == "call_incoming"
+        val avatarBitmap = loadNotificationBitmap(payload.senderAvatar)
         val launchIntent = notificationIntent(context, payload, null)
         val pendingIntent = PendingIntent.getActivity(
             context,
@@ -239,22 +260,38 @@ object HelloNotificationCenter {
             launchIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        val builder = NotificationCompat.Builder(context, payload.channel)
-            .setSmallIcon(R.mipmap.ic_launcher)
+        val builder = NotificationCompat.Builder(context, notificationChannelFor(payload))
+            .setSmallIcon(if (isCall) R.drawable.ic_stat_call else R.drawable.ic_stat_message)
             .setContentTitle(title)
             .setContentText(body)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
             .setContentIntent(pendingIntent)
             .setAutoCancel(true)
             .setPriority(priorityFor(payload.priority))
             .setCategory(categoryFor(payload.channel))
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setColor(0xFF00A884.toInt())
+            .setWhen(System.currentTimeMillis())
 
-        if (payload.channel == NotificationPrefs.CHANNEL_CALLS || payload.type == "call_incoming") {
+        avatarBitmap?.let { builder.setLargeIcon(it) }
+
+        if (isCall) {
             val fullScreenIntent = PendingIntent.getActivity(
                 context,
                 (payload.collapseKey + "_fs").hashCode(),
                 notificationIntent(context, payload, null),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            val caller = personFor(payload.senderName, payload.senderAvatar, avatarBitmap)
+            val declineIntent = PendingIntent.getActivity(
+                context,
+                (payload.collapseKey + "_decline").hashCode(),
+                notificationIntent(context, payload, CALL_ACTION_DECLINE),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            val acceptIntent = PendingIntent.getActivity(
+                context,
+                (payload.collapseKey + "_accept").hashCode(),
+                notificationIntent(context, payload, CALL_ACTION_ACCEPT),
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
             builder
@@ -262,35 +299,32 @@ object HelloNotificationCenter {
                 .setFullScreenIntent(fullScreenIntent, true)
                 .setOngoing(true)
                 .setAutoCancel(false)
-                .setOnlyAlertOnce(true)
                 .setTimeoutAfter(45_000L)
-                .addAction(
-                    0,
-                    "Decline",
-                    PendingIntent.getActivity(
-                        context,
-                        (payload.collapseKey + "_decline").hashCode(),
-                        notificationIntent(context, payload, CALL_ACTION_DECLINE),
-                        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-                    )
-                )
-                .addAction(
-                    0,
-                    "Accept",
-                    PendingIntent.getActivity(
-                        context,
-                        (payload.collapseKey + "_accept").hashCode(),
-                        notificationIntent(context, payload, CALL_ACTION_ACCEPT),
-                        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-                    )
-                )
+                .setStyle(NotificationCompat.CallStyle.forIncomingCall(caller, declineIntent, acceptIntent))
             if (!canUseFullScreenIntent(context)) {
                 Log.w(TAG, "Full-screen intent permission denied; falling back to expanded heads-up call notification")
             }
+        } else if (payload.channel == NotificationPrefs.CHANNEL_MESSAGES || payload.channel == NotificationPrefs.CHANNEL_MENTIONS) {
+            val sender = personFor(payload.senderName, payload.senderAvatar, avatarBitmap)
+            builder.setStyle(
+                NotificationCompat.MessagingStyle(sender)
+                    .setConversationTitle(payload.groupName)
+                    .addMessage(body, System.currentTimeMillis(), sender)
+            )
+        } else {
+            builder.setStyle(NotificationCompat.BigTextStyle().bigText(body))
         }
 
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) {
             NotificationManagerCompat.from(context).notify(payload.collapseKey.hashCode(), builder.build())
+        }
+    }
+
+    private fun notificationChannelFor(payload: HelloPushPayload): String {
+        return if (payload.channel == NotificationPrefs.CHANNEL_CALLS || payload.type == "call_incoming") {
+            CHANNEL_CALLS_RINGTONE
+        } else {
+            payload.channel
         }
     }
 
@@ -405,7 +439,7 @@ object HelloNotificationCenter {
     }
 
     private fun titleFor(payload: HelloPushPayload): String = when (payload.type) {
-        "call_incoming" -> "${payload.senderName} is calling..."
+        "call_incoming" -> payload.senderName.ifBlank { "Incoming call" }
         "call_missed" -> "Missed call from ${payload.senderName}"
         "mention" -> "${payload.senderName} mentioned you"
         "reply" -> "${payload.senderName} replied to you"
@@ -418,7 +452,7 @@ object HelloNotificationCenter {
     }
 
     private fun bodyFor(payload: HelloPushPayload): String = when (payload.type) {
-        "call_incoming" -> "Tap to answer"
+        "call_incoming" -> "Incoming ${if (payload.isVideo) "video" else "voice"} call"
         "status_post" -> "Open Today Pulse"
         "archive_complete" -> "Saved to your PC"
         "re_engagement" -> payload.previewText.ifBlank { "The family would love to know what's going on today" }
@@ -442,6 +476,7 @@ object HelloNotificationCenter {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val channels = listOf(
+            incomingCallChannel(),
             channel(NotificationPrefs.CHANNEL_CALLS, "Incoming Calls", NotificationManager.IMPORTANCE_HIGH, true, true),
             channel(NotificationPrefs.CHANNEL_ONGOING_CALLS, "Ongoing Calls", NotificationManager.IMPORTANCE_LOW, false, false),
             channel(NotificationPrefs.CHANNEL_MISSED_CALLS, "Missed Calls", NotificationManager.IMPORTANCE_HIGH, true, false),
@@ -455,14 +490,67 @@ object HelloNotificationCenter {
         manager.createNotificationChannels(channels)
     }
 
+    private fun incomingCallChannel(): NotificationChannel {
+        return NotificationChannel(CHANNEL_CALLS_RINGTONE, "Incoming Calls", NotificationManager.IMPORTANCE_HIGH).apply {
+            description = "Full-screen incoming call alerts"
+            enableVibration(true)
+            lockscreenVisibility = NotificationCompat.VISIBILITY_PUBLIC
+            val attrs = AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                .build()
+            setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE), attrs)
+        }
+    }
+
     private fun channel(id: String, name: String, importance: Int, sound: Boolean, vibration: Boolean): NotificationChannel {
         return NotificationChannel(id, name, importance).apply {
             description = name
             enableVibration(vibration)
             if (!sound) setSound(null, null) else {
-                val attrs = AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_NOTIFICATION).build()
-                setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION), attrs)
+                val attrs = AudioAttributes.Builder()
+                    .setUsage(if (id == NotificationPrefs.CHANNEL_CALLS) AudioAttributes.USAGE_NOTIFICATION_RINGTONE else AudioAttributes.USAGE_NOTIFICATION)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build()
+                val soundUri = if (id == NotificationPrefs.CHANNEL_CALLS) {
+                    RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
+                } else {
+                    RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+                }
+                setSound(soundUri, attrs)
             }
+        }
+    }
+
+    private fun personFor(name: String, avatarUrl: String?, bitmap: Bitmap?): Person {
+        return Person.Builder()
+            .setName(name.ifBlank { "Hello user" })
+            .setUri(avatarUrl)
+            .apply { bitmap?.let { setIcon(IconCompat.createWithBitmap(it)) } }
+            .build()
+    }
+
+    private suspend fun loadNotificationBitmap(url: String?): Bitmap? = withContext(Dispatchers.IO) {
+        val resolved = resolveAvatarUrl(url) ?: return@withContext null
+        runCatching {
+            val connection = (URL(resolved).openConnection() as HttpURLConnection).apply {
+                connectTimeout = 2_500
+                readTimeout = 2_500
+                instanceFollowRedirects = true
+            }
+            connection.inputStream.use { stream ->
+                BitmapFactory.decodeStream(stream)
+            }
+        }.getOrNull()
+    }
+
+    private fun resolveAvatarUrl(raw: String?): String? {
+        val trimmed = raw?.trim().orEmpty()
+        if (trimmed.isBlank()) return null
+        return when {
+            trimmed.startsWith("http://", ignoreCase = true) || trimmed.startsWith("https://", ignoreCase = true) -> trimmed
+            trimmed.startsWith("//") -> "https:$trimmed"
+            else -> null
         }
     }
 

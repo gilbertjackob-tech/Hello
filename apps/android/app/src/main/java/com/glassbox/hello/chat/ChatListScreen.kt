@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -49,6 +50,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.glassbox.hello.attachments.SharedFilesScreen
 import com.glassbox.hello.attachments.SharedLinksScreen
@@ -63,6 +65,9 @@ import com.glassbox.hello.networkstatus.NetworkStatus
 import com.glassbox.hello.networkstatus.checkCloudChatNetwork
 import com.glassbox.hello.networkstatus.checkHelloNetwork
 import com.glassbox.hello.ui.components.ErrorView
+import com.glassbox.hello.ui.components.AppBackground
+import com.glassbox.hello.ui.components.FilterChip
+import com.glassbox.hello.ui.components.GlassSearchBar
 import com.glassbox.hello.ui.components.HelloAvatar
 import com.glassbox.hello.ui.components.HelloChatCard
 import com.glassbox.hello.ui.components.HelloEmptyState
@@ -74,7 +79,10 @@ import com.glassbox.hello.ui.components.HelloPrimaryButton
 import com.glassbox.hello.ui.components.HelloSearchBar
 import com.glassbox.hello.ui.components.HelloTextField
 import com.glassbox.hello.ui.components.LoadingView
+import com.glassbox.hello.ui.components.ShimmerChatCard
+import com.glassbox.hello.ui.components.StatusPill
 import com.glassbox.hello.ui.theme.HelloColors
+import com.glassbox.hello.ui.theme.HelloDimens
 import com.glassbox.hello.ui.theme.HelloShapes
 import com.glassbox.hello.ui.theme.HelloSpacing
 import kotlinx.coroutines.Dispatchers
@@ -202,63 +210,54 @@ fun ChatListScreen(
         refreshNetworkStatus()
     }
 
-    Box(modifier = modifier.fillMaxSize()) {
+    AppBackground(modifier = modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .safeDrawingPadding()
-                .background(HelloColors.DarkBg)
-                .padding(horizontal = HelloSpacing.Lg)
         ) {
+            // ─ Header
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = HelloSpacing.Sm, bottom = HelloSpacing.Sm),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(HelloSpacing.Xs)
+                    .padding(horizontal = HelloDimens.SpaceL, vertical = HelloDimens.SpaceM),
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = "Hello",
-                        style = MaterialTheme.typography.headlineSmall,
-                        color = HelloColors.DarkText,
+                        fontSize = 26.sp,
                         fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        color = HelloColors.TextPrimary
                     )
                     Text(
                         text = "Inbox",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = HelloColors.DarkAccent,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        fontSize = 13.sp,
+                        color = HelloColors.TealPrimary,
+                        fontWeight = FontWeight.Bold
                     )
                 }
+
                 ServiceHealthPills(
                     checking = vpnChecking,
                     cloudOnline = cloudChatOnline,
                     pcOnline = vpnEnabled
                 )
+
+                Spacer(modifier = Modifier.width(HelloDimens.SpaceS))
+
                 HelloIconButton(onClick = { showNewChat = true }) {
-                    Icon(Icons.Default.Add, contentDescription = "New chat", tint = HelloColors.DarkAccent)
+                    Icon(Icons.Default.Add, contentDescription = "New chat", tint = HelloColors.TextSecondary)
                 }
                 HelloIconButton(onClick = {
                     refreshNetworkStatus()
                     viewModel.loadChats(currentUserId, cloudChatEnabled = cloudChatEnabled)
                 }) {
-                    Icon(Icons.Default.Refresh, contentDescription = "Refresh chats", tint = HelloColors.DarkTextMuted)
-                }
-                if (chatsRefreshing) {
-                    Text(
-                        text = "Syncing",
-                        color = HelloColors.DarkTextMuted,
-                        style = MaterialTheme.typography.labelSmall
-                    )
+                    Icon(Icons.Default.Refresh, contentDescription = "Refresh", tint = HelloColors.TextSecondary)
                 }
                 Box {
                     HelloIconButton(onClick = { showMoreMenu = true }) {
-                        Icon(Icons.Default.MoreVert, contentDescription = "More", tint = HelloColors.DarkTextMuted)
+                        Icon(Icons.Default.MoreVert, contentDescription = "More", tint = HelloColors.TextSecondary)
                     }
                     DropdownMenu(
                         expanded = showMoreMenu,
@@ -278,9 +277,6 @@ fun ChatListScreen(
                             onClick = {
                                 showMoreMenu = false
                                 showGroupChat = true
-                                if (showNewChat) {
-                                    showNewChat = false
-                                }
                             }
                         )
                         DropdownMenuItem(
@@ -303,33 +299,51 @@ fun ChatListScreen(
                 }
             }
 
-            HelloSearchBar(
+            // ─ Search
+            GlassSearchBar(
                 value = searchQuery,
                 onValueChange = { searchQuery = it },
-                placeholder = "Search people, groups, files, or messages",
-                leading = { Icon(Icons.Default.Search, contentDescription = null, tint = HelloColors.DarkTextMuted) }
+                placeholder = "Search people, groups, or messages",
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = HelloDimens.SpaceL)
             )
 
+            Spacer(Modifier.height(HelloDimens.SpaceM))
+
+            // ─ Filter chips
             LazyRow(
-                modifier = Modifier.padding(vertical = HelloSpacing.Md),
-                horizontalArrangement = Arrangement.spacedBy(HelloSpacing.Sm),
-                contentPadding = PaddingValues(end = HelloSpacing.Lg)
+                contentPadding = PaddingValues(horizontal = HelloDimens.SpaceL),
+                horizontalArrangement = Arrangement.spacedBy(HelloDimens.SpaceS)
             ) {
                 items(ChatFilter.values()) { filter ->
-                    HelloFilterChip(
+                    FilterChip(
                         label = filter.label,
-                        active = selectedFilter == filter,
+                        selected = selectedFilter == filter,
                         onClick = { selectedFilter = filter }
                     )
                 }
             }
 
+            Spacer(Modifier.height(HelloDimens.SpaceM))
+
+            // ─ Chat list
             when (chatsState) {
-                is ResultState.Loading -> LoadingView(modifier = Modifier.weight(1f))
+                is ResultState.Loading -> LazyColumn(
+                    modifier = Modifier.weight(1f),
+                    contentPadding = PaddingValues(
+                        start = HelloDimens.SpaceL,
+                        end = HelloDimens.SpaceL,
+                        bottom = 96.dp
+                    ),
+                    verticalArrangement = Arrangement.spacedBy(HelloDimens.SpaceS)
+                ) {
+                    items(6) { ShimmerChatCard() }
+                }
                 is ResultState.Error -> ErrorView(
                     message = (chatsState as ResultState.Error).message,
                     onRetry = { viewModel.loadChats(currentUserId, cloudChatEnabled = cloudChatEnabled) },
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier.weight(1f).padding(horizontal = HelloDimens.SpaceL)
                 )
                 is ResultState.Success -> {
                     val chats = (chatsState as ResultState.Success<List<Chat>>)
@@ -359,7 +373,8 @@ fun ChatListScreen(
                             message = "Start a direct chat with another Hello user.",
                             modifier = Modifier
                                 .weight(1f)
-                                .fillMaxWidth(),
+                                .fillMaxWidth()
+                                .padding(horizontal = HelloDimens.SpaceL),
                             action = {
                                 HelloPrimaryButton(
                                     text = "New chat",
@@ -371,8 +386,12 @@ fun ChatListScreen(
                     } else {
                         LazyColumn(
                             modifier = Modifier.fillMaxSize(),
-                            contentPadding = PaddingValues(bottom = 96.dp),
-                            verticalArrangement = Arrangement.spacedBy(HelloSpacing.Sm)
+                            contentPadding = PaddingValues(
+                                start = HelloDimens.SpaceL,
+                                end = HelloDimens.SpaceL,
+                                bottom = 96.dp
+                            ),
+                            verticalArrangement = Arrangement.spacedBy(HelloDimens.SpaceS)
                         ) {
                             items(chats, key = { it.id }) { chat ->
                                 val title = chat.displayName(currentUserId)
@@ -389,9 +408,6 @@ fun ChatListScreen(
                                     avatarUrl = other?.avatar ?: chat.avatar,
                                     online = other?.online == true
                                 )
-                                if (other?.online == true) {
-                                    Spacer(modifier = Modifier.height(0.dp))
-                                }
                             }
                         }
                     }
@@ -522,21 +538,13 @@ private fun ServiceHealthPills(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        Text(
-            text = if (checking) "Checking" else if (cloudOnline) "Cloud On" else "Cloud Off",
-            color = if (cloudOnline) HelloColors.DarkAccentStrong else HelloColors.DarkTextMuted,
-            style = MaterialTheme.typography.labelMedium,
-            fontWeight = FontWeight.Bold,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
+        StatusPill(
+            label = if (checking) "Checking" else if (cloudOnline) "Cloud On" else "Cloud Off",
+            isOnline = cloudOnline && !checking
         )
-        Text(
-            text = if (pcOnline) "PC On" else "PC Off",
-            color = if (pcOnline) HelloColors.DarkAccentStrong else HelloColors.DarkTextMuted,
-            style = MaterialTheme.typography.labelMedium,
-            fontWeight = FontWeight.Bold,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
+        StatusPill(
+            label = if (pcOnline) "PC On" else "PC Off",
+            isOnline = pcOnline
         )
     }
 }

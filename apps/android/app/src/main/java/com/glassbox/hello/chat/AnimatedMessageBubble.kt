@@ -68,6 +68,7 @@ import coil.request.ImageRequest
 import com.glassbox.hello.core.UrlResolver
 import com.glassbox.hello.ui.theme.HelloAnimations
 import com.glassbox.hello.ui.theme.HelloColors
+import com.glassbox.hello.ui.theme.HelloDimens
 import com.glassbox.hello.ui.theme.HelloSpacing
 import com.glassbox.hello.ui.utils.AnimationUtils
 import java.text.SimpleDateFormat
@@ -109,9 +110,10 @@ fun AnimatedMessageBubble(
     )
     val bubbleColor = when {
         message.isDeleted == true -> Color(0xB31D2930)
-        isOwn -> Color(0xFF04765F)
-        else -> Color(0xFF14212B)
+        isOwn -> HelloColors.BubbleOut
+        else -> HelloColors.BubbleIn
     }
+    val bubbleBorderColor = if (isOwn) HelloColors.BubbleOutBorder else HelloColors.BubbleInBorder
     val bubbleShape = messageBubbleShape(isOwn, compactWithPrevious, compactWithNext)
 
     AnimatedVisibility(
@@ -172,7 +174,7 @@ fun AnimatedMessageBubble(
                     if (showSenderName && !isOwn) {
                         Text(
                             text = message.senderName,
-                            color = HelloColors.DarkAccentStrong,
+                            color = HelloColors.TealPrimary,
                             style = MaterialTheme.typography.labelMedium,
                             fontWeight = FontWeight.Bold,
                             modifier = Modifier.padding(start = 14.dp, bottom = 3.dp)
@@ -184,7 +186,7 @@ fun AnimatedMessageBubble(
                             .fillMaxWidth()
                             .clip(bubbleShape)
                             .background(bubbleColor)
-                            .border(1.dp, Color.White.copy(alpha = if (isOwn) 0.06f else 0.08f), bubbleShape)
+                            .border(0.5.dp, bubbleBorderColor, bubbleShape)
                             .combinedClickable(
                                 onClick = {},
                                 onLongClick = {
@@ -206,7 +208,21 @@ fun AnimatedMessageBubble(
                             )
                         }
                     }
-                    ReactionStrip(message.reactions.orEmpty())
+                    if (message.reactions.orEmpty().isNotEmpty()) {
+                        val reactions = message.reactions.orEmpty()
+                            .groupBy { it.emoji }
+                            .map { (emoji, list) ->
+                                com.glassbox.hello.chat.components.Reaction(
+                                    emoji = emoji,
+                                    count = list.size,
+                                    selectedByMe = list.any { it.userId == currentUserId }
+                                )
+                            }
+                        com.glassbox.hello.chat.components.ReactionRow(
+                            reactions = reactions,
+                            modifier = Modifier.padding(top = 4.dp, start = 8.dp, end = 8.dp)
+                        )
+                    }
                 }
 
                 if (isOwn) {
@@ -612,27 +628,6 @@ private fun MessageMeta(message: ChatModels.Message, isOwn: Boolean, statusColor
 }
 
 @Composable
-private fun ReactionStrip(reactions: List<ChatModels.Reaction>) {
-    if (reactions.isEmpty()) return
-    val grouped = reactions.groupBy { it.emoji }.entries.sortedByDescending { it.value.size }
-    Row(
-        modifier = Modifier
-            .padding(top = 3.dp, start = 8.dp, end = 8.dp)
-            .clip(RoundedCornerShape(999.dp))
-            .background(Color(0xF00D1821))
-            .border(1.dp, HelloColors.DarkBorderStrong, RoundedCornerShape(999.dp))
-            .padding(horizontal = 8.dp, vertical = 3.dp),
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        grouped.take(4).forEach { entry ->
-            Text(entry.key, style = MaterialTheme.typography.bodySmall)
-        }
-        Text(reactions.size.toString(), color = HelloColors.DarkTextMuted, style = MaterialTheme.typography.labelSmall)
-    }
-}
-
-@Composable
 private fun ReplyHint(visible: Boolean) {
     AnimatedVisibility(visible = visible, enter = fadeIn(), exit = fadeOut()) {
         Box(
@@ -649,9 +644,9 @@ private fun ReplyHint(visible: Boolean) {
 }
 
 private fun messageBubbleShape(isOwn: Boolean, compactWithPrevious: Boolean, compactWithNext: Boolean): RoundedCornerShape {
-    val large = 20.dp
+    val large = HelloDimens.BubbleCorner
     val tight = 8.dp
-    val tail = 5.dp
+    val tail = HelloDimens.BubbleCornerSmall
     return if (isOwn) {
         RoundedCornerShape(
             topStart = large,

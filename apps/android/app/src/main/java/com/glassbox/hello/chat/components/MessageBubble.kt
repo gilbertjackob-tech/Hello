@@ -8,7 +8,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
-import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
@@ -43,6 +43,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -97,20 +98,20 @@ fun ChatMessageBubble(
     val bubbleColor = when {
         isStickerMessage(message.text) -> Color.Transparent
         message.isDeleted == true -> Color(0xB31D2930)
-        isOwn -> outgoingBubbleColor.copy(alpha = themeBubbleAlpha)
-        else -> incomingBubbleColor.copy(alpha = themeBubbleAlpha)
+        isOwn -> HelloColors.BubbleOut.copy(alpha = themeBubbleAlpha)
+        else -> HelloColors.BubbleIn.copy(alpha = themeBubbleAlpha)
     }
-    val contentColor = readableMessageTextColor(bubbleColor)
+    val contentColor = if (isOwn) HelloColors.BubbleOutText else HelloColors.BubbleInText
     val bubbleBorder = when {
-        isOwn -> Color.White.copy(alpha = 0.18f)
-        else -> Color.White.copy(alpha = 0.08f)
+        isOwn -> HelloColors.BubbleOutBorder
+        else -> HelloColors.BubbleInBorder
     }
     val bubbleShape = messageBubbleShape(isOwn, compactWithPrevious, compactWithNext)
 
     AnimatedVisibility(
         visible = true,
-        enter = slideInHorizontally(
-            initialOffsetX = { fullWidth: Int -> if (isOwn) fullWidth / 3 else -fullWidth / 3 },
+        enter = slideInVertically(
+            initialOffsetY = { 8 },
             animationSpec = tween(HelloAnimations.Duration.MEDIUM)
         ) + fadeIn() + scaleIn(initialScale = 0.96f),
         exit = fadeOut(),
@@ -120,8 +121,8 @@ fun ChatMessageBubble(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(
-                    start = 0.dp,
-                    end = 0.dp,
+                    start = 8.dp,
+                    end = 8.dp,
                     top = if (compactWithPrevious) 2.dp else 8.dp,
                     bottom = if (compactWithNext) 2.dp else 8.dp
                 )
@@ -376,12 +377,18 @@ private fun MessageMeta(message: ChatModels.Message, isOwn: Boolean, statusColor
 private fun ReactionStrip(reactions: List<ChatModels.Reaction>) {
     if (reactions.isEmpty()) return
     val grouped = reactions.groupBy { it.emoji }.entries.sortedByDescending { it.value.size }
+    val scale by animateFloatAsState(
+        targetValue = 1f,
+        animationSpec = spring(dampingRatio = 0.55f, stiffness = 520f),
+        label = "reactionChipBounce"
+    )
     Row(
         modifier = Modifier
             .padding(top = 3.dp, start = 8.dp, end = 8.dp)
+            .scale(scale)
             .clip(RoundedCornerShape(999.dp))
-            .background(Color(0xF00D1821))
-            .border(1.dp, HelloColors.DarkBorderStrong, RoundedCornerShape(999.dp))
+            .background(HelloColors.WarmGlow)
+            .border(1.dp, HelloColors.WarmAccent.copy(alpha = 0.34f), RoundedCornerShape(999.dp))
             .padding(horizontal = 8.dp, vertical = 3.dp),
         horizontalArrangement = Arrangement.spacedBy(4.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -410,13 +417,14 @@ private fun ReplyHint(visible: Boolean) {
 }
 
 private fun messageBubbleShape(isOwn: Boolean, compactWithPrevious: Boolean, compactWithNext: Boolean): RoundedCornerShape {
-    val large = 24.dp
-    val compact = 14.dp
+    val large = 10.dp
+    val compact = 6.dp
+    val tail = 3.dp
     return if (isOwn) {
         RoundedCornerShape(
             topStart = large,
             topEnd = if (compactWithPrevious) compact else large,
-            bottomEnd = if (compactWithNext) compact else large,
+            bottomEnd = if (compactWithNext) compact else tail,
             bottomStart = large
         )
     } else {
@@ -424,7 +432,7 @@ private fun messageBubbleShape(isOwn: Boolean, compactWithPrevious: Boolean, com
             topStart = if (compactWithPrevious) compact else large,
             topEnd = large,
             bottomEnd = large,
-            bottomStart = if (compactWithNext) compact else large
+            bottomStart = if (compactWithNext) compact else tail
         )
     }
 }

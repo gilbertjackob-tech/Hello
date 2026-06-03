@@ -19,6 +19,8 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -43,17 +45,23 @@ fun ChatHeader(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(HelloColors.DarkBgStrong)
-            .border(1.dp, HelloColors.DarkBorder)
-            .clickable(onClick = onOpenContactInfo)
-            .padding(horizontal = HelloSpacing.Sm, vertical = HelloSpacing.Sm),
+            .background(
+                Brush.verticalGradient(
+                    listOf(
+                        HelloColors.BgDeep.copy(alpha = 0.92f),
+                        HelloColors.BgBase.copy(alpha = 0.82f),
+                        Color.Transparent
+                    )
+                )
+            )
+            .padding(top = 8.dp, bottom = 12.dp, start = HelloSpacing.Sm, end = HelloSpacing.Sm),
         verticalAlignment = Alignment.CenterVertically
     ) {
         HelloIconButton(onClick = onBack) {
             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = HelloColors.DarkText)
         }
         Row(
-            modifier = Modifier.weight(1f),
+            modifier = Modifier.weight(1f).clickable(onClick = onOpenContactInfo),
             verticalAlignment = Alignment.CenterVertically
         ) {
             HelloAvatar(name = title, online = subtitle == "Online", size = 42.dp, imageUrl = avatarUrl)

@@ -1,5 +1,7 @@
 package com.glassbox.hello.chat.components
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -24,9 +26,16 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.glassbox.hello.chat.ChatModels
@@ -42,6 +51,7 @@ fun ChatActionSheet(
     onClearChat: () -> Unit,
     onDeleteChat: () -> Unit
 ) {
+    val haptic = LocalHapticFeedback.current
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -80,23 +90,13 @@ fun MessageActionSheet(
         verticalArrangement = Arrangement.spacedBy(HelloSpacing.Xs)
     ) {
         Text("Message options", color = HelloColors.DarkText, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = HelloSpacing.Sm),
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            QuickReactions.forEach { emoji ->
-                Text(
-                    text = emoji,
-                    style = MaterialTheme.typography.headlineSmall,
-                    modifier = Modifier
-                        .background(HelloColors.DarkPanelMuted, CircleShape)
-                        .clickable { onReact(emoji) }
-                        .padding(horizontal = 12.dp, vertical = 9.dp)
-                )
-            }
-        }
+        
+        ReactionBar(
+            visible = true,
+            onReactionSelected = onReact,
+            modifier = Modifier.fillMaxWidth().padding(vertical = HelloSpacing.Sm)
+        )
+
         SheetRow("Reply", Icons.AutoMirrored.Filled.ArrowBack, onReply)
         SheetRow(if (message.starredBy.orEmpty().contains(currentUserId)) "Unstar" else "Star", Icons.Default.Star, onStar)
         SheetRow(if ((message.pinnedUntil ?: 0L) > System.currentTimeMillis()) "Unpin" else "Pin", Icons.Default.PushPin, onPin)

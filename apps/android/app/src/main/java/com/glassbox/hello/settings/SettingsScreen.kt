@@ -9,6 +9,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Arrangement
@@ -23,7 +25,9 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.ui.draw.clip
@@ -31,6 +35,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Lock
@@ -42,6 +47,7 @@ import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.VideoCall
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
@@ -58,6 +64,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
@@ -94,6 +103,9 @@ import com.glassbox.hello.ui.components.HelloSettingsCard
 import com.glassbox.hello.ui.components.HelloSettingsRow
 import com.glassbox.hello.ui.components.HelloTopBar
 import com.glassbox.hello.ui.components.LoadingView
+import com.glassbox.hello.ui.theme.HelloAppPalette
+import com.glassbox.hello.ui.theme.HelloAppThemes
+import com.glassbox.hello.ui.theme.ChatThemeStore
 import com.glassbox.hello.ui.theme.HelloColors
 import com.glassbox.hello.ui.theme.HelloShapes
 import com.glassbox.hello.ui.theme.HelloSpacing
@@ -211,29 +223,79 @@ private fun SettingsHome(
             }
         }
         item {
-            SettingsSectionCard("Appearance", "Theme, chat wallpaper, and typing ergonomics.", Icons.Default.Palette) {
-                AppearanceRows(onOpenChatTheme = { onNavigate(SettingsPage.ChatTheme) })
+            SettingsSectionCard("Account", "Profile, contacts, and identity.", Icons.Default.Person) {
+                HelloSettingsRow(
+                    "Profile",
+                    "Name, photo, account sync, and logout",
+                    onClick = { onNavigate(SettingsPage.Profile) },
+                    leading = { RowIcon(Icons.Default.Person) }
+                )
+                HelloSettingsRow(
+                    "Contacts and groups",
+                    "People, direct chats, and groups",
+                    onClick = { onNavigate(SettingsPage.People) },
+                    leading = { RowIcon(Icons.Default.People) }
+                )
             }
         }
-        item { SettingsSectionCard("Calls and notifications", "Permissions, ring readiness, and desktop alerts.", Icons.Default.Notifications) { CallsNotificationRows(userId = user?.id) } }
-        item { SettingsSectionCard("Storage and backup", "Encrypted export/import and local persistence.", Icons.Default.Storage) { StorageRows(sessionManager) } }
         item {
-            SettingsSectionCard("Settings map", "", Icons.Default.Info) {
-                val rows = listOf(
-                    "Account / Profile" to SettingsPage.Profile,
-                    "Appearance" to SettingsPage.Appearance,
-                    "Calls and notifications" to SettingsPage.Notifications,
-                    "Family Network" to SettingsPage.FamilyNetwork,
-                    "Privacy" to SettingsPage.Privacy,
-                    "Storage and backup" to SettingsPage.StorageBackup,
-                    "About Hello" to SettingsPage.About,
-                    "Developer diagnostics" to SettingsPage.Diagnostics,
-                    "Voice assistant demo" to SettingsPage.VoiceDemo
+            SettingsSectionCard("Preferences", "Theme, chat, calls, and privacy.", Icons.Default.Palette) {
+                HelloSettingsRow(
+                    "Appearance",
+                    "App theme, chat wallpaper, opacity, and typing",
+                    onClick = { onNavigate(SettingsPage.Appearance) },
+                    leading = { RowIcon(Icons.Default.Palette) }
                 )
-                rows.forEach { (label, target) ->
-                    HelloSettingsRow(label, "Open $label", onClick = { onNavigate(target) })
-                }
-                HelloSettingsRow("Contacts and groups", "People, direct chats, and groups", onClick = { onNavigate(SettingsPage.People) }, leading = { RowIcon(Icons.Default.People) })
+                HelloSettingsRow(
+                    "Calls and notifications",
+                    "Permissions, ringtone, full-screen calls, and alerts",
+                    onClick = { onNavigate(SettingsPage.Notifications) },
+                    leading = { RowIcon(Icons.Default.Notifications) }
+                )
+                HelloSettingsRow(
+                    "Privacy",
+                    "Last active, read receipts, and browser data",
+                    onClick = { onNavigate(SettingsPage.Privacy) },
+                    leading = { RowIcon(Icons.Default.Lock) }
+                )
+            }
+        }
+        item {
+            SettingsSectionCard("Data and network", "Backups, device storage, and connectivity.", Icons.Default.Storage) {
+                HelloSettingsRow(
+                    "Storage and backup",
+                    "Encrypted export/import and local persistence",
+                    onClick = { onNavigate(SettingsPage.StorageBackup) },
+                    leading = { RowIcon(Icons.Default.Storage) }
+                )
+                HelloSettingsRow(
+                    "Family Network",
+                    "Cloud Chat, Cloud Calls, and PC Drive status",
+                    onClick = { onNavigate(SettingsPage.FamilyNetwork) },
+                    leading = { RowIcon(Icons.Default.Public) }
+                )
+            }
+        }
+        item {
+            SettingsSectionCard("App", "About and diagnostics.", Icons.Default.Info) {
+                HelloSettingsRow(
+                    "About Hello",
+                    "App package, backend, and socket details",
+                    onClick = { onNavigate(SettingsPage.About) },
+                    leading = { RowIcon(Icons.Default.Info) }
+                )
+                HelloSettingsRow(
+                    "Developer diagnostics",
+                    "Current user, server origins, and resolved avatar URL",
+                    onClick = { onNavigate(SettingsPage.Diagnostics) },
+                    leading = { RowIcon(Icons.Default.BugReport) }
+                )
+                HelloSettingsRow(
+                    "Voice assistant demo",
+                    "Recognition and language demo tools",
+                    onClick = { onNavigate(SettingsPage.VoiceDemo) },
+                    leading = { RowIcon(Icons.Default.VideoCall) }
+                )
             }
         }
         item { Spacer(modifier = Modifier.height(HelloSpacing.Xxl)) }
@@ -295,10 +357,12 @@ private fun SettingsSectionCard(
 }
 
 @Composable
-private fun AppearanceRows(onOpenChatTheme: () -> Unit) {
+private fun AppearanceRows(userId: String, onOpenChatTheme: () -> Unit) {
     val context = LocalContext.current
     val initial = remember(context) { HelloPreferences.read(context) }
+    val initialChatTheme = remember(context, userId) { ChatThemeStore.read(context, userId) }
     var theme by remember { mutableStateOf(initial.themeMode) }
+    var wallpaperOpacity by remember { mutableStateOf(initialChatTheme.wallpaperOpacity) }
     var enterSends by remember { mutableStateOf(initial.enterSends) }
     var chatSounds by remember { mutableStateOf(initial.chatSounds) }
     var cloudChatEnabled by remember { mutableStateOf(initial.cloudChatEnabled) }
@@ -309,15 +373,35 @@ private fun AppearanceRows(onOpenChatTheme: () -> Unit) {
         onClick = onOpenChatTheme,
         leading = { RowIcon(Icons.Default.Palette) }
     )
-    OptionRow("Theme", theme, listOf("system", "light", "dark")) {
-        theme = it
-        HelloPreferences.setThemeMode(context, it)
-    }
-    Text(
-        "System, white, and dark mode now use the same shared palette path so the UI stays consistent instead of mixing hardcoded dark widgets.",
-        color = HelloColors.DarkTextMuted,
-        modifier = Modifier.padding(horizontal = HelloSpacing.Lg, vertical = HelloSpacing.Xs)
+    AppThemeSelector(
+        selectedId = theme,
+        onSelected = {
+            theme = it
+            HelloPreferences.setThemeMode(context, it)
+            ChatThemeStore.applyAppTheme(context, userId, it, wallpaperOpacity)
+        }
     )
+    Column(
+        modifier = Modifier.padding(horizontal = HelloSpacing.Lg, vertical = HelloSpacing.Sm),
+        verticalArrangement = Arrangement.spacedBy(HelloSpacing.Xs)
+    ) {
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Chat background opacity", color = HelloColors.DarkText, fontWeight = FontWeight.Bold)
+                Text("$wallpaperOpacity%", color = HelloColors.DarkTextMuted)
+            }
+        }
+        Slider(
+            value = wallpaperOpacity.toFloat(),
+            onValueChange = { value ->
+                wallpaperOpacity = value.toInt().coerceIn(35, 100)
+            },
+            onValueChangeFinished = {
+                ChatThemeStore.applyAppTheme(context, userId, theme, wallpaperOpacity)
+            },
+            valueRange = 35f..100f
+        )
+    }
     ToggleRow("Enter sends", enterSends) {
         enterSends = it
         HelloPreferences.setEnterSends(context, it)
@@ -334,6 +418,214 @@ private fun AppearanceRows(onOpenChatTheme: () -> Unit) {
         "Chat sync keeps conversations available across your signed-in devices. Drive photos and videos continue to use the PC backend.",
         color = HelloColors.DarkTextMuted,
         modifier = Modifier.padding(horizontal = HelloSpacing.Lg, vertical = HelloSpacing.Xs)
+    )
+}
+
+@Composable
+private fun AppThemeSelector(
+    selectedId: String,
+    onSelected: (String) -> Unit
+) {
+    val normalized = HelloAppThemes.normalizeId(selectedId)
+    Column(
+        modifier = Modifier.padding(horizontal = HelloSpacing.Lg, vertical = HelloSpacing.Sm),
+        verticalArrangement = Arrangement.spacedBy(HelloSpacing.Md)
+    ) {
+        Text("App theme", color = HelloColors.DarkText, fontWeight = FontWeight.Bold)
+        Text(
+            "Choose a full palette for pages, cards, message surfaces, text, buttons, and soft background texture.",
+            color = HelloColors.DarkTextMuted
+        )
+        HelloAppThemes.All.chunked(2).forEach { rowThemes ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(HelloSpacing.Md)
+            ) {
+                rowThemes.forEach { palette ->
+                    AppThemePreviewCard(
+                        palette = palette,
+                        selected = normalized == palette.id,
+                        onClick = { onSelected(palette.id) },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                if (rowThemes.size == 1) {
+                    Spacer(modifier = Modifier.weight(1f))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AppThemePreviewCard(
+    palette: HelloAppPalette,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val shape = RoundedCornerShape(18.dp)
+    Surface(
+        onClick = onClick,
+        modifier = modifier,
+        shape = shape,
+        color = palette.panelStrong,
+        border = androidx.compose.foundation.BorderStroke(
+            width = if (selected) 2.dp else 1.dp,
+            color = if (selected) palette.accentStrong else palette.borderStrong
+        )
+    ) {
+        Column {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(124.dp)
+                    .background(palette.bgDeep)
+            ) {
+                ThemeTextureCanvas(palette = palette, modifier = Modifier.fillMaxSize())
+                ThemePreviewChrome(palette = palette, modifier = Modifier.fillMaxSize())
+                if (selected) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(10.dp)
+                            .size(24.dp)
+                            .clip(CircleShape)
+                            .background(palette.accent),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(Icons.Default.Check, contentDescription = null, tint = palette.outgoingText, modifier = Modifier.size(15.dp))
+                    }
+                }
+            }
+            Column(
+                modifier = Modifier.padding(HelloSpacing.Md),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Text(palette.label, color = palette.text, fontWeight = FontWeight.Bold, maxLines = 1)
+                Text(palette.subtitle, color = palette.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    palette.previewPalette.take(5).forEach { color ->
+                        Box(
+                            modifier = Modifier
+                                .size(14.dp)
+                                .clip(CircleShape)
+                                .background(color)
+                                .border(0.5.dp, palette.border, CircleShape)
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ThemeTextureCanvas(palette: HelloAppPalette, modifier: Modifier = Modifier) {
+    Canvas(modifier = modifier.background(Brush.verticalGradient(listOf(palette.bgBase, palette.bgDeep)))) {
+        val w = size.width
+        val h = size.height
+        drawCircle(
+            brush = Brush.radialGradient(
+                colors = listOf(palette.orbA, Color.Transparent),
+                center = Offset(w * 0.88f, h * 0.12f),
+                radius = w * 0.65f
+            ),
+            center = Offset(w * 0.88f, h * 0.12f),
+            radius = w * 0.65f
+        )
+        drawCircle(
+            brush = Brush.radialGradient(
+                colors = listOf(palette.orbB, Color.Transparent),
+                center = Offset(w * 0.12f, h * 0.76f),
+                radius = w * 0.55f
+            ),
+            center = Offset(w * 0.12f, h * 0.76f),
+            radius = w * 0.55f
+        )
+        repeat(7) { index ->
+            val y = h * (0.18f + index * 0.1f)
+            drawLine(
+                color = palette.border.copy(alpha = if (palette.isDark) 0.22f else 0.12f),
+                start = Offset(0f, y),
+                end = Offset(w, y + (index % 2) * 5f),
+                strokeWidth = 0.8f
+            )
+        }
+    }
+}
+
+@Composable
+private fun ThemePreviewChrome(palette: HelloAppPalette, modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier.padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(9.dp)
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Box(modifier = Modifier.size(18.dp).clip(CircleShape).background(palette.accent))
+            PreviewLine(color = palette.textSecondary, width = 72.dp, height = 6.dp)
+            PreviewLine(color = Color.Black.copy(alpha = if (palette.isDark) 0.38f else 0.08f), width = 84.dp, height = 8.dp)
+        }
+        PreviewMessageBlock(palette.incoming, palette.incomingBorder, alignEnd = false, wide = false)
+        PreviewMessageBlock(palette.outgoing, palette.outgoingBorder, alignEnd = true, wide = true)
+        PreviewMessageBlock(palette.incoming, palette.incomingBorder, alignEnd = false, wide = false)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(22.dp)
+                .clip(RoundedCornerShape(999.dp))
+                .background(palette.elevated)
+                .border(1.dp, palette.border, RoundedCornerShape(999.dp))
+                .padding(horizontal = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(modifier = Modifier.size(14.dp).clip(CircleShape).background(palette.textMuted))
+            Spacer(Modifier.width(8.dp))
+            PreviewLine(color = palette.textSecondary, width = 86.dp, height = 4.dp)
+            Spacer(Modifier.weight(1f))
+            Box(modifier = Modifier.size(18.dp).clip(CircleShape).background(palette.accent))
+        }
+    }
+}
+
+@Composable
+private fun PreviewMessageBlock(
+    color: Color,
+    border: Color,
+    alignEnd: Boolean,
+    wide: Boolean
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = if (alignEnd) Arrangement.End else Arrangement.Start
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth(if (wide) 0.42f else 0.34f)
+                .height(28.dp)
+                .clip(RoundedCornerShape(9.dp))
+                .background(color)
+                .border(1.dp, border, RoundedCornerShape(9.dp))
+                .padding(horizontal = 10.dp, vertical = 7.dp),
+            verticalArrangement = Arrangement.spacedBy(5.dp)
+        ) {
+            PreviewLine(color = Color.White.copy(alpha = 0.62f), width = if (wide) 78.dp else 56.dp, height = 4.dp)
+            PreviewLine(color = Color.White.copy(alpha = 0.42f), width = if (wide) 54.dp else 40.dp, height = 4.dp)
+        }
+    }
+}
+
+@Composable
+private fun PreviewLine(color: Color, width: androidx.compose.ui.unit.Dp, height: androidx.compose.ui.unit.Dp) {
+    Box(
+        modifier = Modifier
+            .width(width)
+            .height(height)
+            .clip(RoundedCornerShape(999.dp))
+            .background(color)
     )
 }
 
@@ -699,7 +991,7 @@ private fun AppearancePage(userId: String, onOpenChatTheme: () -> Unit) {
     LazyColumn(modifier = Modifier.padding(horizontal = HelloSpacing.Lg), verticalArrangement = Arrangement.spacedBy(HelloSpacing.Md)) {
         item {
             SettingsSectionCard("Appearance", "Theme, chat wallpaper, and typing ergonomics.", Icons.Default.Palette) {
-                AppearanceRows(onOpenChatTheme = onOpenChatTheme)
+                AppearanceRows(userId = userId, onOpenChatTheme = onOpenChatTheme)
             }
         }
         item {

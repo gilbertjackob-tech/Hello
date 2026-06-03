@@ -9,6 +9,9 @@ import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -30,6 +33,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -39,6 +43,7 @@ import androidx.core.content.ContextCompat
 import com.glassbox.hello.activities.BrowserActivity
 import com.glassbox.hello.auth.AuthScreen
 import com.glassbox.hello.auth.CloudSessionManager
+import com.glassbox.hello.ui.components.AppBackground
 import com.glassbox.hello.calls.CallViewModel
 import com.glassbox.hello.calls.CallUiStatus
 import com.glassbox.hello.familydrive.FamilyDriveScreen
@@ -223,7 +228,7 @@ fun HelloApp(darkTheme: Boolean = true) {
         }
     }
 
-    HelloScreenBackground(modifier = Modifier.fillMaxSize(), dark = darkTheme) {
+    AppBackground(modifier = Modifier.fillMaxSize()) {
         Column(modifier = Modifier
             .fillMaxSize()
             .safeDrawingPadding()) {
@@ -233,40 +238,51 @@ fun HelloApp(darkTheme: Boolean = true) {
                     .fillMaxSize()
                     .padding(bottom = HelloSpacing.Sm)
             ) {
-                when (MainTab.values()[selectedTab.intValue]) {
-                    MainTab.Chats -> ChatScreen(
-                        sessionManager = sessionManager,
-                        logoutToken = logoutToken.intValue,
-                        callViewModel = callViewModel,
-                        onChatRoomVisibilityChanged = { isChatRoomVisible.value = it },
-                        onOpenSettings = { selectedTab.intValue = MainTab.Settings.ordinal },
-                        modifier = Modifier.fillMaxSize()
-                    )
-                    MainTab.Drive -> FamilyDriveScreen(
-                        currentUserId = currentUser.value!!.id,
-                        modifier = Modifier.fillMaxSize()
-                    )
-                    MainTab.Status -> StatusScreen(currentUserId = currentUser.value!!.id, modifier = Modifier.fillMaxSize())
-                    MainTab.Browser -> Box(modifier = Modifier.fillMaxSize())
-                    MainTab.Settings -> SettingsScreen(
-                        sessionManager = sessionManager,
-                        onDetailVisibilityChanged = { isSettingsDetailVisible.value = it },
-                        onLogout = {
-                            sessionManager.clearSession()
-                            cloudSessionManager.clear()
-                            currentUser.value = null
-                            logoutToken.intValue += 1
-                            selectedTab.intValue = MainTab.Chats.ordinal
-                            tabBackStack.clear()
-                        },
-                        modifier = Modifier.fillMaxSize()
-                    )
+                Crossfade(
+                    targetState = MainTab.values()[selectedTab.intValue],
+                    animationSpec = tween(180),
+                    label = "mainTabCrossfade"
+                ) { tab ->
+                    when (tab) {
+                        MainTab.Chats -> ChatScreen(
+                            sessionManager = sessionManager,
+                            logoutToken = logoutToken.intValue,
+                            callViewModel = callViewModel,
+                            onChatRoomVisibilityChanged = { isChatRoomVisible.value = it },
+                            onOpenSettings = { selectedTab.intValue = MainTab.Settings.ordinal },
+                            modifier = Modifier.fillMaxSize()
+                        )
+                        MainTab.Drive -> FamilyDriveScreen(
+                            currentUserId = currentUser.value!!.id,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                        MainTab.Status -> StatusScreen(currentUserId = currentUser.value!!.id, modifier = Modifier.fillMaxSize())
+                        MainTab.Browser -> Box(modifier = Modifier.fillMaxSize())
+                        MainTab.Settings -> SettingsScreen(
+                            sessionManager = sessionManager,
+                            onDetailVisibilityChanged = { isSettingsDetailVisible.value = it },
+                            onLogout = {
+                                sessionManager.clearSession()
+                                cloudSessionManager.clear()
+                                currentUser.value = null
+                                logoutToken.intValue += 1
+                                selectedTab.intValue = MainTab.Chats.ordinal
+                                tabBackStack.clear()
+                            },
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    }
                 }
             }
             if (showBottomNav) {
                 HelloBottomNav(dark = darkTheme) {
                     MainTab.values().forEach { tab ->
                         val selected = selectedTab.intValue == tab.ordinal
+                        val scale by animateFloatAsState(
+                            targetValue = if (selected) 1.08f else 1f,
+                            animationSpec = tween(160),
+                            label = "bottomNavScale${tab.name}"
+                        )
                         androidx.compose.material3.TextButton(
                             onClick = {
                                 if (tab == MainTab.Browser) {
@@ -277,7 +293,10 @@ fun HelloApp(darkTheme: Boolean = true) {
                             },
                             contentPadding = PaddingValues(horizontal = 6.dp, vertical = 6.dp)
                         ) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier.scale(scale)
+                            ) {
                                 Icon(
                                     imageVector = tab.icon,
                                     contentDescription = tab.label,

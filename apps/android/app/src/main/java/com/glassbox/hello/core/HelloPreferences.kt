@@ -9,7 +9,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 
 data class HelloSettingsState(
-    val themeMode: String = "system",
+    val themeMode: String = "midnight",
     val enterSends: Boolean = true,
     val wallpaper: String = "default",
     val wallpaperOpacity: Int = 100,
@@ -32,7 +32,7 @@ object HelloPreferences {
     fun read(context: Context): HelloSettingsState {
         val prefs = prefs(context)
         return HelloSettingsState(
-            themeMode = prefs.getString(KEY_THEME, "system") ?: "system",
+            themeMode = prefs.getString(KEY_THEME, "midnight") ?: "midnight",
             enterSends = prefs.getBoolean(KEY_ENTER_SENDS, true),
             wallpaper = prefs.getString(KEY_WALLPAPER, "default") ?: "default",
             wallpaperOpacity = prefs.getInt(KEY_WALLPAPER_OPACITY, 100),

@@ -9,6 +9,7 @@ import com.glassbox.hello.chat.otherParticipant
 import com.glassbox.hello.core.AppConfig
 import com.glassbox.hello.core.User
 import com.glassbox.hello.network.SocketManager
+import com.glassbox.hello.notifications.IncomingCallRinger
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -28,6 +29,7 @@ class CallViewModel(
     val state: StateFlow<CallUiState> = _state.asStateFlow()
 
     private var currentUser: User? = null
+    private var appContext: Context? = null
     private var timerJob: Job? = null
     private var missedTimeoutJob: Job? = null
     private var connectionTimeoutJob: Job? = null
@@ -117,6 +119,7 @@ class CallViewModel(
 
     fun connect(context: Context, user: User) {
         currentUser = user
+        appContext = context.applicationContext
         repository = CloudCallRepository(context.applicationContext)
         socketManager = CallSignalingClient(context.applicationContext).also { cloudSocket ->
             cloudSocket.onConnectedChanged = { connected ->
@@ -312,10 +315,12 @@ class CallViewModel(
     fun acceptIncoming(context: Context?, forceAudio: Boolean = false) {
         val user = currentUser ?: return
         _state.value.activeRoom?.let {
+            IncomingCallRinger.stop(it.id)
             acceptIncomingGroup(context, user, it)
             return
         }
         val signal = _state.value.signal ?: return
+        IncomingCallRinger.stop(signal.callId)
         val acceptedSignal = if (forceAudio && signal.isVideo) {
             signal.copy(type = "audio", isVideo = false)
         } else {
@@ -357,6 +362,7 @@ class CallViewModel(
             mediaPhase = CallMediaPhase.Ringing,
             debugOfferReceived = !signal.offerSdp.isNullOrBlank()
         )
+        IncomingCallRinger.start(appContext, signal.callId)
         startIncomingTimeout(signal)
     }
 
@@ -403,6 +409,7 @@ class CallViewModel(
         if (user != null && signal != null) {
             socketManager.declineCall(signal.copy(fromUserId = user.id, toUserId = remoteUserId(signal, user.id), reason = "declined").toJson())
         }
+        IncomingCallRinger.stop(signal?.callId ?: room?.id)
         terminal(CallUiStatus.Declined, "Call declined", signal)
     }
 
@@ -421,6 +428,7 @@ class CallViewModel(
                     .put("ended", reason == "ended")
                     .put("reason", reason)
             )
+            IncomingCallRinger.stop(room.id)
             terminal(CallUiStatus.Ended, "Group call ended", null)
             return
         }
@@ -428,6 +436,7 @@ class CallViewModel(
         if (user != null && signal != null) {
             socketManager.endCall(signal.copy(fromUserId = user.id, toUserId = remoteUserId(signal, user.id), reason = reason).toJson())
         }
+        IncomingCallRinger.stop(signal?.callId ?: room?.id)
         terminal(CallUiStatus.Ended, "Call ended", signal)
     }
 
@@ -441,6 +450,7 @@ class CallViewModel(
         terminalResetJob?.cancel()
         stopTimer()
         callEngine.dispose()
+        IncomingCallRinger.stop(_state.value.signal?.callId ?: _state.value.activeRoom?.id)
         pendingOffers.clear()
         _state.value = _state.value.copy(
             status = CallUiStatus.Idle,
@@ -665,6 +675,7 @@ class CallViewModel(
             debugOfferReceived = !incoming.offerSdp.isNullOrBlank()
         )
         socketManager.ringing(signal.copy(fromUserId = user.id, toUserId = signal.callerId).toJson())
+        IncomingCallRinger.start(appContext, incoming.callId)
         startIncomingTimeout(incoming)
     }
 
@@ -704,6 +715,7 @@ class CallViewModel(
         terminalResetJob?.cancel()
         stopTimer()
         callEngine.dispose()
+        IncomingCallRinger.stop(signal?.callId ?: _state.value.activeRoom?.id)
         val terminalSignal = signal ?: _state.value.signal
         val terminalRoom = _state.value.activeRoom
         _state.value = _state.value.copy(
@@ -901,6 +913,7 @@ class CallViewModel(
     override fun onCleared() {
         callEngine.dispose()
         stopTimer()
+        IncomingCallRinger.stop(_state.value.signal?.callId ?: _state.value.activeRoom?.id)
         missedTimeoutJob?.cancel()
         connectionTimeoutJob?.cancel()
         terminalResetJob?.cancel()

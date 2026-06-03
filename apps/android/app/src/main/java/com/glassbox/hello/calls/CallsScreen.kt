@@ -22,6 +22,7 @@ import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -68,6 +69,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
@@ -195,6 +199,7 @@ fun GlobalCallOverlay(
     when (callState.status) {
         CallUiStatus.Incoming -> IncomingCallScreen(
             name = callState.peerName,
+            avatarUrl = callState.peerAvatar,
             video = callState.signal?.isVideo == true || callState.activeRoom?.type == "video",
             message = callState.message.orEmpty(),
             onAccept = { acceptIncoming() },
@@ -338,6 +343,7 @@ private fun formatCallTime(timestamp: Long): String {
 @Composable
 fun IncomingCallScreen(
     name: String,
+    avatarUrl: String? = null,
     video: Boolean,
     message: String = "",
     onAccept: () -> Unit,
@@ -347,6 +353,7 @@ fun IncomingCallScreen(
     CallStage(
         modifier = modifier,
         name = name,
+        avatarUrl = avatarUrl,
         label = "Incoming ${if (video) "Video" else "Audio"} Call",
         detail = message.ifBlank { "Ringing" },
         pulsingAvatar = true
@@ -772,6 +779,7 @@ private fun Context.hasPermission(permission: String): Boolean {
 @Composable
 private fun CallStage(
     name: String,
+    avatarUrl: String? = null,
     label: String,
     detail: String,
     modifier: Modifier = Modifier,
@@ -781,6 +789,58 @@ private fun CallStage(
     var visible by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
         visible = true
+    }
+    if (pulsingAvatar) {
+        Box(
+            modifier = modifier
+                .fillMaxSize()
+                .background(
+                    Brush.verticalGradient(
+                        listOf(
+                            Color(0xFF071110),
+                            Color(0xFF0A1E1A),
+                            Color(0xFF08100F)
+                        )
+                    )
+                )
+                .padding(horizontal = HelloSpacing.Xl, vertical = HelloSpacing.Xxl)
+        ) {
+            CallWallpaperTexture(modifier = Modifier.fillMaxSize())
+            AnimatedVisibility(
+                visible = visible,
+                enter = fadeIn(tween(180)) + scaleIn(tween(240), initialScale = 0.96f) + slideInVertically(tween(240)) { it / 12 },
+                exit = fadeOut(tween(140)) + scaleOut(tween(140), targetScale = 0.98f) + slideOutVertically(tween(140)) { it / 10 }
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxSize(),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Spacer(modifier = Modifier.height(36.dp))
+                    Text(
+                        text = name,
+                        color = HelloColors.AuthText,
+                        fontWeight = FontWeight.Bold,
+                        textAlign = TextAlign.Center
+                    )
+                    Text(
+                        text = "Hello - ${label.lowercase()}",
+                        color = HelloColors.DarkTextMuted,
+                        fontWeight = FontWeight.Medium,
+                        textAlign = TextAlign.Center
+                    )
+                    Spacer(modifier = Modifier.height(64.dp))
+                    CallAvatar(name = name, avatarUrl = avatarUrl, pulsing = true, size = 148.dp)
+                    if (detail.isNotBlank()) {
+                        Spacer(modifier = Modifier.height(18.dp))
+                        Text(detail, color = HelloColors.DarkAccent, fontWeight = FontWeight.SemiBold)
+                    }
+                    Spacer(modifier = Modifier.weight(1f))
+                    controls()
+                    Spacer(modifier = Modifier.height(32.dp))
+                }
+            }
+        }
+        return
     }
     Box(
         modifier = modifier
@@ -800,7 +860,7 @@ private fun CallStage(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(HelloSpacing.Lg)
                 ) {
-                    CallAvatar(name = name, pulsing = pulsingAvatar)
+                    CallAvatar(name = name, avatarUrl = avatarUrl, pulsing = pulsingAvatar)
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(label, color = HelloColors.DarkText, fontWeight = FontWeight.Bold)
                         Text(name, color = HelloColors.DarkTextMuted)
@@ -816,7 +876,28 @@ private fun CallStage(
 }
 
 @Composable
-private fun CallAvatar(name: String, pulsing: Boolean) {
+private fun CallWallpaperTexture(modifier: Modifier = Modifier) {
+    Canvas(modifier = modifier) {
+        val dot = Color.White.copy(alpha = 0.045f)
+        val line = Color(0xFF00A884).copy(alpha = 0.05f)
+        val step = 54.dp.toPx()
+        var y = 18.dp.toPx()
+        var row = 0
+        while (y < size.height) {
+            var x = if (row % 2 == 0) 16.dp.toPx() else 42.dp.toPx()
+            while (x < size.width) {
+                drawCircle(dot, radius = 2.2.dp.toPx(), center = Offset(x, y))
+                drawLine(line, Offset(x - 10.dp.toPx(), y + 12.dp.toPx()), Offset(x + 16.dp.toPx(), y + 22.dp.toPx()), strokeWidth = 1.dp.toPx())
+                x += step
+            }
+            row += 1
+            y += step
+        }
+    }
+}
+
+@Composable
+private fun CallAvatar(name: String, avatarUrl: String? = null, pulsing: Boolean, size: androidx.compose.ui.unit.Dp = 106.dp) {
     val transition = rememberInfiniteTransition(label = "call-pulse")
     val pulseScale by transition.animateFloat(
         initialValue = 1f,
@@ -830,17 +911,17 @@ private fun CallAvatar(name: String, pulsing: Boolean) {
         animationSpec = infiniteRepeatable(animation = tween(1100), repeatMode = RepeatMode.Restart),
         label = "pulse-alpha"
     )
-    Box(contentAlignment = Alignment.Center, modifier = Modifier.size(132.dp)) {
+    Box(contentAlignment = Alignment.Center, modifier = Modifier.size(size + 34.dp)) {
         if (pulsing) {
             Box(
                 modifier = Modifier
-                    .size(106.dp)
+                    .size(size)
                     .scale(pulseScale)
                     .clip(CircleShape)
                     .background(HelloColors.DarkAccent.copy(alpha = pulseAlpha))
             )
         }
-        HelloAvatar(name = name, size = 106.dp, online = true)
+        HelloAvatar(name = name, size = size, online = true, imageUrl = avatarUrl)
     }
 }
 

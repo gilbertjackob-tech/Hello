@@ -83,6 +83,14 @@ object ChatThemeStore {
 
     val Wallpapers = listOf(
         HelloWallpapers.Default,
+        HelloWallpapers.ThemeMidnight,
+        HelloWallpapers.ThemeAmoled,
+        HelloWallpapers.ThemeTwilight,
+        HelloWallpapers.ThemeEmber,
+        HelloWallpapers.ThemeArctic,
+        HelloWallpapers.ThemeDusk,
+        HelloWallpapers.ThemeLight,
+        HelloWallpapers.ThemeDark,
         HelloWallpapers.SilkGlow,
         HelloWallpapers.PaperGrain,
         HelloWallpapers.Aurora,
@@ -107,6 +115,17 @@ object ChatThemeStore {
         ChatThemeOption("jade-paper", "Jade Paper", "jade", 0xFFEAF7EF.toInt(), HelloWallpapers.PaperGrain, 88, darkMode = false),
         ChatThemeOption("wine-glass", "Wine Glass", "wine", 0xFF2B1720.toInt(), HelloWallpapers.SlateGlass, 92),
         ChatThemeOption("silver-blue", "Silver Blue", "blue", 0xFFF0F6FF.toInt(), HelloWallpapers.MetroGrid, 82, darkMode = false)
+    )
+
+    val AppThemeOptions = listOf(
+        ChatThemeOption("app-midnight", "Midnight", "teal", 0xFF172432.toInt(), HelloWallpapers.ThemeMidnight, 84, 94, true),
+        ChatThemeOption("app-amoled", "Amoled", "sky", 0xFF111827.toInt(), HelloWallpapers.ThemeAmoled, 82, 95, true),
+        ChatThemeOption("app-twilight", "Twilight", "amethyst", 0xFF211535.toInt(), HelloWallpapers.ThemeTwilight, 86, 94, true),
+        ChatThemeOption("app-ember", "Ember", "amber", 0xFF2B1B0B.toInt(), HelloWallpapers.ThemeEmber, 84, 94, true),
+        ChatThemeOption("app-arctic", "Arctic", "teal", 0xFFFFFFFF.toInt(), HelloWallpapers.ThemeArctic, 76, 95, false),
+        ChatThemeOption("app-dusk", "Dusk", "blue", 0xFF17263A.toInt(), HelloWallpapers.ThemeDusk, 84, 94, true),
+        ChatThemeOption("app-light", "Light", "teal", 0xFFFFFFFF.toInt(), HelloWallpapers.ThemeLight, 74, 95, false),
+        ChatThemeOption("app-dark", "Dark", "green", DefaultIncomingArgb, HelloWallpapers.ThemeDark, 86, 94, true)
     )
 
     fun prefs(context: Context): SharedPreferences {
@@ -164,12 +183,29 @@ object ChatThemeStore {
         )
     }
 
+    fun selectionForAppTheme(themeId: String?, wallpaperOpacity: Int? = null): ChatThemeSelection {
+        val normalized = HelloAppThemes.normalizeId(themeId)
+        val appTheme = when (themeId?.lowercase()) {
+            "light" -> AppThemeOptions.first { it.id == "app-light" }
+            "dark" -> AppThemeOptions.first { it.id == "app-dark" }
+            else -> AppThemeOptions.firstOrNull { it.id == "app-$normalized" }
+                ?: AppThemeOptions.first { it.id == "app-${HelloAppThemes.DefaultId}" }
+        }
+        return selectionForTheme(appTheme).copy(
+            wallpaperOpacity = (wallpaperOpacity ?: appTheme.wallpaperOpacity).coerceIn(35, 100)
+        )
+    }
+
+    fun applyAppTheme(context: Context, userId: String, themeId: String, wallpaperOpacity: Int? = null) {
+        save(context, userId, selectionForAppTheme(themeId, wallpaperOpacity))
+    }
+
     fun colorById(id: String?): ChatColorOption {
         return Colors.firstOrNull { it.id == id } ?: Colors.first { it.id == DefaultColorId }
     }
 
     fun themeById(id: String?): ChatThemeOption {
-        return Themes.firstOrNull { it.id == id } ?: Themes.first { it.id == DefaultThemeId }
+        return (Themes + AppThemeOptions).firstOrNull { it.id == id } ?: Themes.first { it.id == DefaultThemeId }
     }
 
     fun companionIncomingArgb(colorId: String, darkMode: Boolean): Int {

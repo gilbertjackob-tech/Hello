@@ -1,6 +1,15 @@
 package com.glassbox.hello.chat
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.ExperimentalAnimationApi
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -25,7 +34,9 @@ import com.glassbox.hello.core.SessionManager
 import com.glassbox.hello.core.User
 import com.glassbox.hello.ui.components.HelloIconButton
 import com.glassbox.hello.ui.theme.HelloColors
+import com.glassbox.hello.ui.theme.HelloMotion
 
+@OptIn(ExperimentalAnimationApi::class)
 @Composable
 fun ChatScreen(
     sessionManager: SessionManager,
@@ -72,56 +83,74 @@ fun ChatScreen(
         return
     }
 
-    when (val currentRoute = route) {
-        ChatRoute.List -> {
-            ChatListScreen(
-                currentUserId = user.id,
-                currentUserName = user.name,
-                onOpenSettings = onOpenSettings,
-                onChatSelected = { chat -> route = ChatRoute.Room(chat) },
-                modifier = modifier
-            )
-        }
+    AnimatedContent(
+        targetState = route,
+        transitionSpec = {
+            if (targetState is ChatRoute.Room && initialState is ChatRoute.List) {
+                // List -> Room (Slide in from right)
+                (slideInHorizontally(animationSpec = tween(280, easing = FastOutSlowInEasing)) { it / 3 } + fadeIn(tween(220))) togetherWith
+                    (slideOutHorizontally(animationSpec = tween(280, easing = FastOutSlowInEasing)) { -it / 4 } + fadeOut(tween(180)))
+            } else if (targetState is ChatRoute.List && initialState is ChatRoute.Room) {
+                // Room -> List (Slide in from left)
+                (slideInHorizontally(animationSpec = tween(280, easing = FastOutSlowInEasing)) { -it / 4 } + fadeIn(tween(220))) togetherWith
+                    (slideOutHorizontally(animationSpec = tween(280, easing = FastOutSlowInEasing)) { it / 3 } + fadeOut(tween(180)))
+            } else {
+                (fadeIn(tween(220))) togetherWith (fadeOut(tween(180)))
+            }
+        },
+        label = "chatRouteTransition"
+    ) { currentRoute ->
+        when (currentRoute) {
+            ChatRoute.List -> {
+                ChatListScreen(
+                    currentUserId = user.id,
+                    currentUserName = user.name,
+                    onOpenSettings = onOpenSettings,
+                    onChatSelected = { chat -> route = ChatRoute.Room(chat) },
+                    modifier = modifier
+                )
+            }
 
-        is ChatRoute.Room -> {
-            ChatRoomScreen(
-                chat = currentRoute.chat,
-                currentUserId = user.id,
-                currentUserName = user.name,
-                currentUserAvatar = user.avatar,
-                callViewModel = callViewModel,
-                onBack = { route = ChatRoute.List },
-                onOpenContactInfo = { route = ChatRoute.ContactInfo(currentRoute.chat) },
-                onOpenSharedContent = { mode -> route = ChatRoute.SharedContent(currentRoute.chat, mode) },
-                onChatDeleted = { route = ChatRoute.List },
-                modifier = modifier
-            )
-        }
+            is ChatRoute.Room -> {
+                ChatRoomScreen(
+                    chat = currentRoute.chat,
+                    currentUserId = user.id,
+                    currentUserName = user.name,
+                    currentUserAvatar = user.avatar,
+                    callViewModel = callViewModel,
+                    onBack = { route = ChatRoute.List },
+                    onOpenContactInfo = { route = ChatRoute.ContactInfo(currentRoute.chat) },
+                    onOpenSharedContent = { mode -> route = ChatRoute.SharedContent(currentRoute.chat, mode) },
+                    onChatDeleted = { route = ChatRoute.List },
+                    modifier = modifier
+                )
+            }
 
-        is ChatRoute.ContactInfo -> {
-            ContactInfoScreen(
-                chat = currentRoute.chat,
-                currentUser = user,
-                callViewModel = callViewModel,
-                onBack = { route = ChatRoute.Room(currentRoute.chat) },
-                onOpenSharedContent = { mode -> route = ChatRoute.SharedContent(currentRoute.chat, mode) },
-                onChatDeleted = { route = ChatRoute.List },
-                modifier = modifier
-            )
-        }
+            is ChatRoute.ContactInfo -> {
+                ContactInfoScreen(
+                    chat = currentRoute.chat,
+                    currentUser = user,
+                    callViewModel = callViewModel,
+                    onBack = { route = ChatRoute.Room(currentRoute.chat) },
+                    onOpenSharedContent = { mode -> route = ChatRoute.SharedContent(currentRoute.chat, mode) },
+                    onChatDeleted = { route = ChatRoute.List },
+                    modifier = modifier
+                )
+            }
 
-        is ChatRoute.SharedContent -> {
-            Box(modifier = modifier.fillMaxSize()) {
-                when (currentRoute.mode) {
-                    ChatSharedContentMode.Media -> SharedMediaScreen(chatId = currentRoute.chat.id, modifier = Modifier.fillMaxSize())
-                    ChatSharedContentMode.Files -> SharedFilesScreen(chatId = currentRoute.chat.id, modifier = Modifier.fillMaxSize())
-                    ChatSharedContentMode.Links -> SharedLinksScreen(chatId = currentRoute.chat.id, modifier = Modifier.fillMaxSize())
-                }
-                HelloIconButton(
-                    onClick = { route = ChatRoute.ContactInfo(currentRoute.chat) },
-                    modifier = Modifier.padding(16.dp)
-                ) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = HelloColors.DarkAccent)
+            is ChatRoute.SharedContent -> {
+                Box(modifier = modifier.fillMaxSize()) {
+                    when (currentRoute.mode) {
+                        ChatSharedContentMode.Media -> SharedMediaScreen(chatId = currentRoute.chat.id, modifier = Modifier.fillMaxSize())
+                        ChatSharedContentMode.Files -> SharedFilesScreen(chatId = currentRoute.chat.id, modifier = Modifier.fillMaxSize())
+                        ChatSharedContentMode.Links -> SharedLinksScreen(chatId = currentRoute.chat.id, modifier = Modifier.fillMaxSize())
+                    }
+                    HelloIconButton(
+                        onClick = { route = ChatRoute.ContactInfo(currentRoute.chat) },
+                        modifier = Modifier.padding(16.dp)
+                    ) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = HelloColors.DarkAccent)
+                    }
                 }
             }
         }

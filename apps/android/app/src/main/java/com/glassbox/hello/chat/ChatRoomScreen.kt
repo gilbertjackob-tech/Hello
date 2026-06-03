@@ -72,6 +72,7 @@ import com.glassbox.hello.core.User
 import com.glassbox.hello.core.rememberHelloSettingsState
 import com.glassbox.hello.network.SocketManager
 import com.glassbox.hello.notifications.HelloNotificationCenter
+import com.glassbox.hello.ui.components.AppBackground
 import com.glassbox.hello.ui.components.ErrorView
 import com.glassbox.hello.ui.components.HelloSearchBar
 import com.glassbox.hello.ui.components.LoadingView
@@ -589,12 +590,11 @@ fun ChatRoomScreen(
         }
     }
 
-    Box(modifier = modifier.fillMaxSize().imePadding().navigationBarsPadding()) {
+    AppBackground(modifier = modifier.fillMaxSize().imePadding().navigationBarsPadding()) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .safeDrawingPadding()
-                .background(HelloColors.DarkBg)
         ) {
             ChatHeader(
                 title = title,
