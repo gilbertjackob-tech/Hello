@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.TypeSpecimen
+import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
@@ -99,6 +100,7 @@ fun StatusScreen(
     var selectedIndex by remember { mutableIntStateOf(0) }
     var createOpen by remember { mutableStateOf(false) }
     var reloadToken by remember { mutableIntStateOf(0) }
+    var searchQuery by remember { mutableStateOf("") }
 
     LaunchedEffect(currentUserId, reloadToken) {
         val result = api.fetchStatuses(currentUserId)
@@ -133,6 +135,14 @@ fun StatusScreen(
             item {
                 Text("Status updates disappear after 24 hours.", color = HelloColors.DarkTextMuted)
             }
+            item {
+                HelloSearchBar(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    placeholder = "Search stories",
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
             when (val state = statusesState) {
                 is ResultState.Loading -> item { LoadingView(modifier = Modifier.height(320.dp)) }
                 is ResultState.Error -> item {
@@ -152,7 +162,9 @@ fun StatusScreen(
                         )
                     }
                     val myGroup = groups.firstOrNull { it.userId == currentUserId }
-                    val others = groups.filter { it.userId != currentUserId }
+                    val others = groups
+                        .filter { it.userId != currentUserId }
+                        .filter { searchQuery.isBlank() || it.userName.contains(searchQuery, ignoreCase = true) }
 
                     item {
                         MyStatusCard(
@@ -169,6 +181,14 @@ fun StatusScreen(
                         )
                     }
 
+                    item {
+                        Row(horizontalArrangement = Arrangement.spacedBy(HelloSpacing.Sm)) {
+                            HelloPill("Recent", active = true)
+                            HelloPill("Muted")
+                            HelloPill("Viewed")
+                        }
+                    }
+
                     item { HelloSectionHeader("Recent updates") }
 
                     if (others.isEmpty()) {
@@ -179,9 +199,22 @@ fun StatusScreen(
                             )
                         }
                     } else {
+                        items(others, key = { it.userId }) { group ->
+                            StatusListRow(
+                                group = group,
+                                viewed = group.statuses.all { s -> s.views?.any { it["userId"] == currentUserId } == true },
+                                onClick = {
+                                    selectedGroup = group
+                                    selectedIndex = 0
+                                    group.statuses.firstOrNull()?.let { status ->
+                                        scope.launch { api.markStatusViewed(status.id, currentUserId) }
+                                    }
+                                }
+                            )
+                        }
                         item {
                             LazyRow(horizontalArrangement = Arrangement.spacedBy(HelloSpacing.Lg)) {
-                                items(others, key = { it.userId }) { group ->
+                                items(others.take(8), key = { "ring-${it.userId}" }) { group ->
                                     StatusRingCard(
                                         group = group,
                                         viewed = group.statuses.all { s -> s.views?.any { it["userId"] == currentUserId } == true },
@@ -275,6 +308,37 @@ private fun StatusRingCard(group: StatusGroup, viewed: Boolean, onClick: () -> U
 }
 
 @Composable
+private fun StatusListRow(group: StatusGroup, viewed: Boolean, onClick: () -> Unit) {
+    HelloPanel(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        strong = true,
+        shape = HelloShapes.Lg
+    ) {
+        Row(
+            modifier = Modifier.padding(HelloSpacing.Md),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(HelloSpacing.Md)
+        ) {
+            HelloStatusAvatarRing(name = group.userName, seen = viewed, online = true, imageUrl = group.userAvatar)
+            Column(modifier = Modifier.weight(1f)) {
+                Text(group.userName, color = HelloColors.DarkText, fontWeight = FontWeight.Bold)
+                Text(
+                    "${group.statuses.size} update${if (group.statuses.size == 1) "" else "s"} - ${relativeTime(group.statuses.last().timestamp)}",
+                    color = HelloColors.DarkTextMuted
+                )
+            }
+            Icon(
+                Icons.Default.Visibility,
+                contentDescription = null,
+                tint = if (viewed) HelloColors.StoryRingSeen else HelloColors.StoryRingUnseen
+            )
+        }
+    }
+}
+
+@Composable
 private fun StatusViewerScreen(
     group: StatusGroup,
     index: Int,
@@ -296,7 +360,7 @@ private fun StatusViewerScreen(
                         modifier = Modifier
                             .weight(1f)
                             .height(3.dp)
-                            .background(if (i <= index) HelloColors.DarkAccent else HelloColors.DarkBorderStrong, HelloShapes.Pill)
+                            .background(if (i <= index) HelloColors.StoryProgressActive else HelloColors.StoryProgressInactive, HelloShapes.Pill)
                     )
                 }
             }
@@ -323,7 +387,22 @@ private fun StatusViewerScreen(
             ) {
                 StatusContent(status)
                 if (status.userId == currentUserId) {
-                    HelloPill("${status.views?.size ?: 0} views", modifier = Modifier.align(Alignment.BottomCenter), active = true)
+                    HelloPanel(
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(bottom = HelloSpacing.Lg),
+                        strong = false,
+                        shape = HelloShapes.Pill
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = HelloSpacing.Lg, vertical = HelloSpacing.Sm),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(HelloSpacing.Sm)
+                        ) {
+                            Icon(Icons.Default.Visibility, contentDescription = null, tint = HelloColors.StoryAccent, modifier = Modifier.size(18.dp))
+                            Text("${status.views?.size ?: 0} views", color = HelloColors.DarkText, fontWeight = FontWeight.Bold)
+                        }
+                    }
                 }
             }
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -422,7 +501,7 @@ private fun CreateStatusDialog(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var text by remember { mutableStateOf("") }
-    var background by remember { mutableStateOf("#0f8f78") }
+    var background by remember { mutableStateOf(colorToHex(HelloColors.StoryCanvasBackground)) }
     var fontStyle by remember { mutableStateOf(StatusFont.Normal) }
     var textColor by remember { mutableStateOf(StatusTextColor.White) }
     var look by remember { mutableStateOf(StatusImageLook.Natural) }
@@ -504,8 +583,8 @@ private fun CreateStatusDialog(
                         }
                     }
                 ) {
-                    Icon(Icons.Default.Send, contentDescription = null, tint = HelloColors.DarkAccent)
-                    Text(if (posting) "Posting..." else "Post", color = HelloColors.DarkAccent)
+                    Icon(Icons.Default.Send, contentDescription = null, tint = HelloColors.StoryPrimaryButton)
+                    Text(if (posting) "Posting..." else "Post", color = HelloColors.StoryPrimaryButton)
                 }
             }
 
@@ -551,8 +630,16 @@ private fun CreateStatusDialog(
                         boxStyle = StatusTextBoxStyle.entries.first { it.label == label }
                     }
                     if (picked == null) {
+                        val storyPalette = listOf(
+                            colorToHex(HelloColors.StoryCanvasBackground),
+                            colorToHex(HelloColors.StoryAccent),
+                            colorToHex(HelloColors.Accent),
+                            colorToHex(HelloColors.Warning),
+                            colorToHex(HelloColors.Danger),
+                            colorToHex(HelloColors.BgStrong)
+                        ).distinct()
                         LazyRow(horizontalArrangement = Arrangement.spacedBy(HelloSpacing.Sm)) {
-                            items(listOf("#0f8f78", "#8b5cf6", "#f43f5e", "#3b82f6", "#eab308", "#0f172a", "#f97316", "#1d4ed8")) { c ->
+                            items(storyPalette) { c ->
                                 Box(
                                     modifier = Modifier
                                         .size(36.dp)
@@ -668,6 +755,19 @@ private fun DirectEditStatusPreview(
                 .padding(top = HelloSpacing.Lg),
             active = true
         )
+        Column(
+            modifier = Modifier
+                .align(Alignment.CenterEnd)
+                .padding(end = HelloSpacing.Md)
+                .background(HelloColors.StoryToolRailBackground, HelloShapes.Pill)
+                .padding(vertical = HelloSpacing.Sm),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(HelloSpacing.Sm)
+        ) {
+            Icon(Icons.Default.TypeSpecimen, contentDescription = null, tint = HelloColors.StoryPopupText, modifier = Modifier.size(20.dp))
+            Icon(Icons.Default.Palette, contentDescription = null, tint = HelloColors.StoryPopupText, modifier = Modifier.size(20.dp))
+            Icon(Icons.Default.Image, contentDescription = null, tint = HelloColors.StoryPopupText, modifier = Modifier.size(20.dp))
+        }
     }
 }
 
@@ -745,4 +845,9 @@ private fun parseColor(value: String?): Color {
     } catch (_: Exception) {
         HelloColors.DarkPanelStrong
     }
+}
+
+private fun colorToHex(color: Color): String {
+    val argb = color.toArgb()
+    return "#%06X".format(0xFFFFFF and argb)
 }

@@ -363,6 +363,23 @@ object HelloColors {
     val OrbTeal: Color get() = p.orbA
     val OrbPurple: Color get() = p.orbB
     val OrbWarm: Color get() = p.orbC
+
+    val StoryAccent: Color get() = if (p.isDark) p.accent else Color(0xFFFFD600)
+    val StoryAccentStrong: Color get() = if (p.isDark) p.accentStrong else Color(0xFFFFC400)
+    val StoryPrimaryButton: Color get() = StoryAccent
+    val StoryPrimaryButtonText: Color get() = if (p.isDark) TextOnTeal else Color(0xFF101418)
+    val StoryRingUnseen: Color get() = StoryAccent
+    val StoryRingSeen: Color get() = if (p.isDark) Color.White.copy(alpha = 0.28f) else Color(0xFFCCD2DA)
+    val StoryCanvasBackground: Color get() = if (p.isDark) p.accentDeep else Color(0xFFFFD600)
+    val StoryViewerOverlay: Color get() = Color.Black.copy(alpha = if (p.isDark) 0.64f else 0.48f)
+    val StoryToolRailBackground: Color get() = if (p.isDark) Color.Black.copy(alpha = 0.36f) else Color.White.copy(alpha = 0.86f)
+    val StoryPopupBackground: Color get() = if (p.isDark) p.panelStrong else Color.White
+    val StoryPopupText: Color get() = if (p.isDark) p.text else Color(0xFF111827)
+    val StoryBottomSheetBackground: Color get() = if (p.isDark) p.bgBase else Color.White
+    val StoryProgressActive: Color get() = if (p.isDark) Color.White else Color(0xFF111827)
+    val StoryProgressInactive: Color get() = if (p.isDark) Color.White.copy(alpha = 0.28f) else Color(0xFF111827).copy(alpha = 0.18f)
+    val StoryReplyBackground: Color get() = if (p.isDark) Color.White.copy(alpha = 0.12f) else Color(0xFFF3F4F6)
+    val StoryReplyText: Color get() = if (p.isDark) Color.White else Color(0xFF111827)
 }
 
 object HelloDimens {

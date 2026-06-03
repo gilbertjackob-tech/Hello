@@ -2,6 +2,7 @@ package com.glassbox.hello.chat
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -45,6 +46,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -60,6 +62,7 @@ import com.glassbox.hello.chat.ChatModels.User
 import com.glassbox.hello.core.HelloPreferences
 import com.glassbox.hello.core.ResultState
 import com.glassbox.hello.core.User as CoreUser
+import com.glassbox.hello.network.HelloApiClient
 import com.glassbox.hello.network.SocketManager
 import com.glassbox.hello.networkstatus.NetworkStatus
 import com.glassbox.hello.networkstatus.checkCloudChatNetwork
@@ -77,6 +80,7 @@ import com.glassbox.hello.ui.components.HelloPanel
 import com.glassbox.hello.ui.components.HelloPill
 import com.glassbox.hello.ui.components.HelloPrimaryButton
 import com.glassbox.hello.ui.components.HelloSearchBar
+import com.glassbox.hello.ui.components.HelloStatusAvatarRing
 import com.glassbox.hello.ui.components.HelloTextField
 import com.glassbox.hello.ui.components.LoadingView
 import com.glassbox.hello.ui.components.ShimmerChatCard
@@ -107,6 +111,7 @@ fun ChatListScreen(
     currentUserName: String,
     onChatSelected: (Chat) -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenStories: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val viewModel: ChatViewModel = viewModel()
@@ -118,6 +123,7 @@ fun ChatListScreen(
     val coroutineScope = androidx.compose.runtime.rememberCoroutineScope()
     val cloudChatEnabled = HelloPreferences.read(context).cloudChatEnabled
     val socketManager = remember { SocketManager.getInstance() }
+    val api = remember { HelloApiClient() }
 
     var showNewChat by remember { mutableStateOf(false) }
     var showGroupChat by remember { mutableStateOf(false) }
@@ -136,6 +142,7 @@ fun ChatListScreen(
     var vpnDetail by remember { mutableStateOf("PC Drive not checked yet") }
     var cloudChatOnline by remember { mutableStateOf(false) }
     var cloudChatDetail by remember { mutableStateOf("Cloud Chat not checked yet") }
+    var storyGroups by remember { mutableStateOf<List<InboxStoryGroup>>(emptyList()) }
 
     LaunchedEffect(currentUserId, cloudChatEnabled) {
         viewModel.configureCloudChat(context)
@@ -148,6 +155,28 @@ fun ChatListScreen(
         vpnEnabled = pcProbe.status == NetworkStatus.Connected || pcProbe.status == NetworkStatus.HelloApiReachable
         vpnDetail = pcProbe.detail
         vpnChecking = false
+    }
+
+    LaunchedEffect(currentUserId) {
+        val cutoff = System.currentTimeMillis() - 24L * 60L * 60L * 1000L
+        storyGroups = api.fetchStatuses(currentUserId)
+            .getOrNull()
+            .orEmpty()
+            .filter { it.timestamp >= cutoff }
+            .groupBy { it.userId }
+            .map { (userId, statuses) ->
+                val latest = statuses.maxByOrNull { it.timestamp }
+                InboxStoryGroup(
+                    userId = userId,
+                    name = latest?.userName ?: if (userId == currentUserId) currentUserName else "Hello user",
+                    avatarUrl = latest?.userAvatar,
+                    timestamp = latest?.timestamp ?: 0L,
+                    unseen = statuses.any { status ->
+                        status.views?.none { view -> view["userId"] == currentUserId } != false
+                    }
+                )
+            }
+            .sortedWith(compareByDescending<InboxStoryGroup> { it.userId == currentUserId }.thenByDescending { it.timestamp })
     }
 
     DisposableEffect(currentUserId, currentUserName, cloudChatEnabled) {
@@ -307,6 +336,16 @@ fun ChatListScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = HelloDimens.SpaceL)
+            )
+
+            Spacer(Modifier.height(HelloDimens.SpaceM))
+
+            InboxStoryStrip(
+                currentUserId = currentUserId,
+                currentUserName = currentUserName,
+                groups = storyGroups,
+                onOpenStories = onOpenStories,
+                modifier = Modifier.fillMaxWidth()
             )
 
             Spacer(Modifier.height(HelloDimens.SpaceM))
@@ -525,6 +564,98 @@ private enum class SharedContentMode {
     Media,
     Files,
     Links
+}
+
+private data class InboxStoryGroup(
+    val userId: String,
+    val name: String,
+    val avatarUrl: String?,
+    val timestamp: Long,
+    val unseen: Boolean
+)
+
+@Composable
+private fun InboxStoryStrip(
+    currentUserId: String,
+    currentUserName: String,
+    groups: List<InboxStoryGroup>,
+    onOpenStories: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    LazyRow(
+        modifier = modifier,
+        contentPadding = PaddingValues(horizontal = HelloDimens.SpaceL),
+        horizontalArrangement = Arrangement.spacedBy(HelloDimens.SpaceM)
+    ) {
+        item {
+            val myGroup = groups.firstOrNull { it.userId == currentUserId }
+            InboxStoryItem(
+                name = "My story",
+                avatarName = currentUserName,
+                imageUrl = myGroup?.avatarUrl,
+                unseen = true,
+                plus = true,
+                onClick = onOpenStories
+            )
+        }
+        items(groups.filterNot { it.userId == currentUserId }.take(12), key = { it.userId }) { group ->
+            InboxStoryItem(
+                name = group.name,
+                avatarName = group.name,
+                imageUrl = group.avatarUrl,
+                unseen = group.unseen,
+                plus = false,
+                onClick = onOpenStories
+            )
+        }
+    }
+}
+
+@Composable
+private fun InboxStoryItem(
+    name: String,
+    avatarName: String,
+    imageUrl: String?,
+    unseen: Boolean,
+    plus: Boolean,
+    onClick: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .width(76.dp)
+            .clickable(onClick = onClick),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Box {
+            HelloStatusAvatarRing(name = avatarName, seen = !unseen, imageUrl = imageUrl)
+            if (plus) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .size(22.dp)
+                        .clip(androidx.compose.foundation.shape.CircleShape)
+                        .background(HelloColors.StoryPrimaryButton)
+                        .border(2.dp, HelloColors.Bg, androidx.compose.foundation.shape.CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        Icons.Default.Add,
+                        contentDescription = null,
+                        tint = HelloColors.StoryPrimaryButtonText,
+                        modifier = Modifier.size(15.dp)
+                    )
+                }
+            }
+        }
+        Spacer(modifier = Modifier.height(HelloDimens.SpaceXS))
+        Text(
+            text = name,
+            color = HelloColors.TextSecondary,
+            style = MaterialTheme.typography.labelSmall,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
 }
 
 @Composable

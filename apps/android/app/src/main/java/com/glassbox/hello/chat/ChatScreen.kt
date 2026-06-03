@@ -44,6 +44,7 @@ fun ChatScreen(
     callViewModel: CallViewModel,
     onChatRoomVisibilityChanged: (Boolean) -> Unit = {},
     onOpenSettings: () -> Unit = {},
+    onOpenStories: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -106,6 +107,7 @@ fun ChatScreen(
                     currentUserId = user.id,
                     currentUserName = user.name,
                     onOpenSettings = onOpenSettings,
+                    onOpenStories = onOpenStories,
                     onChatSelected = { chat -> route = ChatRoute.Room(chat) },
                     modifier = modifier
                 )

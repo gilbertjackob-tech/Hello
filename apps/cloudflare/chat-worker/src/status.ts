@@ -60,12 +60,51 @@ async function ensureStatusSchema(env: Env): Promise<void> {
       acked_at INTEGER
     )
   `).run();
+  await env.DB.prepare(`
+    CREATE TABLE IF NOT EXISTS status_media (
+      id TEXT PRIMARY KEY,
+      status_id TEXT NOT NULL,
+      r2_key TEXT NOT NULL,
+      media_type TEXT,
+      expires_at INTEGER NOT NULL,
+      deleted_at INTEGER
+    )
+  `).run();
+  await env.DB.prepare(`
+    CREATE TABLE IF NOT EXISTS status_reactions (
+      id TEXT PRIMARY KEY,
+      status_id TEXT NOT NULL,
+      reactor_id TEXT NOT NULL,
+      emoji TEXT NOT NULL,
+      reacted_at INTEGER NOT NULL,
+      deleted_at INTEGER
+    )
+  `).run();
+  await env.DB.prepare(`
+    CREATE TABLE IF NOT EXISTS status_replies (
+      id TEXT PRIMARY KEY,
+      status_id TEXT NOT NULL,
+      sender_id TEXT NOT NULL,
+      text TEXT NOT NULL,
+      sent_at INTEGER NOT NULL,
+      deleted_at INTEGER
+    )
+  `).run();
   await ensureColumn(env, 'statuses', 'attachment_url', 'TEXT').catch(() => undefined);
   await ensureColumn(env, 'statuses', 'attachment_type', 'TEXT').catch(() => undefined);
   await ensureColumn(env, 'statuses', 'background_color', 'TEXT').catch(() => undefined);
   await ensureColumn(env, 'statuses', 'duration', 'INTEGER').catch(() => undefined);
+  await ensureColumn(env, 'statuses', 'backup_state', 'TEXT').catch(() => undefined);
+  await ensureColumn(env, 'statuses', 'backup_started_at', 'INTEGER').catch(() => undefined);
+  await ensureColumn(env, 'statuses', 'backup_completed_at', 'INTEGER').catch(() => undefined);
+  await ensureColumn(env, 'statuses', 'backup_error', 'TEXT').catch(() => undefined);
+  await ensureColumn(env, 'statuses', 'drive_file_id', 'TEXT').catch(() => undefined);
   await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_statuses_expires_at ON statuses(expires_at)').run().catch(() => undefined);
   await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_status_views_status_id ON status_views(status_id)').run().catch(() => undefined);
+  await env.DB.prepare('CREATE UNIQUE INDEX IF NOT EXISTS idx_status_views_unique ON status_views(status_id, viewer_id)').run().catch(() => undefined);
+  await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_status_media_status_id ON status_media(status_id)').run().catch(() => undefined);
+  await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_status_reactions_status_id ON status_reactions(status_id)').run().catch(() => undefined);
+  await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_status_replies_status_id ON status_replies(status_id)').run().catch(() => undefined);
 }
 
 async function ensureColumn(env: Env, table: string, column: string, definition: string): Promise<void> {
@@ -270,18 +309,23 @@ export async function viewStatus(env: Env, request: Request, auth: any, statusId
   await ensureStatusSchema(env);
   const now = Date.now();
   const viewId = randomId('view');
-  await env.DB.prepare(
-    'INSERT INTO status_views (id, status_id, viewer_id, viewed_at) VALUES (?, ?, ?, ?)'
-  ).bind(viewId, statusId, auth.userId, now).run();
-  
-  await env.DB.prepare(
-    'UPDATE statuses SET view_count = view_count + 1 WHERE id = ?'
-  ).bind(statusId).run();
+  const existing = await env.DB.prepare(
+    'SELECT id FROM status_views WHERE status_id = ? AND viewer_id = ? LIMIT 1'
+  ).bind(statusId, auth.userId).first<any>().catch(() => null);
+  if (!existing) {
+    await env.DB.prepare(
+      'INSERT INTO status_views (id, status_id, viewer_id, viewed_at) VALUES (?, ?, ?, ?)'
+    ).bind(viewId, statusId, auth.userId, now).run();
+    await env.DB.prepare(
+      'UPDATE statuses SET view_count = view_count + 1 WHERE id = ?'
+    ).bind(statusId).run();
+  }
 
   return json({ ok: true });
 }
 
 export async function reactStatus(env: Env, request: Request, auth: any, statusId: string) {
+  await ensureStatusSchema(env);
   const body = await readJson(request);
   const emoji = body.emoji || '👍';
   const now = Date.now();
@@ -295,8 +339,10 @@ export async function reactStatus(env: Env, request: Request, auth: any, statusI
 }
 
 export async function replyStatus(env: Env, request: Request, auth: any, statusId: string) {
+  await ensureStatusSchema(env);
   const body = await readJson(request);
-  const text = body.text || '';
+  const text = String(body.text || '').trim();
+  if (!text) return badRequest('text is required');
   const now = Date.now();
   const replyId = randomId('reply');
 
@@ -312,12 +358,14 @@ export async function replyStatus(env: Env, request: Request, auth: any, statusI
 }
 
 export async function deleteStatus(env: Env, request: Request, auth: any, statusId: string) {
+  await ensureStatusSchema(env);
   await env.DB.prepare('UPDATE statuses SET expires_at = 0 WHERE id = ? AND owner_id = ?')
     .bind(statusId, auth.userId).run();
   return json({ ok: true });
 }
 
 export async function getArchivePending(env: Env, url: URL, auth: any) {
+  await ensureStatusSchema(env);
   const res = await env.DB.prepare(
     'SELECT * FROM status_archive_jobs WHERE state = \'pending\' AND owner_id = ?'
   ).bind(auth.userId).all();
@@ -326,6 +374,7 @@ export async function getArchivePending(env: Env, url: URL, auth: any) {
 }
 
 export async function ackArchive(env: Env, request: Request, auth: any) {
+  await ensureStatusSchema(env);
   const body = await readJson(request);
   const jobId = body.jobId;
   const now = Date.now();
@@ -336,5 +385,73 @@ export async function ackArchive(env: Env, request: Request, auth: any) {
     'UPDATE status_archive_jobs SET state = \'acked\', acked_at = ? WHERE id = ? AND owner_id = ?'
   ).bind(now, jobId, auth.userId).run();
 
+  return json({ ok: true });
+}
+
+export async function getStory(env: Env, url: URL, auth: any, statusId: string) {
+  await ensureStatusSchema(env);
+  const row = await env.DB.prepare(
+    'SELECT * FROM statuses WHERE id = ? AND (expires_at > ? OR owner_id = ?) LIMIT 1'
+  ).bind(statusId, Date.now(), auth.userId).first<any>();
+  if (!row) return json({ ok: false, error: 'not_found' }, { status: 404 });
+  const user = await userById(env, String(row.owner_id || ''));
+  const viewsRes = await env.DB.prepare(
+    'SELECT status_id AS statusId, viewer_id AS userId, viewed_at AS timestamp FROM status_views WHERE status_id = ?'
+  ).bind(statusId).all().catch(() => ({ results: [] as any[] }));
+  return json({ ok: true, story: legacyStatus(row, viewsRes.results || [], user) });
+}
+
+export async function getStoryAnalytics(env: Env, url: URL, auth: any, statusId: string) {
+  await ensureStatusSchema(env);
+  const owner = await env.DB.prepare('SELECT owner_id FROM statuses WHERE id = ? LIMIT 1')
+    .bind(statusId).first<any>();
+  if (!owner) return json({ ok: false, error: 'not_found' }, { status: 404 });
+  if (owner.owner_id !== auth.userId) return json({ ok: false, error: 'forbidden' }, { status: 403 });
+  const [views, reactions, comments] = await Promise.all([
+    env.DB.prepare('SELECT * FROM status_views WHERE status_id = ? ORDER BY viewed_at DESC').bind(statusId).all(),
+    env.DB.prepare('SELECT * FROM status_reactions WHERE status_id = ? AND (deleted_at IS NULL OR deleted_at = 0) ORDER BY reacted_at DESC').bind(statusId).all(),
+    env.DB.prepare('SELECT * FROM status_replies WHERE status_id = ? AND (deleted_at IS NULL OR deleted_at = 0) ORDER BY sent_at DESC').bind(statusId).all(),
+  ]);
+  return json({ ok: true, views: views.results || [], reactions: reactions.results || [], comments: comments.results || [] });
+}
+
+export async function deleteStoryReaction(env: Env, request: Request, auth: any, reactionId: string) {
+  await ensureStatusSchema(env);
+  await env.DB.prepare('UPDATE status_reactions SET deleted_at = ? WHERE id = ? AND reactor_id = ?')
+    .bind(Date.now(), reactionId, auth.userId).run();
+  return json({ ok: true });
+}
+
+export async function deleteStoryComment(env: Env, request: Request, auth: any, commentId: string) {
+  await ensureStatusSchema(env);
+  await env.DB.prepare('UPDATE status_replies SET deleted_at = ? WHERE id = ? AND sender_id = ?')
+    .bind(Date.now(), commentId, auth.userId).run();
+  return json({ ok: true });
+}
+
+export async function getStoryMedia(env: Env, key: string) {
+  await ensureStatusSchema(env);
+  const object = await env.TEMP_FILES.get(decodeURIComponent(key));
+  if (!object) return new Response('not_found', { status: 404 });
+  const headers = new Headers();
+  object.writeHttpMetadata(headers);
+  headers.set('cache-control', 'private, max-age=300');
+  return new Response(object.body, { headers });
+}
+
+export async function updateStoryBackup(env: Env, request: Request, auth: any, statusId: string, state: 'started' | 'complete' | 'failed') {
+  await ensureStatusSchema(env);
+  const body = await readJson(request);
+  const now = Date.now();
+  if (state === 'started') {
+    await env.DB.prepare('UPDATE statuses SET backup_state = ?, backup_started_at = ? WHERE id = ? AND owner_id = ?')
+      .bind('started', now, statusId, auth.userId).run();
+  } else if (state === 'complete') {
+    await env.DB.prepare('UPDATE statuses SET backup_state = ?, backup_completed_at = ?, drive_file_id = ? WHERE id = ? AND owner_id = ?')
+      .bind('complete', now, body.driveFileId || null, statusId, auth.userId).run();
+  } else {
+    await env.DB.prepare('UPDATE statuses SET backup_state = ?, backup_error = ? WHERE id = ? AND owner_id = ?')
+      .bind('failed', String(body.error || 'backup_failed'), statusId, auth.userId).run();
+  }
   return json({ ok: true });
 }

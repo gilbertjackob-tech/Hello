@@ -3001,6 +3001,78 @@ export default {
       return uploadAttachment(env, request);
     }
 
+    if (url.pathname === "/api/stories/feed" && request.method === "GET") {
+      const auth = await requireAuth(env, request);
+      if (auth instanceof Response) return auth;
+      return statusApi.getStatusFeed(env, url, auth);
+    }
+
+    if (url.pathname === "/api/stories/upload" && request.method === "POST") {
+      const auth = await requireAuth(env, request);
+      if (auth instanceof Response) return auth;
+      return statusApi.uploadStatusMedia(env, request, auth);
+    }
+
+    if (url.pathname === "/api/stories" && request.method === "POST") {
+      const auth = await requireAuth(env, request);
+      if (auth instanceof Response) return auth;
+      return statusApi.createStatus(env, request, auth);
+    }
+
+    if (url.pathname === "/api/stories/backup/pending" && request.method === "GET") {
+      const auth = await requireAuth(env, request);
+      if (auth instanceof Response) return auth;
+      return statusApi.getArchivePending(env, url, auth);
+    }
+
+    const storyMediaMatch = url.pathname.match(/^\/api\/stories\/media\/(.+)$/);
+    if (storyMediaMatch && request.method === "GET") {
+      return statusApi.getStoryMedia(env, storyMediaMatch[1]);
+    }
+
+    const storyActionMatch = url.pathname.match(/^\/api\/stories\/([^/]+)\/(view|reactions|comments|analytics)$/);
+    if (storyActionMatch) {
+      const auth = await requireAuth(env, request);
+      if (auth instanceof Response) return auth;
+      const storyId = decodeURIComponent(storyActionMatch[1]);
+      const action = storyActionMatch[2];
+      if (action === "view" && request.method === "POST") return statusApi.viewStatus(env, request, auth, storyId);
+      if (action === "reactions" && request.method === "POST") return statusApi.reactStatus(env, request, auth, storyId);
+      if (action === "comments" && request.method === "POST") return statusApi.replyStatus(env, request, auth, storyId);
+      if (action === "analytics" && request.method === "GET") return statusApi.getStoryAnalytics(env, url, auth, storyId);
+    }
+
+    const storyReactionDeleteMatch = url.pathname.match(/^\/api\/stories\/([^/]+)\/reactions\/([^/]+)$/);
+    if (storyReactionDeleteMatch && request.method === "DELETE") {
+      const auth = await requireAuth(env, request);
+      if (auth instanceof Response) return auth;
+      return statusApi.deleteStoryReaction(env, request, auth, decodeURIComponent(storyReactionDeleteMatch[2]));
+    }
+
+    const storyCommentDeleteMatch = url.pathname.match(/^\/api\/stories\/([^/]+)\/comments\/([^/]+)$/);
+    if (storyCommentDeleteMatch && request.method === "DELETE") {
+      const auth = await requireAuth(env, request);
+      if (auth instanceof Response) return auth;
+      return statusApi.deleteStoryComment(env, request, auth, decodeURIComponent(storyCommentDeleteMatch[2]));
+    }
+
+    const storyBackupMatch = url.pathname.match(/^\/api\/stories\/([^/]+)\/backup\/(start|complete|failed)$/);
+    if (storyBackupMatch && request.method === "POST") {
+      const auth = await requireAuth(env, request);
+      if (auth instanceof Response) return auth;
+      const state = storyBackupMatch[2] === "start" ? "started" : storyBackupMatch[2] as "complete" | "failed";
+      return statusApi.updateStoryBackup(env, request, auth, decodeURIComponent(storyBackupMatch[1]), state);
+    }
+
+    const storyItemMatch = url.pathname.match(/^\/api\/stories\/([^/]+)$/);
+    if (storyItemMatch) {
+      const auth = await requireAuth(env, request);
+      if (auth instanceof Response) return auth;
+      const storyId = decodeURIComponent(storyItemMatch[1]);
+      if (request.method === "GET") return statusApi.getStory(env, url, auth, storyId);
+      if (request.method === "DELETE") return statusApi.deleteStatus(env, request, auth, storyId);
+    }
+
     if (url.pathname === "/api/status/feed" && request.method === "GET") {
       const auth = await requireAuth(env, request);
       if (auth instanceof Response) return auth;

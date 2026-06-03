@@ -250,6 +250,7 @@ fun HelloApp(darkTheme: Boolean = true) {
                             callViewModel = callViewModel,
                             onChatRoomVisibilityChanged = { isChatRoomVisible.value = it },
                             onOpenSettings = { selectedTab.intValue = MainTab.Settings.ordinal },
+                            onOpenStories = { selectMainTab(MainTab.Status) },
                             modifier = Modifier.fillMaxSize()
                         )
                         MainTab.Drive -> FamilyDriveScreen(

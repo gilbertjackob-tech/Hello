@@ -17,6 +17,9 @@ For Final Release APK:
 ```
 adb devices
 cd apps\android
+
+.\gradlew.bat :app:assembleRelease --console=plain; if ($LASTEXITCODE -eq 0) { adb install -r app\build\outputs\apk\release\app-release.apk }
+
 .\gradlew.bat :app:assembleRelease --console=plain
 adb install -r app\build\outputs\apk\release\app-release.apk
 ```
@@ -32,6 +35,7 @@ For only compile check:
 ```
 for issue with gradle build- reset :
 ```
+
 .\gradlew.bat clean assembleRelease --no-daemon; if ($LASTEXITCODE -eq 0) { adb install -r app\build\outputs\apk\release\app-release.apk }
 ```
 

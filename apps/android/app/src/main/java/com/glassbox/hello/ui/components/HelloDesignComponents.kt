@@ -907,7 +907,7 @@ fun HelloStatusAvatarRing(
         modifier = modifier
             .size(62.dp)
             .clip(CircleShape)
-            .border(2.dp, if (seen) HelloColors.DarkBorderStrong else HelloColors.DarkAccent, CircleShape)
+            .border(2.dp, if (seen) HelloColors.StoryRingSeen else HelloColors.StoryRingUnseen, CircleShape)
             .padding(4.dp),
         contentAlignment = Alignment.Center
     ) {
