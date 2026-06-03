@@ -68,6 +68,7 @@ import com.glassbox.hello.chat.ChatModels
 import com.glassbox.hello.core.ResultState
 import com.glassbox.hello.core.UrlResolver
 import com.glassbox.hello.network.HelloApiClient
+import com.glassbox.hello.status.camera.StoryCameraScreen
 import com.glassbox.hello.ui.components.ErrorView
 import com.glassbox.hello.ui.components.HelloAvatar
 import com.glassbox.hello.ui.components.HelloEmptyState
@@ -254,9 +255,8 @@ fun StatusScreen(
         }
 
         if (createOpen) {
-            CreateStatusDialog(
+            StoryCameraScreen(
                 currentUserId = currentUserId,
-                api = api,
                 onClose = { createOpen = false },
                 onPosted = {
                     createOpen = false
