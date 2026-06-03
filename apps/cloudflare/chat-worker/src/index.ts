@@ -8,6 +8,11 @@ export interface Env {
   TURN_URLS?: string;
   TURN_USERNAME?: string;
   TURN_CREDENTIAL?: string;
+  FIREBASE_PROJECT_ID?: string;
+  FIREBASE_CLIENT_EMAIL?: string;
+  FIREBASE_PRIVATE_KEY?: string;
+  FCM_PROJECT_ID?: string;
+  FCM_SERVICE_ACCOUNT_JSON?: string;
 }
 
 type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
@@ -18,6 +23,7 @@ const ONLINE_TTL_MS = 60 * 1000;
 const PENDING_ATTACHMENT_USER_ID = "system_attachment_upload";
 const PENDING_ATTACHMENT_CONVERSATION_ID = "system_attachment_uploads";
 let cloudSchemaReady: Promise<void> | null = null;
+let fcmAccessTokenCache: { token: string; expiresAt: number } | null = null;
 
 function json(body: JsonValue, init: ResponseInit = {}): Response {
   const headers = new Headers(init.headers);
@@ -80,6 +86,29 @@ async function sha256Hex(value: string): Promise<string> {
   const data = new TextEncoder().encode(value);
   const digest = await crypto.subtle.digest("SHA-256", data);
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function base64Url(bytes: ArrayBuffer | Uint8Array): string {
+  const array = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  let binary = "";
+  for (const byte of array) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+function jsonBase64Url(value: JsonObject): string {
+  return base64Url(new TextEncoder().encode(JSON.stringify(value)));
+}
+
+function privateKeyToArrayBuffer(privateKey: string): ArrayBuffer {
+  const normalized = privateKey
+    .replace(/\\n/g, "\n")
+    .replace("-----BEGIN PRIVATE KEY-----", "")
+    .replace("-----END PRIVATE KEY-----", "")
+    .replace(/\s/g, "");
+  const binary = atob(normalized);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return bytes.buffer;
 }
 
 function randomToken(): string {
@@ -395,6 +424,27 @@ async function ensureCloudAccountSchema(env: Env): Promise<void> {
             updated_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
             UNIQUE (user_id, token)
           )
+        `,
+      ).run();
+      await env.DB.prepare(
+        `
+          CREATE TABLE IF NOT EXISTS notification_events (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            type TEXT NOT NULL,
+            channel TEXT NOT NULL,
+            priority TEXT NOT NULL,
+            collapse_key TEXT,
+            payload_json TEXT NOT NULL,
+            delivery_status TEXT NOT NULL DEFAULT 'realtime_only',
+            created_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
+          )
+        `,
+      ).run();
+      await env.DB.prepare(
+        `
+          CREATE INDEX IF NOT EXISTS idx_notification_events_user_created
+          ON notification_events (user_id, created_at DESC)
         `,
       ).run();
     })();
@@ -1154,13 +1204,18 @@ async function updateChatPreferences(env: Env, request: Request): Promise<Respon
 
 function callEventName(input: string): string {
   const normalized = input.trim();
+  if (normalized === "call_started") return "call:start";
   if (normalized === "incoming_call") return "call:start";
   if (normalized === "call_accepted") return "call:accepted";
   if (normalized === "call_rejected") return "call:declined";
   if (normalized === "call_ended") return "call:ended";
+  if (normalized === "call_busy") return "call:busy";
+  if (normalized === "call_missed") return "call:missed";
+  if (normalized === "call_unavailable") return "call:unavailable";
   if (normalized === "webrtc_offer") return "call:offer";
   if (normalized === "webrtc_answer") return "call:answer";
   if (normalized === "ice_candidate") return "call:ice-candidate";
+  if (normalized === "media_toggle") return "call:media-state";
   if (normalized === "participant_left") return "call:ended";
   return normalized || "call:event";
 }
@@ -1352,19 +1407,231 @@ async function updateCallStateForEvent(env: Env, callId: string, event: string, 
     await env.DB.prepare(
       "UPDATE call_sessions SET status = 'connected', answered_at = COALESCE(answered_at, ?), updated_at = ? WHERE id = ?",
     ).bind(now, now, callId).run();
-  } else if (event === "call:declined" || event === "call:busy") {
+  } else if (event === "call:declined" || event === "call:busy" || event === "call:unavailable") {
     await env.DB.prepare(
       "UPDATE call_sessions SET status = 'rejected', ended_at = COALESCE(ended_at, ?), end_reason = ?, updated_at = ? WHERE id = ?",
     ).bind(now, reason || "rejected", now, callId).run();
+    await env.DB.prepare(
+      "UPDATE call_participants SET left_at = COALESCE(left_at, ?) WHERE call_id = ?",
+    ).bind(now, callId).run().catch(() => undefined);
   } else if (event === "call:missed") {
     await env.DB.prepare(
       "UPDATE call_sessions SET status = 'missed', ended_at = COALESCE(ended_at, ?), end_reason = ?, updated_at = ? WHERE id = ?",
     ).bind(now, reason || "missed", now, callId).run();
+    await env.DB.prepare(
+      "UPDATE call_participants SET left_at = COALESCE(left_at, ?) WHERE call_id = ?",
+    ).bind(now, callId).run().catch(() => undefined);
   } else if (event === "call:ended" || event === "call:failed") {
     await env.DB.prepare(
       "UPDATE call_sessions SET status = 'ended', ended_at = COALESCE(ended_at, ?), end_reason = ?, updated_at = ? WHERE id = ?",
     ).bind(now, reason || "ended", now, callId).run();
+    await env.DB.prepare(
+      "UPDATE call_participants SET left_at = COALESCE(left_at, ?) WHERE call_id = ?",
+    ).bind(now, callId).run().catch(() => undefined);
   }
+}
+
+type NotificationChannel =
+  | "calls"
+  | "missed_calls"
+  | "messages"
+  | "mentions"
+  | "status_posts"
+  | "status_activity"
+  | "system"
+  | "re_engagement";
+
+type NotificationPriority = "urgent" | "high" | "default" | "low";
+
+async function notificationAllowed(env: Env, userId: string): Promise<boolean> {
+  const prefs = await env.DB.prepare(
+    "SELECT notifications_enabled AS notificationsEnabled FROM user_chat_preferences WHERE user_id = ?",
+  ).bind(userId).first<any>();
+  return prefs ? Number(prefs.notificationsEnabled) !== 0 : true;
+}
+
+async function fcmAccessToken(env: Env): Promise<string | null> {
+  if (fcmAccessTokenCache && fcmAccessTokenCache.expiresAt > Date.now() + 60_000) {
+    return fcmAccessTokenCache.token;
+  }
+  const serviceAccount = env.FCM_SERVICE_ACCOUNT_JSON
+    ? JSON.parse(env.FCM_SERVICE_ACCOUNT_JSON) as { client_email?: string; private_key?: string }
+    : null;
+  const clientEmail = env.FIREBASE_CLIENT_EMAIL || serviceAccount?.client_email || "";
+  const privateKey = env.FIREBASE_PRIVATE_KEY || serviceAccount?.private_key || "";
+  if (!clientEmail || !privateKey) return null;
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const assertion = [
+    jsonBase64Url({ alg: "RS256", typ: "JWT" }),
+    jsonBase64Url({
+      iss: clientEmail,
+      scope: "https://www.googleapis.com/auth/firebase.messaging",
+      aud: "https://oauth2.googleapis.com/token",
+      iat: nowSeconds,
+      exp: nowSeconds + 3600,
+    }),
+  ].join(".");
+  const key = await crypto.subtle.importKey(
+    "pkcs8",
+    privateKeyToArrayBuffer(privateKey),
+    { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const signature = await crypto.subtle.sign(
+    "RSASSA-PKCS1-v1_5",
+    key,
+    new TextEncoder().encode(assertion),
+  );
+  const jwt = `${assertion}.${base64Url(signature)}`;
+  const response = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+      assertion: jwt,
+    }),
+  });
+  if (!response.ok) throw new Error(`FCM OAuth failed: ${response.status}`);
+  const body = await response.json().catch(() => null) as any;
+  const token = String(body.access_token || "");
+  if (!token) throw new Error("FCM OAuth response missing access_token");
+  fcmAccessTokenCache = {
+    token,
+    expiresAt: Date.now() + Number(body.expires_in || 3600) * 1000,
+  };
+  return token;
+}
+
+function fcmData(payload: JsonObject): Record<string, string> {
+  const data: Record<string, string> = {};
+  for (const [key, value] of Object.entries(payload)) {
+    data[key] = value == null ? "" : String(value);
+  }
+  return data;
+}
+
+function fcmTokenError(body: any): boolean {
+  const status = String(body?.error?.status || "");
+  if (status === "NOT_FOUND") return true;
+  const message = String(body?.error?.message || "");
+  if (message.includes("UNREGISTERED") || message.includes("NotRegistered")) return true;
+  const details = Array.isArray(body?.error?.details) ? body.error.details : [];
+  return details.some((detail: any) => {
+    const code = String(detail?.errorCode || detail?.status || "");
+    return code === "UNREGISTERED" || code === "SENDER_ID_MISMATCH";
+  });
+}
+
+async function sendAndroidFcm(env: Env, userId: string, payload: JsonObject): Promise<void> {
+  const projectId = env.FIREBASE_PROJECT_ID || env.FCM_PROJECT_ID || "";
+  const type = String(payload.type || "");
+  const channel = String(payload.channel || "system");
+  console.log(`[fcm] dispatch start recipient=${userId} type=${type} channel=${channel}`);
+  const accessToken = await fcmAccessToken(env).catch((error) => {
+    console.warn("FCM access token unavailable", error);
+    return null;
+  });
+  if (!projectId || !accessToken) {
+    console.log(`[fcm] dispatch skipped recipient=${userId} type=${type} channel=${channel} reason=${!projectId ? "missing_project_id" : "missing_access_token"}`);
+    return;
+  }
+
+  const rows = await env.DB.prepare(
+    "SELECT id, token, platform FROM device_push_tokens WHERE user_id = ?",
+  ).bind(userId).all<any>();
+  const tokens = (rows.results || [])
+    .map((row: any) => ({
+      id: String(row.id || ""),
+      token: String(row.token || ""),
+      platform: String(row.platform || "android").toLowerCase(),
+    }))
+    .filter((row) => row.token);
+  const androidTokens = tokens.filter((row) => row.platform === "android" || row.platform === "fcm" || row.platform === "");
+  console.log(`[fcm] token inventory recipient=${userId} type=${type} channel=${channel} found=${tokens.length} android=${androidTokens.length}`);
+  if (androidTokens.length === 0) {
+    console.log(`[fcm] dispatch skipped recipient=${userId} type=${type} channel=${channel} reason=no_android_tokens`);
+    return;
+  }
+
+  const urgent = type === "call_incoming" || channel === "calls";
+  await Promise.all(androidTokens.map(async ({ id, token, platform }) => {
+    const response = await fetch(`https://fcm.googleapis.com/v1/projects/${encodeURIComponent(projectId)}/messages:send`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        message: {
+          token,
+          data: fcmData(payload),
+          android: {
+            priority: urgent || String(payload.priority || "") === "high" ? "HIGH" : "NORMAL",
+            ttl: urgent ? "60s" : "2419200s",
+          },
+        },
+      }),
+    });
+    const responseText = await response.text().catch(() => "");
+    console.log(`[fcm] response recipient=${userId} type=${type} channel=${channel} platform=${platform} status=${response.status}`);
+    if (response.ok) return;
+    const body = responseText ? (() => {
+      try {
+        return JSON.parse(responseText);
+      } catch {
+        return null;
+      }
+    })() : null;
+    if (response.status === 404 || fcmTokenError(body)) {
+      await env.DB.prepare("DELETE FROM device_push_tokens WHERE id = ?").bind(id).run().catch(() => undefined);
+      console.log(`[fcm] deleted stale token recipient=${userId} tokenId=${id} platform=${platform}`);
+    }
+    console.warn(`[fcm] send failed recipient=${userId} type=${type} channel=${channel} platform=${platform} status=${response.status} body=${responseText.slice(0, 400)}`);
+  }));
+}
+
+async function emitUserNotification(env: Env, userId: string, payload: JsonObject & {
+  type: string;
+  channel: NotificationChannel;
+  priority: NotificationPriority;
+  collapseKey: string;
+}): Promise<void> {
+  if (!userId || payload.senderId === userId) return;
+  if (!(await notificationAllowed(env, userId))) return;
+  const now = Date.now();
+  const outgoing = {
+    senderId: "",
+    senderName: "Hello",
+    senderAvatar: null,
+    targetId: null,
+    targetType: "system",
+    groupName: null,
+    previewText: "",
+    emoji: null,
+    deepLink: "hello://notifications",
+    sentAt: new Date(now).toISOString(),
+    ...payload,
+  };
+  await env.DB.prepare(
+    `
+      INSERT INTO notification_events
+        (id, user_id, type, channel, priority, collapse_key, payload_json, delivery_status, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'realtime_only', ?)
+    `,
+  ).bind(
+    randomId("notif"),
+    userId,
+    String(outgoing.type),
+    String(outgoing.channel),
+    String(outgoing.priority),
+    String(outgoing.collapseKey),
+    JSON.stringify(outgoing),
+    now,
+  ).run().catch(() => undefined);
+  await broadcastToDurableUser(env, userId, "notification", outgoing);
+  console.log(`[notification] dispatch recipient=${userId} type=${outgoing.type} channel=${outgoing.channel} collapseKey=${outgoing.collapseKey}`);
+  await sendAndroidFcm(env, userId, outgoing).catch((error) => console.warn("FCM send failed", error));
 }
 
 async function broadcastToDurableUser(env: Env, userId: string, event: string, payload: JsonObject): Promise<number> {
@@ -1449,6 +1716,24 @@ async function startCall(env: Env, request: Request): Promise<Response> {
     calleeAvatar: asString(receiver?.avatar, ""),
   });
   await relayCallEvent(env, "call:start", payload);
+  await emitUserNotification(env, receiverId, {
+    type: "call_incoming",
+    senderId: callerId,
+    senderName: asString(caller?.name, callerId),
+    senderAvatar: asString(caller?.avatar, ""),
+    callId,
+    chatId,
+    callerId,
+    calleeId: receiverId,
+    isVideo: type === "video",
+    targetId: callId,
+    targetType: "call",
+    previewText: `${asString(caller?.name, callerId)} is calling...`,
+    deepLink: `hello://calls/${callId}`,
+    channel: "calls",
+    priority: "urgent",
+    collapseKey: `call_${callId}`,
+  });
   return json({ id: callId, callId, ...payload }, { status: 201 });
 }
 
@@ -1879,6 +2164,30 @@ async function createMessage(env: Env, conversationId: string, body: JsonObject)
     const payload = await conversationFor(env, conversationId, userId);
     if (payload) await broadcastToDurableUser(env, userId, "chat_updated", payload);
   }));
+  await Promise.all(memberIds.map(async (userId) => {
+    if (userId === senderId) return;
+    const conversation = await conversationFor(env, conversationId, userId);
+    const isGroup = conversation?.isGroup === true;
+    const previewText = text.trim()
+      ? text.trim().slice(0, 50)
+      : attachmentId
+        ? "Sent an attachment"
+        : "New message";
+    await emitUserNotification(env, userId, {
+      type: "message",
+      senderId,
+      senderName,
+      senderAvatar: senderAvatar || null,
+      targetId: conversationId,
+      targetType: isGroup ? "group" : "chat",
+      groupName: isGroup ? asString(conversation?.name, "Group") : null,
+      previewText: isGroup ? `${senderName}: ${previewText}` : previewText,
+      deepLink: `hello://chat/${conversationId}`,
+      channel: "messages",
+      priority: "high",
+      collapseKey: `chat_${conversationId}`,
+    });
+  }));
   return json(message, { status: 201 });
 }
 
@@ -1915,7 +2224,7 @@ async function reactToMessage(env: Env, messageId: string, body: JsonObject): Pr
   if (emoji.length > 32) return badRequest("emoji is too long");
 
   const messageRow = await env.DB.prepare(
-    "SELECT id, conversation_id AS conversationId FROM messages WHERE id = ? AND deleted_at IS NULL",
+    "SELECT id, conversation_id AS conversationId, sender_id AS senderId FROM messages WHERE id = ? AND deleted_at IS NULL",
   ).bind(messageId).first<any>();
   if (!messageRow) return json({ ok: false, error: "Message not found" }, { status: 404 });
 
@@ -1949,6 +2258,23 @@ async function reactToMessage(env: Env, messageId: string, body: JsonObject): Pr
   if (!message) return json({ ok: false, error: "Message not found" }, { status: 404 });
   const memberIds = await conversationMemberIds(env, String(messageRow.conversationId));
   await Promise.all(memberIds.map((memberId) => broadcastToDurableUser(env, memberId, "message_updated", message)));
+  if (String(messageRow.senderId || "") && String(messageRow.senderId) !== userId) {
+    const reactor = await userFor(env, userId);
+    await emitUserNotification(env, String(messageRow.senderId), {
+      type: "message_reaction",
+      senderId: userId,
+      senderName: asString(reactor?.name, userId),
+      senderAvatar: asString(reactor?.avatar, ""),
+      targetId: messageId,
+      targetType: "chat",
+      previewText: `Reacted ${emoji} to your message`,
+      emoji,
+      deepLink: `hello://chat/${String(messageRow.conversationId)}`,
+      channel: "status_activity",
+      priority: "default",
+      collapseKey: `reaction_${messageId}`,
+    });
+  }
   return json(message);
 }
 
@@ -2050,6 +2376,7 @@ async function resetCloudDevData(env: Env, request: Request): Promise<Response> 
 
   await ensureCloudAccountSchema(env);
   const tables = [
+    "notification_events",
     "message_receipts",
     "attachments",
     "messages",
@@ -2084,6 +2411,65 @@ async function resetCloudDevData(env: Env, request: Request): Promise<Response> 
     deletedR2,
     r2Prefixes: ["chat/", "avatars/"],
     note: "Drive and PC files are not stored in this Worker and were not touched.",
+  });
+}
+
+async function sendDevTestPush(env: Env, request: Request): Promise<Response> {
+  const enabled = env.ENABLE_DEV_RESET === "true";
+  const expectedSecret = env.DEV_RESET_SECRET || "";
+  const providedSecret = request.headers.get("x-dev-reset-secret") || "";
+  if (!enabled || !expectedSecret || providedSecret !== expectedSecret) {
+    return json({ ok: false, error: "Forbidden" }, { status: 403 });
+  }
+  const auth = await requireAuth(env, request);
+  if (auth instanceof Response) return auth;
+  const body = await readJson(request);
+  const targetUserId = asString(body.userId || body.targetUserId, auth.userId);
+  const requestedChannel = asString(body.channel, "messages");
+  const channel = ([
+    "calls",
+    "missed_calls",
+    "messages",
+    "mentions",
+    "status_posts",
+    "status_activity",
+    "system",
+    "re_engagement",
+  ].includes(requestedChannel) ? requestedChannel : "messages") as NotificationChannel;
+  const requestedPriority = asString(body.priority, channel === "calls" ? "urgent" : "high");
+  const priority = (["urgent", "high", "default", "low"].includes(requestedPriority) ? requestedPriority : "high") as NotificationPriority;
+  const type = asString(body.type, channel === "calls" ? "call_incoming" : "message");
+  const targetId = asString(body.targetId, `dev_push_${Date.now()}`);
+  const senderId = asString(body.senderId, "system_push_test");
+  const extraCallPayload = channel === "calls" ? {
+    callId: targetId,
+    chatId: asString(body.chatId, `dev_chat_${auth.userId}`),
+    callerId: senderId,
+    calleeId: targetUserId,
+    isVideo: asBoolean(body.isVideo, false),
+  } : {};
+  await emitUserNotification(env, targetUserId, {
+    type,
+    senderId,
+    senderName: asString(body.senderName, "Hello test"),
+    senderAvatar: null,
+    targetId,
+    targetType: asString(body.targetType, channel === "calls" ? "call" : "system"),
+    groupName: null,
+    previewText: asString(body.previewText, "This is a test push from Hello"),
+    emoji: asString(body.emoji, ""),
+    deepLink: asString(body.deepLink, "hello://notifications"),
+    channel,
+    priority,
+    collapseKey: asString(body.collapseKey, `test_${auth.userId}_${channel}`),
+    ...extraCallPayload,
+  });
+  return json({
+    ok: true,
+    userId: targetUserId,
+    channel,
+    priority,
+    note: "Test push queued directly for the requested user through the same Android FCM path as production events.",
   });
 }
 
@@ -2451,6 +2837,11 @@ export default {
 
     if (url.pathname === "/api/dev/reset-cloud" && request.method === "POST") {
       return resetCloudDevData(env, request);
+    }
+
+    if (url.pathname === "/api/dev/test-push" && request.method === "POST") {
+      await ensureCloudAccountSchema(env);
+      return sendDevTestPush(env, request);
     }
 
     if (url.pathname === "/api/dev/repair-direct-conversations" && request.method === "POST") {

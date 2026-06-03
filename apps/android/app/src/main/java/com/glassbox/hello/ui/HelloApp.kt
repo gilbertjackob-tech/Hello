@@ -1,10 +1,14 @@
 package com.glassbox.hello.ui
 
+import android.Manifest
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
+import android.content.pm.PackageManager
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -31,15 +35,19 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.core.content.ContextCompat
 import com.glassbox.hello.activities.BrowserActivity
 import com.glassbox.hello.auth.AuthScreen
 import com.glassbox.hello.auth.CloudSessionManager
 import com.glassbox.hello.calls.CallViewModel
+import com.glassbox.hello.calls.CallUiStatus
 import com.glassbox.hello.familydrive.FamilyDriveScreen
 import com.glassbox.hello.calls.GlobalCallOverlay
 import com.glassbox.hello.chat.ChatScreen
 import com.glassbox.hello.core.SessionManager
 import com.glassbox.hello.core.User
+import com.glassbox.hello.notifications.HelloNotificationCenter
+import com.glassbox.hello.notifications.FcmPushRegistrar
 import com.glassbox.hello.settings.SettingsScreen
 import com.glassbox.hello.status.StatusScreen
 import com.glassbox.hello.ui.components.HelloBottomNav
@@ -47,6 +55,9 @@ import com.glassbox.hello.ui.components.HelloScreenBackground
 import com.glassbox.hello.ui.theme.HelloColors
 import com.glassbox.hello.ui.theme.HelloSpacing
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 
 private enum class MainTab(val label: String, val icon: ImageVector) {
     Chats("Chats", Icons.AutoMirrored.Filled.Chat),
@@ -126,8 +137,90 @@ fun HelloApp(darkTheme: Boolean = true) {
     }
 
     val callViewModel: CallViewModel = viewModel(key = "hello-global-call")
+    val callState by callViewModel.state.collectAsState()
+    val incomingCallLaunch by HelloNotificationCenter.incomingCallState.collectAsState()
+    var pendingIncomingAccept by remember { mutableStateOf(false) }
+    val incomingPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { grants ->
+        if (pendingIncomingAccept) {
+            pendingIncomingAccept = false
+            val signal = callState.signal
+            if (signal != null) {
+                val needsCamera = signal.isVideo
+                val hasAudio = grants[Manifest.permission.RECORD_AUDIO] == true ||
+                    ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+                val hasCamera = !needsCamera || grants[Manifest.permission.CAMERA] == true ||
+                    ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+                if (hasAudio && hasCamera) {
+                    callViewModel.acceptIncoming(context)
+                } else if (hasAudio && needsCamera) {
+                    callViewModel.acceptIncoming(context, forceAudio = true)
+                }
+            }
+        }
+    }
+
+    fun acceptIncomingFromNotification() {
+        val signal = callState.signal ?: return
+        val needsCamera = signal.isVideo
+        val hasAudio = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+        val hasCamera = !needsCamera || ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+        if (hasAudio && hasCamera) {
+            callViewModel.acceptIncoming(context)
+            return
+        }
+        pendingIncomingAccept = true
+        incomingPermissionLauncher.launch(
+            if (needsCamera) {
+                arrayOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.CAMERA)
+            } else {
+                arrayOf(Manifest.permission.RECORD_AUDIO)
+            }
+        )
+    }
+
     LaunchedEffect(currentUser.value?.id) {
-        currentUser.value?.let { callViewModel.connect(context, it) }
+        currentUser.value?.let {
+            HelloNotificationCenter.initialize(context, it.id)
+            FcmPushRegistrar.refreshAndRegister(context)
+            callViewModel.connect(context, it)
+        }
+    }
+    LaunchedEffect(incomingCallLaunch?.signal?.callId) {
+        incomingCallLaunch?.let { callViewModel.showIncomingCall(it.signal) }
+    }
+    LaunchedEffect(incomingCallLaunch?.action, callState.signal?.callId) {
+        val launch = incomingCallLaunch ?: return@LaunchedEffect
+        val currentSignal = callState.signal ?: return@LaunchedEffect
+        if (launch.signal.callId != currentSignal.callId) return@LaunchedEffect
+        when (launch.action) {
+            HelloNotificationCenter.CALL_ACTION_ACCEPT -> {
+                acceptIncomingFromNotification()
+                HelloNotificationCenter.consumeIncomingCallAction()
+                HelloNotificationCenter.consumeIncomingCall(launch.signal.callId)
+            }
+            HelloNotificationCenter.CALL_ACTION_DECLINE -> {
+                callViewModel.declineCall()
+                HelloNotificationCenter.consumeIncomingCallAction()
+                HelloNotificationCenter.consumeIncomingCall(launch.signal.callId)
+            }
+        }
+    }
+    LaunchedEffect(callState.status, callState.signal?.callId) {
+        val launch = incomingCallLaunch ?: return@LaunchedEffect
+        if (callState.signal?.callId == launch.signal.callId && callState.status != CallUiStatus.Incoming) {
+            HelloNotificationCenter.consumeIncomingCall(launch.signal.callId)
+            HelloNotificationCenter.cancelCallNotifications(context, launch.signal.callId)
+        }
+    }
+    LaunchedEffect(callState.status, callState.signal?.callId, callState.activeRoom?.id) {
+        if (callState.status != CallUiStatus.Incoming) {
+            HelloNotificationCenter.cancelCallNotifications(
+                context,
+                callState.signal?.callId ?: callState.activeRoom?.id
+            )
+        }
     }
 
     HelloScreenBackground(modifier = Modifier.fillMaxSize(), dark = darkTheme) {

@@ -47,6 +47,7 @@ const DEFAULT_ICE_SERVERS: RTCIceServer[] = [
   { urls: "stun:stun.l.google.com:19302" },
 ];
 const FORCE_RELAY = (import.meta as any).env?.VITE_WEBRTC_FORCE_RELAY === "true";
+const CALL_DEBUG_UI = (import.meta as any).env?.VITE_CALL_DEBUG_UI === "true";
 
 const applyRelayPolicy = (config: RTCConfiguration): RTCConfiguration =>
   FORCE_RELAY ? { ...config, iceTransportPolicy: "relay" } : config;
@@ -512,7 +513,7 @@ export function CallOverlay({ currentUser }: CallOverlayProps) {
       updateCallDebug({ lastError: diagnosis.reason });
       addCallDebug("WEB: connecting longer than 10 seconds", { reason: diagnosis.reason });
       void collectIceStats(pcRef.current, "connecting_timeout");
-      setShowCallDebug(true);
+      if (CALL_DEBUG_UI) setShowCallDebug(true);
     }, 10000);
     return () => window.clearTimeout(timeoutId);
   }, [addCallDebug, callStatus, collectIceStats, updateCallDebug]);
@@ -735,7 +736,7 @@ export function CallOverlay({ currentUser }: CallOverlayProps) {
       updateCallDebug({
         lastError: `remote_description_failed: ${err instanceof Error ? err.message : String(err)}`,
       });
-      setShowCallDebug(true);
+      if (CALL_DEBUG_UI) setShowCallDebug(true);
     }
   };
 
@@ -762,7 +763,7 @@ export function CallOverlay({ currentUser }: CallOverlayProps) {
 
   const finishAfterStatus = (status: CallStatus, message?: string) => {
     setCallStatus(status);
-    if (message) setHasError(message);
+    if (message && CALL_DEBUG_UI) setHasError(message);
     const timeoutId = window.setTimeout(() => {
       setHasError("");
       resetState();
@@ -1467,7 +1468,7 @@ export function CallOverlay({ currentUser }: CallOverlayProps) {
       void collectIceStats(pc, diagnosis.reason);
       const signal = buildSignal(call);
       if (signal) emitSignal("call:failed", { ...signal, reason: diagnosis.reason });
-      setShowCallDebug(true);
+      if (CALL_DEBUG_UI) setShowCallDebug(true);
       finishAfterStatus("failed", diagnosis.message);
     };
 
@@ -1811,7 +1812,7 @@ export function CallOverlay({ currentUser }: CallOverlayProps) {
         addCallDebug("WEB: setRemoteDescription answer failed", {
           error: err instanceof Error ? err.message : String(err),
         });
-        setShowCallDebug(true);
+        if (CALL_DEBUG_UI) setShowCallDebug(true);
       }
     };
 
@@ -2050,7 +2051,7 @@ export function CallOverlay({ currentUser }: CallOverlayProps) {
         addCallDebug("WEB: outgoing call failed before signaling completed", {
           error: err instanceof Error ? err.message : String(err),
         });
-        setShowCallDebug(true);
+        if (CALL_DEBUG_UI) setShowCallDebug(true);
         setHasError(err instanceof Error ? describeMediaAccessError(err, err.message) : describeMediaAccessError(err));
         resetState();
       }
@@ -2465,7 +2466,7 @@ export function CallOverlay({ currentUser }: CallOverlayProps) {
       updateCallDebug({
         lastError: `incoming_answer_failed: ${err instanceof Error ? err.message : String(err)}`,
       });
-      setShowCallDebug(true);
+      if (CALL_DEBUG_UI) setShowCallDebug(true);
       const signal = buildSignal(incomingCall, offerData.fromUserId);
       if (signal) emitSignal("call:failed", { ...signal, reason: "failed" });
       finishAfterStatus("failed", "Call failed");
@@ -3041,7 +3042,7 @@ export function CallOverlay({ currentUser }: CallOverlayProps) {
     </div>
   );
 
-  if (!incomingCall && !activeCall && !activeGroupRoom && !hasError && !showCallDebug) return null;
+  if (!incomingCall && !activeCall && !activeGroupRoom && !hasError && !(CALL_DEBUG_UI && showCallDebug)) return null;
 
   if (activeCall && isMinimized) {
     const showMiniVideo = activeCall.isVideo && remoteStream?.getVideoTracks()[0]?.enabled;
@@ -3051,23 +3052,27 @@ export function CallOverlay({ currentUser }: CallOverlayProps) {
           <motion.div 
             initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}
             className="fixed top-4 left-1/2 -translate-x-1/2 w-11/12 max-w-md bg-amber-100 border border-amber-300 text-amber-900 px-4 py-3 rounded-lg shadow-2xl z-50">
-            <p className="font-bold text-sm">Call status</p>
+            <p className="font-bold text-sm">Call notice</p>
             <p className="text-xs mt-1">{hasError}</p>
-            <button
-              onClick={() => setShowCallDebug(true)}
-              className="mt-2 text-xs font-semibold underline"
-            >
-              Show Call Debug
-            </button>
+            {CALL_DEBUG_UI && (
+              <button
+                onClick={() => setShowCallDebug(true)}
+                className="mt-2 text-xs font-semibold underline"
+              >
+                Show Call Debug
+              </button>
+            )}
           </motion.div>
         )}
-        <button
-          onClick={() => setShowCallDebug(true)}
-          className="fixed top-4 right-4 z-50 rounded-full border border-slate-700 bg-slate-950/90 px-3 py-1.5 text-xs font-semibold text-slate-100 shadow-lg"
-        >
-          Debug
-        </button>
-        {showCallDebug && (
+        {CALL_DEBUG_UI && (
+          <button
+            onClick={() => setShowCallDebug(true)}
+            className="fixed top-4 right-4 z-50 rounded-full border border-slate-700 bg-slate-950/90 px-3 py-1.5 text-xs font-semibold text-slate-100 shadow-lg"
+          >
+            Debug
+          </button>
+        )}
+        {CALL_DEBUG_UI && showCallDebug && (
           <CallDebugPanel
             debugText={callDebugText}
             onClose={() => setShowCallDebug(false)}
@@ -3163,13 +3168,15 @@ export function CallOverlay({ currentUser }: CallOverlayProps) {
     <motion.div 
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
       className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4">
-      <button
-        onClick={() => setShowCallDebug(true)}
-        className="absolute right-4 top-4 z-[60] rounded-full border border-slate-700 bg-slate-950/90 px-3 py-1.5 text-xs font-semibold text-slate-100 shadow-lg"
-      >
-        Debug
-      </button>
-      {showCallDebug && (
+      {CALL_DEBUG_UI && (
+        <button
+          onClick={() => setShowCallDebug(true)}
+          className="absolute right-4 top-4 z-[60] rounded-full border border-slate-700 bg-slate-950/90 px-3 py-1.5 text-xs font-semibold text-slate-100 shadow-lg"
+        >
+          Debug
+        </button>
+      )}
+      {CALL_DEBUG_UI && showCallDebug && (
         <CallDebugPanel
           debugText={callDebugText}
           onClose={() => setShowCallDebug(false)}
@@ -3177,14 +3184,16 @@ export function CallOverlay({ currentUser }: CallOverlayProps) {
       )}
       {hasError && (
         <motion.div initial={{ y: -50, opacity: 0 }} animate={{ y: 0, opacity: 1 }} className="absolute top-4 left-1/2 -translate-x-1/2 w-11/12 max-w-md bg-amber-100 border border-amber-300 text-amber-900 px-4 py-3 rounded-lg shadow-2xl z-50">
-          <p className="font-bold text-sm">Call status</p>
+          <p className="font-bold text-sm">Call notice</p>
           <p className="text-xs mt-1">{hasError}</p>
-          <button
-            onClick={() => setShowCallDebug(true)}
-            className="mt-2 text-xs font-semibold underline"
-          >
-            Show Call Debug
-          </button>
+          {CALL_DEBUG_UI && (
+            <button
+              onClick={() => setShowCallDebug(true)}
+              className="mt-2 text-xs font-semibold underline"
+            >
+              Show Call Debug
+            </button>
+          )}
         </motion.div>
       )}
 

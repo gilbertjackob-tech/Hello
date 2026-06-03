@@ -71,6 +71,7 @@ import com.glassbox.hello.core.ResultState
 import com.glassbox.hello.core.User
 import com.glassbox.hello.core.rememberHelloSettingsState
 import com.glassbox.hello.network.SocketManager
+import com.glassbox.hello.notifications.HelloNotificationCenter
 import com.glassbox.hello.ui.components.ErrorView
 import com.glassbox.hello.ui.components.HelloSearchBar
 import com.glassbox.hello.ui.components.LoadingView
@@ -524,6 +525,7 @@ fun ChatRoomScreen(
     }
 
     DisposableEffect(chat.id, currentUserId, currentUserName, settingsState.chatSounds) {
+        HelloNotificationCenter.setOpenChat(chat.id)
         val messageListener: (Message) -> Unit = { message ->
             if (message.chatId == chat.id) {
                 scope.launch {
@@ -577,6 +579,7 @@ fun ChatRoomScreen(
         socketManager.markMessagesRead(chat.id, currentUserId)
         viewModel.clearUnreadForChat(chat.id, currentUserId, settingsState.cloudChatEnabled)
         onDispose {
+            HelloNotificationCenter.setOpenChat(null)
             socketManager.typing(chat.id, currentUserId, currentUserName, isTyping = false)
             socketManager.leaveChat(chat.id)
             socketManager.removeMessageListener(messageListener)

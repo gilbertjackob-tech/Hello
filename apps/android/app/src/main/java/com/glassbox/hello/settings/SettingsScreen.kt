@@ -2,6 +2,8 @@ package com.glassbox.hello.settings
 
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
+import android.provider.Settings
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -64,6 +66,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.core.app.NotificationManagerCompat
 import coil.compose.AsyncImage
 import com.glassbox.hello.chat.ChatModels
 import com.glassbox.hello.chat.CloudChatApi
@@ -79,6 +82,7 @@ import com.glassbox.hello.core.SessionManager
 import com.glassbox.hello.core.UrlResolver
 import com.glassbox.hello.demo.voice.VoiceAssistantDemoScreen
 import com.glassbox.hello.networkstatus.NetworkStatusScreen
+import com.glassbox.hello.notifications.NotificationPrefs
 import com.glassbox.hello.people.PeopleScreen
 import com.glassbox.hello.ui.components.ErrorView
 import com.glassbox.hello.ui.components.HelloAvatar
@@ -335,14 +339,98 @@ private fun AppearanceRows(onOpenChatTheme: () -> Unit) {
 
 @Composable
 private fun CallsNotificationRows(userId: String?) {
+    val context = LocalContext.current
     val prefs = LocalContext.current.getSharedPreferences("hello_settings", 0)
     var desktopNotifications by remember { mutableStateOf(prefs.getBoolean("desktop_notifications", false)) }
+    var calls by remember { mutableStateOf(prefs.getBoolean(NotificationPrefs.KEY_CALL_NOTIFICATIONS, true)) }
+    var missedCalls by remember { mutableStateOf(prefs.getBoolean(NotificationPrefs.KEY_MISSED_CALL_NOTIFICATIONS, true)) }
+    var messages by remember { mutableStateOf(prefs.getBoolean(NotificationPrefs.KEY_MESSAGE_NOTIFICATIONS, true)) }
+    var mentions by remember { mutableStateOf(prefs.getBoolean(NotificationPrefs.KEY_MENTION_NOTIFICATIONS, true)) }
+    var moments by remember { mutableStateOf(prefs.getBoolean(NotificationPrefs.KEY_STATUS_POST_NOTIFICATIONS, true)) }
+    var activity by remember { mutableStateOf(prefs.getBoolean(NotificationPrefs.KEY_STATUS_ACTIVITY_NOTIFICATIONS, true)) }
+    var nudges by remember { mutableStateOf(prefs.getBoolean(NotificationPrefs.KEY_RE_ENGAGEMENT_NOTIFICATIONS, true)) }
+    var system by remember { mutableStateOf(prefs.getBoolean(NotificationPrefs.KEY_SYSTEM_NOTIFICATIONS, true)) }
+    var inApp by remember { mutableStateOf(prefs.getBoolean(NotificationPrefs.KEY_IN_APP_NOTIFICATIONS, true)) }
+    var quietHours by remember { mutableStateOf(prefs.getBoolean(NotificationPrefs.KEY_QUIET_HOURS_ENABLED, false)) }
+    var allowMentions by remember { mutableStateOf(prefs.getBoolean(NotificationPrefs.KEY_ALLOW_MENTIONS_DND, true)) }
     var cameraDialog by remember { mutableStateOf(false) }
+    val canUseFullScreenIntent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+        NotificationManagerCompat.from(context).canUseFullScreenIntent()
+    } else {
+        true
+    }
     userId?.let { PrivacyInlineRow(it) }
+    ToggleRow("Incoming calls", calls) {
+        calls = it
+        prefs.edit().putBoolean(NotificationPrefs.KEY_CALL_NOTIFICATIONS, it).apply()
+    }
+    ToggleRow("Missed calls", missedCalls) {
+        missedCalls = it
+        prefs.edit().putBoolean(NotificationPrefs.KEY_MISSED_CALL_NOTIFICATIONS, it).apply()
+    }
+    ToggleRow("Messages", messages) {
+        messages = it
+        prefs.edit().putBoolean(NotificationPrefs.KEY_MESSAGE_NOTIFICATIONS, it).apply()
+    }
+    ToggleRow("Mentions and replies", mentions) {
+        mentions = it
+        prefs.edit().putBoolean(NotificationPrefs.KEY_MENTION_NOTIFICATIONS, it).apply()
+    }
+    ToggleRow("New moments", moments) {
+        moments = it
+        prefs.edit().putBoolean(NotificationPrefs.KEY_STATUS_POST_NOTIFICATIONS, it).apply()
+    }
+    ToggleRow("Reactions and views", activity) {
+        activity = it
+        prefs.edit().putBoolean(NotificationPrefs.KEY_STATUS_ACTIVITY_NOTIFICATIONS, it).apply()
+    }
+    ToggleRow("Family nudges", nudges) {
+        nudges = it
+        prefs.edit().putBoolean(NotificationPrefs.KEY_RE_ENGAGEMENT_NOTIFICATIONS, it).apply()
+    }
+    ToggleRow("System updates", system) {
+        system = it
+        prefs.edit().putBoolean(NotificationPrefs.KEY_SYSTEM_NOTIFICATIONS, it).apply()
+    }
+    ToggleRow("In-app banners", inApp) {
+        inApp = it
+        prefs.edit().putBoolean(NotificationPrefs.KEY_IN_APP_NOTIFICATIONS, it).apply()
+    }
+    ToggleRow("Quiet hours", quietHours) {
+        quietHours = it
+        prefs.edit()
+            .putBoolean(NotificationPrefs.KEY_QUIET_HOURS_ENABLED, it)
+            .putInt(NotificationPrefs.KEY_QUIET_HOURS_START_MINUTES, 22 * 60)
+            .putInt(NotificationPrefs.KEY_QUIET_HOURS_END_MINUTES, 8 * 60)
+            .apply()
+    }
+    ToggleRow("Allow mentions in quiet hours", allowMentions) {
+        allowMentions = it
+        prefs.edit().putBoolean(NotificationPrefs.KEY_ALLOW_MENTIONS_DND, it).apply()
+    }
     ToggleRow("Desktop notifications", desktopNotifications) {
         desktopNotifications = it
         prefs.edit().putBoolean("desktop_notifications", it).apply()
     }
+    HelloSettingsRow(
+        title = "Full-screen call alerts",
+        subtitle = if (canUseFullScreenIntent) {
+            "Allowed. Incoming calls can open over the lock screen."
+        } else {
+            "Denied on Android 14+. Allow it so incoming calls can open full screen."
+        },
+        onClick = {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE && !canUseFullScreenIntent) {
+                context.startActivity(
+                    Intent(
+                        Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT,
+                        Uri.parse("package:${context.packageName}")
+                    )
+                )
+            }
+        },
+        leading = { RowIcon(Icons.Default.Notifications) }
+    )
     HelloSettingsRow(
         title = "Camera / microphone",
         subtitle = "Native permission and call media test will be connected in the call stage.",

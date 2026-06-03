@@ -88,6 +88,17 @@ function mergeChats(chats: Chat[], currentUserId: string): Chat[] {
   return Array.from(merged.values()).sort((a, b) => (b.lastMessageTime || 0) - (a.lastMessageTime || 0));
 }
 
+const NOTIFICATION_CATEGORY_PREFS = [
+  { key: "calls", label: "Calls" },
+  { key: "missed_calls", label: "Missed calls" },
+  { key: "messages", label: "Messages" },
+  { key: "mentions", label: "Mentions" },
+  { key: "status_posts", label: "New moments" },
+  { key: "status_activity", label: "Reactions/views" },
+  { key: "system", label: "System" },
+  { key: "re_engagement", label: "Nudges" },
+];
+
 export function Sidebar({
   activeChatId,
   restoreActiveChatId,
@@ -158,6 +169,22 @@ export function Sidebar({
   } = useTheme();
 
   const { notificationsEnabled, toggleNotifications } = useNotifications();
+  const [notificationCategories, setNotificationCategories] = useState<Record<string, boolean>>(() =>
+    Object.fromEntries(
+      NOTIFICATION_CATEGORY_PREFS.map((item) => [
+        item.key,
+        localStorage.getItem(`hello_notifications_${item.key}`) !== "false",
+      ]),
+    ),
+  );
+
+  const toggleNotificationCategory = (key: string) => {
+    setNotificationCategories((prev) => {
+      const nextValue = !(prev[key] ?? true);
+      localStorage.setItem(`hello_notifications_${key}`, String(nextValue));
+      return { ...prev, [key]: nextValue };
+    });
+  };
 
   const [privacy, setPrivacy] = useState<"none" | "contacts" | "everyone">(
     "everyone",
@@ -1363,6 +1390,26 @@ export function Sidebar({
                   >
                     {notificationsEnabled ? "On" : "Off"}
                   </button>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  {NOTIFICATION_CATEGORY_PREFS.map((item) => {
+                    const enabled = notificationCategories[item.key] ?? true;
+                    return (
+                      <button
+                        key={item.key}
+                        type="button"
+                        onClick={() => toggleNotificationCategory(item.key)}
+                        className={cn(
+                          "rounded-xl border px-3 py-2 text-left text-xs font-semibold transition",
+                          enabled
+                            ? "border-[var(--hello-accent)] bg-[var(--hello-accent-soft)] text-[var(--hello-accent)]"
+                            : "border-[var(--hello-border)] text-[var(--hello-text-muted)]",
+                        )}
+                      >
+                        {item.label}
+                      </button>
+                    );
+                  })}
                 </div>
                 <div className="rounded-2xl border border-[var(--hello-border)] bg-black/5 px-3 py-3 dark:bg-white/5">
                   <div className="flex items-center justify-between gap-3">

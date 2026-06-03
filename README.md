@@ -8,7 +8,7 @@ The local PC runtime is still one integrated server on `127.0.0.1:3000`, with He
 
 Run from the repository root:
 
-```powershell
+```
 cd p:\Hasnat\mirror_browser
 npm run install:all
 npm run dev
@@ -17,6 +17,21 @@ For Final Release APK:
 ```
 adb devices
 cd apps\android
+.\gradlew.bat :app:assembleRelease --console=plain
+adb install -r app\build\outputs\apk\release\app-release.apk
+```
+
+for daily testing:
+```
+cd P:\Hasnat\mirror_browser\apps\android
+.\gradlew.bat :app:installDebug --console=plain
+```
+For only compile check:
+```
+.\gradlew.bat :app:compileDebugKotlin --console=plain
+```
+for issue with gradle build- reset :
+```
 .\gradlew.bat clean assembleRelease --no-daemon; if ($LASTEXITCODE -eq 0) { adb install -r app\build\outputs\apk\release\app-release.apk }
 ```
 

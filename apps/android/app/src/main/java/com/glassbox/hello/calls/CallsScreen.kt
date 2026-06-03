@@ -8,8 +8,22 @@ import android.net.Uri
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,12 +33,12 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.CallEnd
@@ -44,7 +58,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -54,10 +67,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.viewinterop.AndroidView
 import com.glassbox.hello.ui.components.ErrorView
 import com.glassbox.hello.ui.components.HelloAvatar
@@ -72,6 +91,8 @@ import com.glassbox.hello.ui.theme.HelloShapes
 import com.glassbox.hello.ui.theme.HelloSpacing
 import org.webrtc.RendererCommon
 import org.webrtc.SurfaceViewRenderer
+import kotlin.math.absoluteValue
+import kotlin.math.roundToInt
 
 @Composable
 fun CallsScreen(
@@ -242,10 +263,7 @@ fun GlobalCallOverlay(
         CallUiStatus.Missed,
         CallUiStatus.Busy,
         CallUiStatus.Unavailable,
-        CallUiStatus.Failed -> CallResultDialog(
-            message = callState.message ?: "Call ended",
-            onDismiss = { callViewModel.dismissCallOverlay() }
-        )
+        CallUiStatus.Failed -> Unit
         CallUiStatus.PermissionDenied -> PermissionRequiredDialog(
             message = callState.message ?: "Camera/microphone permission is needed for calls.",
             onOpenSettings = {
@@ -330,16 +348,14 @@ fun IncomingCallScreen(
         modifier = modifier,
         name = name,
         label = "Incoming ${if (video) "Video" else "Audio"} Call",
-        detail = message.ifBlank { "Ringing" }
+        detail = message.ifBlank { "Ringing" },
+        pulsingAvatar = true
     ) {
-        Row(horizontalArrangement = Arrangement.spacedBy(28.dp), verticalAlignment = Alignment.CenterVertically) {
-            RoundCallButton(onClick = onDecline, danger = true, size = 68.dp) {
-                Icon(Icons.Default.PhoneDisabled, contentDescription = "Decline", tint = HelloColors.AuthText)
-            }
-            RoundCallButton(onClick = onAccept, active = true, size = 68.dp) {
-                Icon(if (video) Icons.Default.Videocam else Icons.Default.Call, contentDescription = "Accept", tint = HelloColors.DarkBg)
-            }
-        }
+        SwipeCallControls(
+            video = video,
+            onAccept = onAccept,
+            onDecline = onDecline
+        )
     }
 }
 
@@ -749,24 +765,6 @@ private fun VideoLookOverlay(look: CallVisualLook, modifier: Modifier = Modifier
     )
 }
 
-@Composable
-private fun CallResultDialog(
-    message: String,
-    onDismiss: () -> Unit
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        containerColor = HelloColors.DarkPanelStrong,
-        title = { Text("Call status", color = HelloColors.DarkText, fontWeight = FontWeight.Bold) },
-        text = { Text(message, color = HelloColors.DarkTextMuted) },
-        confirmButton = {
-            TextButton(onClick = onDismiss) {
-                Text("OK", color = HelloColors.DarkAccent)
-            }
-        }
-    )
-}
-
 private fun Context.hasPermission(permission: String): Boolean {
     return checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
 }
@@ -777,28 +775,177 @@ private fun CallStage(
     label: String,
     detail: String,
     modifier: Modifier = Modifier,
+    pulsingAvatar: Boolean = false,
     controls: @Composable () -> Unit
 ) {
+    var visible by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        visible = true
+    }
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(HelloColors.DarkBg.copy(alpha = 0.96f))
+            .background(HelloColors.DarkBg.copy(alpha = 0.88f))
             .padding(HelloSpacing.Xxl),
         contentAlignment = Alignment.Center
     ) {
-        HelloPanel(modifier = Modifier.fillMaxWidth(), strong = true, shape = HelloShapes.Xl) {
-            Column(
-                modifier = Modifier.padding(horizontal = HelloSpacing.Xxl, vertical = 40.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(HelloSpacing.Lg)
-            ) {
-                HelloAvatar(name = name, size = 106.dp, online = true)
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(label, color = HelloColors.DarkText, fontWeight = FontWeight.Bold)
-                    Text(name, color = HelloColors.DarkTextMuted)
-                    Text(detail, color = HelloColors.DarkAccent, fontWeight = FontWeight.Medium)
+        AnimatedVisibility(
+            visible = visible,
+            enter = fadeIn(tween(180)) + scaleIn(tween(220), initialScale = 0.92f) + slideInVertically(tween(220)) { it / 8 },
+            exit = fadeOut(tween(140)) + scaleOut(tween(140), targetScale = 0.96f) + slideOutVertically(tween(140)) { it / 10 }
+        ) {
+            HelloPanel(modifier = Modifier.fillMaxWidth(), strong = true, shape = HelloShapes.Xl) {
+                Column(
+                    modifier = Modifier.padding(horizontal = HelloSpacing.Xxl, vertical = 40.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(HelloSpacing.Lg)
+                ) {
+                    CallAvatar(name = name, pulsing = pulsingAvatar)
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(label, color = HelloColors.DarkText, fontWeight = FontWeight.Bold)
+                        Text(name, color = HelloColors.DarkTextMuted)
+                        if (detail.isNotBlank()) {
+                            Text(detail, color = HelloColors.DarkAccent, fontWeight = FontWeight.Medium)
+                        }
+                    }
+                    controls()
                 }
-                controls()
+            }
+        }
+    }
+}
+
+@Composable
+private fun CallAvatar(name: String, pulsing: Boolean) {
+    val transition = rememberInfiniteTransition(label = "call-pulse")
+    val pulseScale by transition.animateFloat(
+        initialValue = 1f,
+        targetValue = 1.28f,
+        animationSpec = infiniteRepeatable(animation = tween(1100), repeatMode = RepeatMode.Restart),
+        label = "pulse-scale"
+    )
+    val pulseAlpha by transition.animateFloat(
+        initialValue = 0.24f,
+        targetValue = 0f,
+        animationSpec = infiniteRepeatable(animation = tween(1100), repeatMode = RepeatMode.Restart),
+        label = "pulse-alpha"
+    )
+    Box(contentAlignment = Alignment.Center, modifier = Modifier.size(132.dp)) {
+        if (pulsing) {
+            Box(
+                modifier = Modifier
+                    .size(106.dp)
+                    .scale(pulseScale)
+                    .clip(CircleShape)
+                    .background(HelloColors.DarkAccent.copy(alpha = pulseAlpha))
+            )
+        }
+        HelloAvatar(name = name, size = 106.dp, online = true)
+    }
+}
+
+@Composable
+private fun SwipeCallControls(
+    video: Boolean,
+    onAccept: () -> Unit,
+    onDecline: () -> Unit
+) {
+    val density = LocalDensity.current
+    val haptic = LocalHapticFeedback.current
+    val trackWidth = 248.dp
+    val thumbSize = 64.dp
+    val maxDrag = with(density) { ((trackWidth - thumbSize) / 2).toPx() }
+    val threshold = maxDrag * 0.68f
+    var dragTarget by remember { mutableStateOf(0f) }
+    var dragging by remember { mutableStateOf(false) }
+    var thresholdHit by remember { mutableStateOf(false) }
+    val dragX by animateFloatAsState(
+        targetValue = dragTarget,
+        animationSpec = tween(if (dragging) 0 else 180),
+        label = "call-swipe"
+    )
+    val progress = (dragX.absoluteValue / maxDrag).coerceIn(0f, 1f)
+    val actionColor = when {
+        dragX > 0f -> HelloColors.DarkAccent
+        dragX < 0f -> HelloColors.DarkDanger
+        else -> HelloColors.DarkPanelStrong
+    }
+
+    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Box(
+            modifier = Modifier
+                .width(trackWidth)
+                .height(76.dp)
+                .clip(CircleShape)
+                .background(HelloColors.DarkBg.copy(alpha = 0.72f))
+                .pointerInput(Unit) {
+                    detectDragGestures(
+                        onDragStart = {
+                            dragging = true
+                            thresholdHit = false
+                        },
+                        onDragEnd = {
+                            dragging = false
+                            when {
+                                dragTarget > threshold -> onAccept()
+                                dragTarget < -threshold -> onDecline()
+                                else -> dragTarget = 0f
+                            }
+                        },
+                        onDragCancel = {
+                            dragging = false
+                            dragTarget = 0f
+                        },
+                        onDrag = { change, dragAmount ->
+                            change.consume()
+                            dragTarget = (dragTarget + dragAmount.x).coerceIn(-maxDrag, maxDrag)
+                            if (!thresholdHit && dragTarget.absoluteValue >= threshold) {
+                                thresholdHit = true
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            }
+                            if (thresholdHit && dragTarget.absoluteValue < threshold * 0.75f) {
+                                thresholdHit = false
+                            }
+                        }
+                    )
+                },
+            contentAlignment = Alignment.Center
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 22.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(Icons.Default.PhoneDisabled, contentDescription = "Swipe left to decline", tint = HelloColors.DarkDanger.copy(alpha = 0.86f))
+                Icon(if (video) Icons.Default.Videocam else Icons.Default.Call, contentDescription = "Swipe right to accept", tint = HelloColors.DarkAccent.copy(alpha = 0.92f))
+            }
+            Box(
+                modifier = Modifier
+                    .size(thumbSize)
+                    .offset { IntOffset(dragX.roundToInt(), 0) }
+                    .clip(CircleShape)
+                    .background(actionColor.copy(alpha = 0.68f + progress * 0.32f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = when {
+                        dragX < -threshold -> Icons.Default.PhoneDisabled
+                        dragX > threshold && video -> Icons.Default.Videocam
+                        else -> Icons.Default.Call
+                    },
+                    contentDescription = if (dragX < 0f) "Decline call" else "Accept call",
+                    tint = if (dragX > 0f) HelloColors.DarkBg else HelloColors.AuthText
+                )
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(18.dp), verticalAlignment = Alignment.CenterVertically) {
+            RoundCallButton(onClick = onDecline, danger = true, size = 56.dp) {
+                Icon(Icons.Default.PhoneDisabled, contentDescription = "Decline call", tint = HelloColors.AuthText)
+            }
+            RoundCallButton(onClick = onAccept, active = true, size = 56.dp) {
+                Icon(if (video) Icons.Default.Videocam else Icons.Default.Call, contentDescription = "Accept call", tint = HelloColors.DarkBg)
             }
         }
     }

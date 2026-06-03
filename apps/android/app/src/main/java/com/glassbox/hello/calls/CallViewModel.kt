@@ -31,6 +31,7 @@ class CallViewModel(
     private var timerJob: Job? = null
     private var missedTimeoutJob: Job? = null
     private var connectionTimeoutJob: Job? = null
+    private var terminalResetJob: Job? = null
     private val pendingOffers = mutableMapOf<String, CallSignal>()
     private val seenCallEventIds = linkedSetOf<String>()
     private var iceConfigLoaded = false
@@ -203,7 +204,7 @@ class CallViewModel(
             terminal(CallUiStatus.Failed, "Socket is disconnected. Check Family Network and retry.", null)
             return
         }
-        if (_state.value.status != CallUiStatus.Idle) {
+        if (isCallOccupying(_state.value.status)) {
             terminal(CallUiStatus.Busy, "Already in a call", _state.value.signal)
             return
         }
@@ -258,7 +259,7 @@ class CallViewModel(
             terminal(CallUiStatus.Failed, "Socket is disconnected. Check Family Network and retry.", null)
             return
         }
-        if (_state.value.status != CallUiStatus.Idle) {
+        if (isCallOccupying(_state.value.status)) {
             terminal(CallUiStatus.Busy, "Already in a call", _state.value.signal)
             return
         }
@@ -337,6 +338,28 @@ class CallViewModel(
         }
     }
 
+    fun showIncomingCall(signal: CallSignal) {
+        val current = _state.value
+        if (current.status != CallUiStatus.Idle && current.signal?.callId != signal.callId) {
+            currentUser?.id?.let { userId ->
+                socketManager.busy(signal.copy(fromUserId = userId, toUserId = signal.callerId, reason = "busy").toJson())
+            }
+            return
+        }
+        addDebug("ANDROID: external incoming call callId=${signal.callId}")
+        _state.value = CallUiState(
+            status = CallUiStatus.Incoming,
+            signal = signal,
+            peerName = signal.callerName,
+            peerAvatar = signal.callerAvatar,
+            message = incomingRingingMessage(signal),
+            socketConnected = socketManager.isConnected(),
+            mediaPhase = CallMediaPhase.Ringing,
+            debugOfferReceived = !signal.offerSdp.isNullOrBlank()
+        )
+        startIncomingTimeout(signal)
+    }
+
     private fun acceptIncomingGroup(context: Context?, user: User, room: CallRoom) {
         viewModelScope.launch {
             val joined = repository.joinGroupRoom(room.id, user.id).getOrElse {
@@ -409,9 +432,16 @@ class CallViewModel(
     }
 
     fun dismissCallOverlay() {
+        resetToIdle()
+    }
+
+    private fun resetToIdle() {
         missedTimeoutJob?.cancel()
+        connectionTimeoutJob?.cancel()
+        terminalResetJob?.cancel()
         stopTimer()
         callEngine.dispose()
+        pendingOffers.clear()
         _state.value = _state.value.copy(
             status = CallUiStatus.Idle,
             signal = null,
@@ -420,7 +450,16 @@ class CallViewModel(
             durationSeconds = 0,
             nativeMediaReady = false,
             mediaPhase = CallMediaPhase.Idle,
-            roomParticipants = emptyList()
+            roomParticipants = emptyList(),
+            debugOfferReceived = false,
+            debugAnswerSent = false,
+            debugIceSentCount = 0,
+            debugIceReceivedCount = 0,
+            debugCandidateType = null,
+            debugPeerState = null,
+            debugIceState = null,
+            debugLastError = null,
+            debugCameraStatus = null
         )
     }
 
@@ -604,7 +643,7 @@ class CallViewModel(
 
     private fun handleIncomingStart(user: User?, signal: CallSignal) {
         if (user == null || signal.toUserId != user.id) return
-        if (_state.value.status != CallUiStatus.Idle) {
+        if (isCallOccupying(_state.value.status)) {
             socketManager.busy(signal.copy(fromUserId = user.id, toUserId = signal.callerId, reason = "busy").toJson())
             return
         }
@@ -621,15 +660,12 @@ class CallViewModel(
             signal = incoming,
             peerName = incoming.callerName,
             peerAvatar = incoming.callerAvatar,
-            message = if (incoming.offerSdp.isNullOrBlank()) {
-                "Waiting for offer from caller..."
-            } else {
-                "Offer received but answer not created"
-            },
+            message = incomingRingingMessage(incoming),
             mediaPhase = CallMediaPhase.Ringing,
             debugOfferReceived = !incoming.offerSdp.isNullOrBlank()
         )
         socketManager.ringing(signal.copy(fromUserId = user.id, toUserId = signal.callerId).toJson())
+        startIncomingTimeout(incoming)
     }
 
     private fun handleOffer(signal: CallSignal) {
@@ -649,7 +685,7 @@ class CallViewModel(
             signal = merged,
             debugOfferReceived = !signal.offerSdp.isNullOrBlank(),
             message = if (_state.value.status == CallUiStatus.Incoming) {
-                "Offer received but answer not created"
+                incomingRingingMessage(merged)
             } else {
                 _state.value.message
             }
@@ -665,12 +701,15 @@ class CallViewModel(
     private fun terminal(status: CallUiStatus, message: String, signal: CallSignal?) {
         missedTimeoutJob?.cancel()
         connectionTimeoutJob?.cancel()
+        terminalResetJob?.cancel()
         stopTimer()
         callEngine.dispose()
+        val terminalSignal = signal ?: _state.value.signal
+        val terminalRoom = _state.value.activeRoom
         _state.value = _state.value.copy(
             status = status,
-            signal = signal ?: _state.value.signal,
-            activeRoom = _state.value.activeRoom,
+            signal = terminalSignal,
+            activeRoom = terminalRoom,
             message = message,
             mediaPhase = CallMediaPhase.Closed,
             nativeMediaReady = false
@@ -679,6 +718,15 @@ class CallViewModel(
             viewModelScope.launch {
                 delay(500)
                 loadHistory(userId)
+            }
+        }
+        terminalResetJob = viewModelScope.launch {
+            delay(900)
+            val current = _state.value
+            val sameCall = terminalSignal?.callId == null || current.signal?.callId == terminalSignal.callId
+            val sameRoom = terminalRoom?.id == null || current.activeRoom?.id == terminalRoom.id
+            if (current.status == status && sameCall && sameRoom) {
+                resetToIdle()
             }
         }
     }
@@ -701,11 +749,11 @@ class CallViewModel(
     private fun startMissedTimeout(signal: CallSignal) {
         missedTimeoutJob?.cancel()
         missedTimeoutJob = viewModelScope.launch {
-            delay(10_000)
+            delay(15_000)
             if (_state.value.signal?.callId == signal.callId && _state.value.status == CallUiStatus.Outgoing) {
                 _state.value = _state.value.copy(message = "Trying to reach...")
             }
-            delay(20_000)
+            delay(30_000)
             if (_state.value.signal?.callId == signal.callId && _state.value.status == CallUiStatus.Outgoing) {
                 socketManager.missed(signal.copy(reason = "no_answer").toJson())
                 terminal(CallUiStatus.Missed, "No answer", signal)
@@ -713,10 +761,24 @@ class CallViewModel(
         }
     }
 
+    private fun startIncomingTimeout(signal: CallSignal) {
+        missedTimeoutJob?.cancel()
+        missedTimeoutJob = viewModelScope.launch {
+            delay(45_000)
+            val current = _state.value
+            if (current.signal?.callId == signal.callId && current.status == CallUiStatus.Incoming) {
+                currentUser?.id?.let { userId ->
+                    socketManager.missed(signal.copy(fromUserId = userId, toUserId = signal.callerId, reason = "missed").toJson())
+                }
+                terminal(CallUiStatus.Missed, "Missed call", current.signal)
+            }
+        }
+    }
+
     private fun startConnectionTimeout(signal: CallSignal) {
         connectionTimeoutJob?.cancel()
         connectionTimeoutJob = viewModelScope.launch {
-            delay(25_000)
+            delay(30_000)
             val current = _state.value
             if (current.signal?.callId == signal.callId && current.status == CallUiStatus.Connecting) {
                 val failed = activeSignal()?.copy(reason = "connection_timeout")
@@ -747,6 +809,19 @@ class CallViewModel(
         return if (signal.callerId == selfId) signal.calleeId else signal.callerId
     }
 
+    private fun incomingRingingMessage(signal: CallSignal): String {
+        return if (signal.offerSdp.isNullOrBlank()) "Ringing..." else "Ready to answer"
+    }
+
+    private fun isCallOccupying(status: CallUiStatus): Boolean {
+        return status in setOf(
+            CallUiStatus.Outgoing,
+            CallUiStatus.Incoming,
+            CallUiStatus.Connecting,
+            CallUiStatus.Active
+        )
+    }
+
     private fun callStartErrorMessage(raw: String?): String {
         val message = raw.orEmpty()
         return when {
@@ -775,7 +850,7 @@ class CallViewModel(
         val room = payload.toRoomFromEvent() ?: return
         val callerId = payload.optString("fromUserId", room.hostId)
         if (callerId == user.id || !room.participantIds.contains(user.id)) return
-        if (_state.value.status != CallUiStatus.Idle) {
+        if (isCallOccupying(_state.value.status)) {
             socketManager.leaveRoom(
                 JSONObject()
                     .put("roomId", room.id)
@@ -828,6 +903,7 @@ class CallViewModel(
         stopTimer()
         missedTimeoutJob?.cancel()
         connectionTimeoutJob?.cancel()
+        terminalResetJob?.cancel()
         super.onCleared()
     }
 

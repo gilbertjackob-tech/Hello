@@ -44,6 +44,7 @@ class SocketManager private constructor() : CallSocket {
     var onChatUpdated: ((ChatModels.Chat) -> Unit)? = null
     var onPresenceUpdated: ((JSONObject) -> Unit)? = null
     var onTyping: ((JSONObject) -> Unit)? = null
+    var onNotification: ((JSONObject) -> Unit)? = null
     override var onCallEvent: ((String, JSONObject) -> Unit)? = null
     override var onConnectedChanged: ((Boolean) -> Unit)? = null
 
@@ -496,6 +497,7 @@ class SocketManager private constructor() : CallSocket {
             }
             "chat_updated", "new_chat" -> parse<ChatModels.Chat>(payload)?.let { onChatUpdated?.invoke(it) }
             "user_presence", "user_updated", "presence_updated" -> onPresenceUpdated?.invoke(payload)
+            "notification" -> onNotification?.invoke(payload)
             "user_typing" -> {
                 onTyping?.invoke(payload)
                 typingListeners.forEach { listener -> listener(payload) }

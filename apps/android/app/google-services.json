@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "882848089313",
+    "project_id": "gen-lang-client-0855060441",
+    "storage_bucket": "gen-lang-client-0855060441.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:882848089313:android:7e0f2a2dcd0177364ae3a0",
+        "android_client_info": {
+          "package_name": "com.glassbox.hello"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "882848089313-2uftgg9n257qj8c6lclgok0ub163ihue.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAqBiP3ukE9qlUiLE04XpOG5SJfDe6vCOg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "882848089313-2uftgg9n257qj8c6lclgok0ub163ihue.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
