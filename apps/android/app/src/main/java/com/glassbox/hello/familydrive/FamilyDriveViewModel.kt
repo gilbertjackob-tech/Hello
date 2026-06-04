@@ -32,7 +32,10 @@ data class FamilyDriveUiState(
     val uploadTotal: Int = 0,
     val error: String? = null,
     val infoMessage: String? = null,
-    val lastDeleteLimit: DriveDeleteLimit? = null
+    val lastDeleteLimit: DriveDeleteLimit? = null,
+    val events: List<DriveEvent> = emptyList(),
+    val circles: List<DriveCircle> = emptyList(),
+    val chatContacts: List<DriveContact> = emptyList()
 )
 
 class FamilyDriveViewModel : ViewModel() {
@@ -112,6 +115,67 @@ class FamilyDriveViewModel : ViewModel() {
         }
     }
 
+    fun refreshDriveSetup(context: Context, userId: String) {
+        viewModelScope.launch {
+            repository.fetchEvents().fold(
+                onSuccess = { events -> _state.update { it.copy(events = events) } },
+                onFailure = { error -> _state.update { it.copy(error = error.message ?: "Drive events could not load") } }
+            )
+            repository.fetchCircles().fold(
+                onSuccess = { circles -> _state.update { it.copy(circles = circles) } },
+                onFailure = { error -> _state.update { it.copy(error = error.message ?: "Drive circles could not load") } }
+            )
+            repository.fetchChatContacts(context.applicationContext, userId).fold(
+                onSuccess = { contacts -> _state.update { it.copy(chatContacts = contacts) } },
+                onFailure = { /* Keep contact picker empty rather than showing unknown users. */ }
+            )
+        }
+    }
+
+    fun createEvent(name: String, userId: String, onCreated: (DriveEvent) -> Unit = {}) {
+        val cleanName = name.trim()
+        if (cleanName.isBlank()) {
+            _state.update { it.copy(error = "Enter an event name") }
+            return
+        }
+        viewModelScope.launch {
+            repository.createEvent(cleanName, userId).fold(
+                onSuccess = { event ->
+                    _state.update { current ->
+                        current.copy(
+                            events = (listOf(event) + current.events.filterNot { it.id == event.id }),
+                            infoMessage = "Event created."
+                        )
+                    }
+                    onCreated(event)
+                },
+                onFailure = { error -> _state.update { it.copy(error = error.message ?: "Event could not be created") } }
+            )
+        }
+    }
+
+    fun createCircle(name: String, ownerUserId: String, members: List<DriveCircleMember>, onCreated: (DriveCircle) -> Unit = {}) {
+        val cleanName = name.trim()
+        if (cleanName.isBlank()) {
+            _state.update { it.copy(error = "Enter a circle name") }
+            return
+        }
+        viewModelScope.launch {
+            repository.createCircle(cleanName, ownerUserId, members).fold(
+                onSuccess = { circle ->
+                    _state.update { current ->
+                        current.copy(
+                            circles = (listOf(circle) + current.circles.filterNot { it.id == circle.id }),
+                            infoMessage = "Circle created."
+                        )
+                    }
+                    onCreated(circle)
+                },
+                onFailure = { error -> _state.update { it.copy(error = error.message ?: "Circle could not be created") } }
+            )
+        }
+    }
+
     fun loadMore() {
         val current = _state.value
         if (current.isLoading || current.isLoadingMore || !current.hasMore || current.nextCursor == null) return
@@ -164,7 +228,7 @@ class FamilyDriveViewModel : ViewModel() {
         }
     }
 
-    fun upload(context: Context, uploaderId: String, uris: List<Uri>) {
+    fun upload(context: Context, uploaderId: String, uris: List<Uri>, plan: DriveUploadPlan = DriveUploadPlan()) {
         if (uris.isEmpty() || _state.value.isUploading) return
         _state.update {
             it.copy(
@@ -180,6 +244,7 @@ class FamilyDriveViewModel : ViewModel() {
                 context = context.applicationContext,
                 uris = uris,
                 uploaderId = uploaderId,
+                plan = plan,
                 onProgress = { done, total ->
                     _state.update {
                         it.copy(

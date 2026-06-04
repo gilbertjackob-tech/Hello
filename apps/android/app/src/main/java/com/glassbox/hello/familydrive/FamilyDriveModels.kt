@@ -18,6 +18,57 @@ data class DriveItem(
     val isVideo: Boolean get() = type == "video" || mimeType?.startsWith("video/") == true
 }
 
+data class DriveUploadPlan(
+    val eventId: String? = null,
+    val eventName: String = "Daily Memories",
+    val circleIds: List<String> = emptyList(),
+    val allowedUserIds: List<String> = emptyList(),
+    val audienceBreakdown: Map<String, Int> = emptyMap(),
+    val batchId: String = "batch_${System.currentTimeMillis()}"
+)
+
+data class DriveEvent(
+    val id: String,
+    val name: String,
+    val createdByUserId: String? = null,
+    val coverItemId: String? = null,
+    val itemCount: Int = 0,
+    val createdAt: Long = 0L,
+    val updatedAt: Long = 0L
+)
+
+data class DriveEventsResponse(
+    val events: List<DriveEvent> = emptyList()
+)
+
+data class DriveCircle(
+    val id: String,
+    val name: String,
+    val ownerUserId: String? = null,
+    val memberCount: Int = 0,
+    val members: List<DriveCircleMember> = emptyList(),
+    val createdAt: Long = 0L,
+    val updatedAt: Long = 0L
+)
+
+data class DriveCircleMember(
+    val userId: String,
+    val role: String = "Can only see",
+    val name: String? = null,
+    val avatar: String? = null
+)
+
+data class DriveCirclesResponse(
+    val circles: List<DriveCircle> = emptyList()
+)
+
+data class DriveContact(
+    val id: String,
+    val name: String,
+    val avatar: String? = null,
+    val sourceChatId: String? = null
+)
+
 data class DriveItemsResponse(
     val items: List<DriveItem> = emptyList(),
     val nextCursor: Long? = null,
@@ -67,7 +118,12 @@ data class PendingDriveItem(
     val monthLabel: String,
     val status: PendingDriveStatus = PendingDriveStatus.PENDING_LOCAL,
     val retryCount: Int = 0,
-    val lastError: String? = null
+    val lastError: String? = null,
+    val eventId: String? = null,
+    val eventName: String? = null,
+    val selectedCircleIds: List<String> = emptyList(),
+    val selectedUserIds: List<String> = emptyList(),
+    val batchId: String? = null
 ) {
     val isVideo: Boolean get() = mediaType == "video" || mimeType.startsWith("video/")
 }

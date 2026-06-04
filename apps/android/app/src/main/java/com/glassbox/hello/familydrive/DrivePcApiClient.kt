@@ -45,17 +45,57 @@ class DrivePcApiClient : DrivePcApi {
         gson.fromJson(get(url), DriveDeleteLimit::class.java)
     }
 
+    override suspend fun fetchDriveEvents(): Result<List<DriveEvent>> = safePcCall {
+        gson.fromJson(get("$driveBaseUrl/drive/events"), DriveEventsResponse::class.java).events
+    }
+
+    override suspend fun createDriveEvent(name: String, userId: String): Result<DriveEvent> = safePcCall {
+        val body = gson.toJson(mapOf("name" to name, "userId" to userId))
+            .toRequestBody("application/json".toMediaType())
+        val response = request(Request.Builder().url("$driveBaseUrl/drive/events").post(body).build())
+        gson.fromJson(response, DriveEvent::class.java)
+    }
+
+    override suspend fun fetchDriveCircles(): Result<List<DriveCircle>> = safePcCall {
+        gson.fromJson(get("$driveBaseUrl/drive/circles"), DriveCirclesResponse::class.java).circles
+    }
+
+    override suspend fun createDriveCircle(name: String, ownerUserId: String, members: List<DriveCircleMember>): Result<DriveCircle> = safePcCall {
+        val body = gson.toJson(
+            mapOf(
+                "name" to name,
+                "userId" to ownerUserId,
+                "members" to members.map { member ->
+                    mapOf(
+                        "userId" to member.userId,
+                        "role" to member.role,
+                        "name" to member.name,
+                        "avatar" to member.avatar
+                    )
+                }
+            )
+        ).toRequestBody("application/json".toMediaType())
+        val response = request(Request.Builder().url("$driveBaseUrl/drive/circles").post(body).build())
+        gson.fromJson(response, DriveCircle::class.java)
+    }
+
     override suspend fun uploadDriveFile(
         fileName: String,
         mimeType: String,
         bytes: ByteArray,
-        uploaderId: String
+        uploaderId: String,
+        plan: DriveUploadPlan
     ): Result<DriveUploadResponse> = safePcCall {
-        val body = MultipartBody.Builder()
+        val bodyBuilder = MultipartBody.Builder()
             .setType(MultipartBody.FORM)
             .addFormDataPart("uploaderId", uploaderId)
+            .addFormDataPart("eventName", plan.eventName)
+            .addFormDataPart("batchId", plan.batchId)
             .addFormDataPart("files", fileName, bytes.toRequestBody(mimeType.toMediaType()))
-            .build()
+        plan.eventId?.takeIf { it.isNotBlank() }?.let { bodyBuilder.addFormDataPart("eventId", it) }
+        plan.circleIds.forEach { bodyBuilder.addFormDataPart("circleIds[]", it) }
+        plan.allowedUserIds.forEach { bodyBuilder.addFormDataPart("allowedUserIds[]", it) }
+        val body = bodyBuilder.build()
         val response = request(Request.Builder().url("$driveBaseUrl/drive/upload").post(body).build())
         gson.fromJson(response, DriveUploadResponse::class.java)
     }

@@ -125,6 +125,8 @@ dependencies {
     ksp(libs.androidx.room.compiler)
     implementation(libs.webrtc.android)
     implementation(libs.firebase.messaging)
+    implementation(libs.firebase.firestore)
+    implementation(libs.kotlinx.coroutines.play.services)
     implementation(libs.androidx.camera.core)
     implementation(libs.androidx.camera.camera2)
     implementation(libs.androidx.camera.lifecycle)
