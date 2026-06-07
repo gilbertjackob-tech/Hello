@@ -5,6 +5,8 @@ import android.content.Intent
 import android.net.Uri
 import android.provider.OpenableColumns
 import com.glassbox.hello.chat.CloudChatRepository
+import com.glassbox.hello.chat.ChatModels
+import com.glassbox.hello.debug.HelloDebugLog
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -17,32 +19,72 @@ import java.util.Locale
 class FamilyDriveRepository(
     private val api: DrivePcApi = DrivePcApiClient()
 ) {
-    suspend fun fetchItems(limit: Int = 60, before: Long? = null, sync: Boolean = false): Result<DriveItemsResponse> {
-        return api.fetchDriveItems(limit = limit, before = before, sync = sync)
+    suspend fun fetchItems(
+        userId: String,
+        limit: Int = 60,
+        before: Long? = null,
+        sync: Boolean = false,
+        circleId: String? = null,
+        eventId: String? = null
+    ): Result<DriveItemsResponse> {
+        return api.fetchDriveItems(
+            userId = userId,
+            limit = limit,
+            before = before,
+            sync = sync,
+            circleId = circleId,
+            eventId = eventId
+        )
     }
 
-    suspend fun fetchTrash(limit: Int = 60, before: Long? = null, sync: Boolean = false): Result<DriveItemsResponse> {
-        return api.fetchDriveTrash(limit = limit, before = before, sync = sync)
+    suspend fun fetchTrash(
+        userId: String,
+        limit: Int = 60,
+        before: Long? = null,
+        sync: Boolean = false,
+        circleId: String? = null,
+        eventId: String? = null
+    ): Result<DriveItemsResponse> {
+        return api.fetchDriveTrash(
+            userId = userId,
+            limit = limit,
+            before = before,
+            sync = sync,
+            circleId = circleId,
+            eventId = eventId
+        )
     }
 
     suspend fun fetchDeleteLimit(userId: String): Result<DriveDeleteLimit> {
         return api.fetchDriveDeleteLimit(userId)
     }
 
-    suspend fun fetchEvents(): Result<List<DriveEvent>> {
-        return api.fetchDriveEvents()
+    suspend fun fetchEvents(userId: String, circleId: String? = null): Result<List<DriveEvent>> {
+        return api.fetchDriveEvents(userId, circleId)
     }
 
-    suspend fun createEvent(name: String, userId: String): Result<DriveEvent> {
-        return api.createDriveEvent(name, userId).also { result ->
+    suspend fun createEvent(name: String, userId: String, circleId: String): Result<DriveEvent> {
+        return api.createDriveEvent(name, userId, circleId).also { result ->
             result.getOrNull()?.let { event ->
                 mirrorDriveMetadataToFirestore("events", event.id, event)
             }
         }
     }
 
-    suspend fun fetchCircles(): Result<List<DriveCircle>> {
-        return api.fetchDriveCircles()
+    suspend fun renameEvent(eventId: String, userId: String, name: String): Result<DriveEvent> {
+        return api.renameDriveEvent(eventId, userId, name).also { result ->
+            result.getOrNull()?.let { event ->
+                mirrorDriveMetadataToFirestore("events", event.id, event)
+            }
+        }
+    }
+
+    suspend fun deleteEvent(eventId: String, userId: String): Result<Unit> {
+        return api.deleteDriveEvent(eventId, userId)
+    }
+
+    suspend fun fetchCircles(userId: String): Result<List<DriveCircle>> {
+        return api.fetchDriveCircles(userId)
     }
 
     suspend fun createCircle(name: String, ownerUserId: String, members: List<DriveCircleMember>): Result<DriveCircle> {
@@ -53,8 +95,37 @@ class FamilyDriveRepository(
         }
     }
 
+    suspend fun leaveCircle(circleId: String, userId: String): Result<Unit> {
+        return api.leaveDriveCircle(circleId, userId)
+    }
+
+    suspend fun deleteCircle(circleId: String, userId: String): Result<Unit> {
+        return api.deleteDriveCircle(circleId, userId)
+    }
+
+    suspend fun fetchDeletePolls(userId: String, circleId: String): Result<List<DriveDeletePoll>> {
+        return api.fetchDriveDeletePolls(userId, circleId)
+    }
+
+    suspend fun createDeletePoll(userId: String, targetType: String, targetId: String, circleId: String? = null): Result<DriveDeletePoll> {
+        return api.createDriveDeletePoll(userId, targetType, targetId, circleId)
+    }
+
+    suspend fun voteDeletePoll(pollId: String, userId: String, vote: String): Result<DriveDeletePoll> {
+        return api.voteDriveDeletePoll(pollId, userId, vote)
+    }
+
+    suspend fun fetchFavorites(userId: String): Result<List<String>> {
+        return api.fetchDriveFavorites(userId)
+    }
+
+    suspend fun setFavorite(userId: String, itemId: String, favorite: Boolean): Result<Unit> {
+        return api.setDriveFavorite(userId, itemId, favorite)
+    }
+
     suspend fun fetchChatContacts(context: Context, currentUserId: String): Result<List<DriveContact>> = withContext(Dispatchers.IO) {
         try {
+            HelloDebugLog.d("DriveRepo", "fetchChatContacts currentUserId=$currentUserId")
             val cloudRepository = CloudChatRepository(context.applicationContext)
             val chats = cloudRepository.fetchChats(currentUserId)
                 .getOrElse { cloudRepository.cachedChats(currentUserId) }
@@ -65,30 +136,33 @@ class FamilyDriveRepository(
                         .map { user ->
                             DriveContact(
                                 id = user.id,
-                                name = user.name,
+                                name = normalizedContactName(user),
+                                username = user.username?.trim()?.ifBlank { null },
                                 avatar = user.avatar,
                                 sourceChatId = chat.id
                             )
                         }
                 }
                 .distinctBy { it.id }
-                .sortedBy { it.name.lowercase(Locale.US) }
+                .sortedBy { it.name.trim().lowercase(Locale.US) }
+            HelloDebugLog.d("DriveRepo", "fetchChatContacts success chats=${chats.size} contacts=${contacts.size}")
             Result.success(contacts)
         } catch (error: Exception) {
+            HelloDebugLog.w("DriveRepo", "fetchChatContacts failure error=${error.message}", error)
             Result.failure(error)
         }
     }
 
-    suspend fun deleteItem(itemId: String, userId: String): Result<DriveDeleteResponse> {
-        return api.deleteDriveItem(itemId, userId)
+    suspend fun deleteItem(itemId: String, userId: String, securityAnswer: String): Result<DriveDeleteResponse> {
+        return api.deleteDriveItem(itemId, userId, securityAnswer)
     }
 
-    suspend fun restoreItem(itemId: String): Result<DriveItem> {
-        return api.restoreDriveItem(itemId)
+    suspend fun restoreItem(itemId: String, userId: String): Result<DriveItem> {
+        return api.restoreDriveItem(itemId, userId)
     }
 
-    suspend fun permanentlyDeleteItem(itemId: String): Result<Unit> {
-        return api.permanentlyDeleteDriveItem(itemId)
+    suspend fun permanentlyDeleteItem(itemId: String, userId: String): Result<Unit> {
+        return api.permanentlyDeleteDriveItem(itemId, userId)
     }
 
     suspend fun removePendingUpload(context: Context, itemId: String): Result<Unit> = withContext(Dispatchers.IO) {
@@ -108,6 +182,7 @@ class FamilyDriveRepository(
         onProgress: (uploaded: Int, total: Int) -> Unit
     ): Result<DriveUploadOutcome> = withContext(Dispatchers.IO) {
         try {
+            HelloDebugLog.d("DriveRepo", "uploadUris uploaderId=$uploaderId count=${uris.size} eventId=${plan.eventId} circles=${plan.circleIds.size} users=${plan.allowedUserIds.size}")
             val uploadedItems = mutableListOf<DriveItem>()
             val appContext = context.applicationContext
             var pendingItems = emptyList<PendingDriveItem>()
@@ -125,6 +200,7 @@ class FamilyDriveRepository(
                     uploadedItems += response.items
                     onProgress(index + 1, uris.size)
                 } catch (error: Exception) {
+                    HelloDebugLog.w("DriveRepo", "uploadUris falling_back_to_pending index=$index uri=$uri error=${error.message}", error)
                     val remaining = uris.drop(index)
                     pendingItems = savePendingUploads(appContext, remaining, plan).getOrThrow()
                     FamilyDriveUploadWorker.enqueue(appContext, uploaderId)
@@ -133,8 +209,10 @@ class FamilyDriveRepository(
             }
             val outcome = DriveUploadOutcome(syncedItems = uploadedItems, pendingItems = pendingItems)
             mirrorUploadOutcomeToFirestore(plan, outcome)
+            HelloDebugLog.d("DriveRepo", "uploadUris success synced=${outcome.syncedItems.size} pending=${outcome.pendingItems.size}")
             Result.success(outcome)
         } catch (error: Exception) {
+            HelloDebugLog.w("DriveRepo", "uploadUris failure error=${error.message}", error)
             Result.failure(error)
         }
     }
@@ -145,6 +223,7 @@ class FamilyDriveRepository(
 
     suspend fun retryPendingUploads(context: Context, uploaderId: String, itemId: String? = null): Result<Int> = withContext(Dispatchers.IO) {
         try {
+            HelloDebugLog.d("DriveRepo", "retryPendingUploads uploaderId=$uploaderId itemId=$itemId")
             val appContext = context.applicationContext
             val store = pendingStore(appContext)
             val items = store.getRetryable(itemId)
@@ -172,20 +251,24 @@ class FamilyDriveRepository(
                     store.updateStatus(item.id, PendingDriveStatus.SYNCED, null)
                     uploadedCount += 1
                 } catch (error: Exception) {
+                    HelloDebugLog.w("DriveRepo", "retryPendingUploads item_failed itemId=${item.id} error=${error.message}", error)
                     store.markRetryable(
                         item.id,
                         error.message ?: "Upload retry failed"
                     )
                 }
             }
+            HelloDebugLog.d("DriveRepo", "retryPendingUploads success uploadedCount=$uploadedCount")
             Result.success(uploadedCount)
         } catch (error: Exception) {
+            HelloDebugLog.w("DriveRepo", "retryPendingUploads failure error=${error.message}", error)
             Result.failure(error)
         }
     }
 
     private suspend fun savePendingUploads(context: Context, uris: List<Uri>, plan: DriveUploadPlan): Result<List<PendingDriveItem>> = withContext(Dispatchers.IO) {
         try {
+            HelloDebugLog.d("DriveRepo", "savePendingUploads count=${uris.size} eventId=${plan.eventId}")
             val now = System.currentTimeMillis()
             val items = uris.mapIndexedNotNull { index, uri ->
                 readPickedDriveMetadata(context, uri)?.let { picked ->
@@ -212,8 +295,10 @@ class FamilyDriveRepository(
             }
             if (items.isEmpty()) throw IllegalArgumentException("No selected photos or videos could be saved locally")
             pendingStore(context).upsertAll(items)
+            HelloDebugLog.d("DriveRepo", "savePendingUploads success count=${items.size}")
             Result.success(items)
         } catch (error: Exception) {
+            HelloDebugLog.w("DriveRepo", "savePendingUploads failure error=${error.message}", error)
             Result.failure(error)
         }
     }
@@ -250,6 +335,15 @@ class FamilyDriveRepository(
 
     private fun pendingStore(context: Context): FamilyDrivePendingStore {
         return FamilyDrivePendingStore.getInstance(context.applicationContext)
+    }
+
+    private fun normalizedContactName(user: ChatModels.User): String {
+        val cleanName = user.name?.trim().orEmpty()
+        if (cleanName.isNotBlank()) return cleanName
+        val cleanUsername = user.username?.trim().orEmpty()
+        if (cleanUsername.isNotBlank()) return cleanUsername
+        val cleanId = user.id?.trim().orEmpty()
+        return cleanId.ifBlank { "Unknown contact" }
     }
 
     private fun readPickedDriveFile(context: Context, uri: Uri): PickedDriveFile? {

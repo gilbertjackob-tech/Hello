@@ -23,7 +23,7 @@ import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Image
-import androidx.compose.material.icons.filled.InsertDriveFile
+import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Mic
@@ -273,6 +273,6 @@ private fun AttachmentIcon() {
             .background(HelloColors.DarkAccentSoft, HelloShapes.Md),
         contentAlignment = Alignment.Center
     ) {
-        Icon(Icons.Default.InsertDriveFile, contentDescription = null, tint = HelloColors.DarkAccent)
+        Icon(Icons.AutoMirrored.Filled.InsertDriveFile, contentDescription = null, tint = HelloColors.DarkAccent)
     }
 }

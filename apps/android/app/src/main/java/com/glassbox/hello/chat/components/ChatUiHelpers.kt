@@ -84,6 +84,7 @@ fun attachmentTypeLabel(message: ChatModels.Message): String {
 
 fun messagePreviewText(message: ChatModels.Message): String {
     return when {
+        message.callInfo != null -> callSummaryLabel(message.callInfo)
         isStickerMessage(message.text) -> "Sticker"
         message.isDeleted == true -> "Deleted message"
         message.location != null -> message.text.ifBlank { "Location" }
@@ -98,6 +99,21 @@ fun formatDuration(seconds: Long): String {
     val minutes = seconds / 60
     val remaining = seconds % 60
     return "$minutes:${remaining.toString().padStart(2, '0')}"
+}
+
+fun callSummaryLabel(callInfo: ChatModels.CallInfo?): String {
+    if (callInfo == null) return "Call"
+    val callType = if (callInfo.callType.equals("video", ignoreCase = true)) "Video" else "Audio"
+    val duration = callInfo.durationSeconds ?: 0L
+    return when (callInfo.status?.lowercase()) {
+        "missed" -> "Missed ${callType.lowercase()} call"
+        "declined" -> "$callType call declined"
+        "busy" -> "$callType call busy"
+        "unavailable" -> "$callType call unavailable"
+        "failed" -> "$callType call failed"
+        "cancelled" -> "$callType call cancelled"
+        else -> if (duration > 0L) "$callType call • ${formatDuration(duration)}" else "$callType call"
+    }
 }
 
 fun formatMessageDate(timestamp: Long): String {

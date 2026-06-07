@@ -7,6 +7,7 @@ export interface User {
   id: string;
   name: string;
   avatar: string;
+  username?: string;
   phone?: string;
   email?: string;
   online?: boolean;
@@ -148,6 +149,11 @@ export interface CallHistoryItem {
 
 export interface DriveItem {
   id: string;
+  batchId?: string | null;
+  eventId?: string | null;
+  eventName?: string | null;
+  circleIds?: string[];
+  favorite?: boolean;
   url: string;
   thumbnailUrl?: string;
   originalName?: string;
@@ -185,6 +191,60 @@ export interface DriveDeleteResponse {
 export interface DriveUploadResponse {
   items: DriveItem[];
   count: number;
+  batchId?: string;
+  eventId?: string;
+}
+
+export interface DriveCircleMember {
+  userId: string;
+  role?: string;
+  name?: string | null;
+  username?: string | null;
+  avatar?: string | null;
+}
+
+export interface DriveCircle {
+  id: string;
+  name: string;
+  ownerUserId?: string | null;
+  memberCount: number;
+  members: DriveCircleMember[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface DriveEvent {
+  id: string;
+  name: string;
+  createdByUserId?: string | null;
+  coverItemId?: string | null;
+  itemCount: number;
+  circleIds?: string[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface DriveDeletePollVote {
+  pollId: string;
+  userId: string;
+  vote: "delete" | "keep" | string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface DriveDeletePoll {
+  id: string;
+  targetType: "circle" | "event" | string;
+  targetId: string;
+  circleId: string;
+  startedByUserId?: string | null;
+  endsAt: number;
+  status: "open" | "passed" | "failed" | "applied" | string;
+  createdAt: number;
+  resolvedAt?: number | null;
+  deleteVotes?: number;
+  keepVotes?: number;
+  votes?: DriveDeletePollVote[];
 }
 
 export interface LocationData {
@@ -201,6 +261,7 @@ export interface Message {
   senderName: string;
   senderAvatar?: string;
   text: string;
+  messageType?: string;
   timestamp: number;
   reactions?: Reaction[];
   attachmentUrl?: string;
@@ -214,4 +275,18 @@ export interface Message {
   deletedFor?: string[];
   location?: LocationData;
   replyTo?: { id: string; text: string; senderName: string; senderId?: string };
+  callInfo?: {
+    callId: string;
+    chatId?: string;
+    callerId?: string;
+    calleeId?: string;
+    callType?: "audio" | "video" | string;
+    status?: "ended" | "missed" | "declined" | "busy" | "unavailable" | "failed" | "cancelled" | string;
+    startedAt?: number;
+    answeredAt?: number;
+    endedAt?: number;
+    durationSeconds?: number;
+    endReason?: string;
+    mode?: CallMode | string;
+  };
 }

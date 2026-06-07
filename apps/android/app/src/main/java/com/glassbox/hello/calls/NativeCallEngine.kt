@@ -197,6 +197,10 @@ class NativeCallEngine : CallMediaEngine {
             queuedRemoteAnswerSdp = answerSdp
             return
         }
+        if (remoteDescriptionSet && pc.signalingState() == PeerConnection.SignalingState.STABLE) {
+            Log.d(TAG, "[CALL_TRACE] android ignored duplicate answer while stable")
+            return
+        }
         pc.setRemoteDescription(object : SimpleSdpObserver() {
             override fun onSetSuccess() {
                 remoteDescriptionSet = true

@@ -69,6 +69,7 @@ import com.glassbox.hello.chat.components.rememberNearBottom
 import com.glassbox.hello.chat.components.visibleForUser
 import com.glassbox.hello.core.ResultState
 import com.glassbox.hello.core.User
+import com.glassbox.hello.debug.HelloDebugLog
 import com.glassbox.hello.core.rememberHelloSettingsState
 import com.glassbox.hello.network.SocketManager
 import com.glassbox.hello.notifications.HelloNotificationCenter
@@ -157,7 +158,7 @@ fun ChatRoomScreen(
     val wallpaperOpacity = chatTheme.wallpaperOpacity.coerceIn(35, 100) / 100f
     val bubbleOpacity = chatTheme.bubbleOpacity.coerceIn(40, 100) / 100f
     val subtitle = when {
-        chat.isGroup -> "${chat.members?.size ?: chat.participants?.size ?: 0} participants"
+        chat.isGroup -> "${chat.participantCount()} participants"
         other?.online == true -> "Online"
         other != null -> "Hello user"
         else -> "Private family chat"
@@ -169,16 +170,19 @@ fun ChatRoomScreen(
     }
 
     LaunchedEffect(Unit) {
+        HelloDebugLog.d("ChatRoom", "configureCloudChat chatId=${chat.id} currentUserId=$currentUserId")
         viewModel.configureCloudChat(context)
     }
 
     LaunchedEffect(chat.id, settingsState.cloudChatEnabled) {
+        HelloDebugLog.d("ChatRoom", "loadMessages chatId=${chat.id} cloudChatEnabled=${settingsState.cloudChatEnabled}")
         viewModel.loadMessages(chat.id, cloudChatEnabled = settingsState.cloudChatEnabled)
     }
 
-    LaunchedEffect(showContactShare, contactQuery) {
+    LaunchedEffect(showContactShare, contactQuery, settingsState.cloudChatEnabled) {
         if (showContactShare) {
-            viewModel.loadUsers(currentUserId, contactQuery)
+            HelloDebugLog.d("ChatRoom", "loadUsersForShare chatId=${chat.id} query=${HelloDebugLog.snippet(contactQuery)}")
+            viewModel.loadUsers(currentUserId, contactQuery, cloudChatEnabled = settingsState.cloudChatEnabled)
         }
     }
 
@@ -207,6 +211,7 @@ fun ChatRoomScreen(
     }
 
     LaunchedEffect(visibleMessages.size, isNearBottom) {
+        HelloDebugLog.d("ChatRoom", "visibleMessages chatId=${chat.id} count=${visibleMessages.size} nearBottom=$isNearBottom")
         if (visibleMessages.isNotEmpty()) {
             socketManager.markMessagesRead(chat.id, currentUserId)
             viewModel.clearUnreadForChat(chat.id, currentUserId, settingsState.cloudChatEnabled)
@@ -282,7 +287,16 @@ fun ChatRoomScreen(
     val locationPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         val location = getLastKnownHelloLocation(context)
         if (location != null) {
-            viewModel.shareLocation(chat.id, currentUserId, currentUserName, currentUserAvatar, location.latitude, location.longitude)
+            viewModel.shareLocation(
+                chat.id,
+                currentUserId,
+                currentUserName,
+                currentUserAvatar,
+                location.latitude,
+                location.longitude,
+                cloudChatEnabled = settingsState.cloudChatEnabled,
+                chat = chat
+            )
         } else {
             showLocationDialog = true
         }
@@ -367,7 +381,16 @@ fun ChatRoomScreen(
                 if (permissions.any { context.checkSelfPermissionCompat(it) }) {
                     val location = getLastKnownHelloLocation(context)
                     if (location != null) {
-                        viewModel.shareLocation(chat.id, currentUserId, currentUserName, currentUserAvatar, location.latitude, location.longitude)
+                        viewModel.shareLocation(
+                            chat.id,
+                            currentUserId,
+                            currentUserName,
+                            currentUserAvatar,
+                            location.latitude,
+                            location.longitude,
+                            cloudChatEnabled = settingsState.cloudChatEnabled,
+                            chat = chat
+                        )
                     } else {
                         showLocationDialog = true
                     }
@@ -429,6 +452,7 @@ fun ChatRoomScreen(
     fun sendCurrentMessage() {
         val trimmed = messageText.trim()
         val attachments = pendingAttachments.toList()
+        HelloDebugLog.d("ChatRoom", "sendCurrentMessage chatId=${chat.id} textLength=${trimmed.length} attachments=${attachments.size} replyTo=${replyTo?.id}")
         val replySnapshot = replyTo?.let {
             ChatModels.ReplyTo(
                 id = it.id,
@@ -572,9 +596,10 @@ fun ChatRoomScreen(
         socketManager.addMessageListener(messageListener)
         socketManager.addMessageUpdateListener(updateListener)
         socketManager.addTypingListener(typingListener)
-        socketManager.onChatUpdated = { updatedChat ->
+        val chatUpdateListener: (Chat) -> Unit = { updatedChat ->
             viewModel.upsertChatFromSocket(updatedChat, currentUserId)
         }
+        socketManager.addChatUpdateListener(chatUpdateListener)
         socketManager.connect(context, User(id = currentUserId, name = currentUserName, avatar = currentUserAvatar))
         socketManager.joinChat(chat.id)
         socketManager.markMessagesRead(chat.id, currentUserId)
@@ -586,11 +611,11 @@ fun ChatRoomScreen(
             socketManager.removeMessageListener(messageListener)
             socketManager.removeMessageUpdateListener(updateListener)
             socketManager.removeTypingListener(typingListener)
-            socketManager.onChatUpdated = null
+            socketManager.removeChatUpdateListener(chatUpdateListener)
         }
     }
 
-    AppBackground(modifier = modifier.fillMaxSize().imePadding().navigationBarsPadding()) {
+    AppBackground(modifier = modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -752,7 +777,7 @@ fun ChatRoomScreen(
                         selectedMessage = null
                     },
                     onStar = {
-                        viewModel.starMessage(chat.id, selected.message.id, currentUserId)
+                        viewModel.starMessage(chat.id, selected.message.id, currentUserId, settingsState.cloudChatEnabled)
                         selectedMessage = null
                     },
                     onReact = { emoji ->
@@ -768,9 +793,9 @@ fun ChatRoomScreen(
                     },
                     onPin = {
                         if ((selected.message.pinnedUntil ?: 0L) > System.currentTimeMillis()) {
-                            viewModel.pinMessage(chat.id, selected.message.id, durationDays = 0)
+                            viewModel.pinMessage(chat.id, selected.message.id, currentUserId, durationDays = 0, cloudChatEnabled = settingsState.cloudChatEnabled)
                         } else {
-                            viewModel.pinMessage(chat.id, selected.message.id)
+                            viewModel.pinMessage(chat.id, selected.message.id, currentUserId, cloudChatEnabled = settingsState.cloudChatEnabled)
                         }
                         selectedMessage = null
                     },
@@ -815,7 +840,7 @@ fun ChatRoomScreen(
                 },
                 confirmButton = {
                     TextButton(onClick = {
-                        viewModel.deleteMessage(chat.id, selectedMessage!!.message.id, currentUserId, deleteMode)
+                        viewModel.deleteMessage(chat.id, selectedMessage!!.message.id, currentUserId, deleteMode, settingsState.cloudChatEnabled)
                         showDeleteConfirm = false
                         selectedMessage = null
                     }) {
@@ -911,7 +936,17 @@ fun ChatRoomScreen(
                 confirmButton = {
                     TextButton(onClick = {
                         if (manualLocationText.isNotBlank()) {
-                            viewModel.shareLocation(chat.id, currentUserId, currentUserName, currentUserAvatar, 0.0, 0.0, manualLocationText.trim())
+                            viewModel.shareLocation(
+                                chat.id,
+                                currentUserId,
+                                currentUserName,
+                                currentUserAvatar,
+                                0.0,
+                                0.0,
+                                manualLocationText.trim(),
+                                cloudChatEnabled = settingsState.cloudChatEnabled,
+                                chat = chat
+                            )
                             manualLocationText = ""
                             showLocationDialog = false
                         }
@@ -935,7 +970,15 @@ fun ChatRoomScreen(
                     contactQuery = ""
                 },
                 onShare = { user ->
-                    viewModel.shareContact(chat.id, currentUserId, currentUserName, currentUserAvatar, user)
+                    viewModel.shareContact(
+                        chat.id,
+                        currentUserId,
+                        currentUserName,
+                        currentUserAvatar,
+                        user,
+                        cloudChatEnabled = settingsState.cloudChatEnabled,
+                        chat = chat
+                    )
                     showContactShare = false
                     contactQuery = ""
                 }
@@ -948,7 +991,7 @@ fun ChatRoomScreen(
                 message = "This removes local messages for your account.",
                 onDismiss = { showClearChatConfirm = false },
                 onConfirm = {
-                    viewModel.clearChat(chat.id, currentUserId)
+                    viewModel.clearChat(chat.id, currentUserId, settingsState.cloudChatEnabled)
                     showClearChatConfirm = false
                 }
             )
@@ -960,7 +1003,7 @@ fun ChatRoomScreen(
                 message = "This removes the chat locally for your account.",
                 onDismiss = { showDeleteChatConfirm = false },
                 onConfirm = {
-                    viewModel.deleteChat(chat.id, currentUserId)
+                    viewModel.deleteChat(chat.id, currentUserId, settingsState.cloudChatEnabled)
                     showDeleteChatConfirm = false
                     onChatDeleted()
                 }
@@ -1102,8 +1145,8 @@ private fun ConfirmChatDialog(title: String, message: String, onDismiss: () -> U
 private fun EmptyRoom() {
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(text = "No messages yet", color = HelloColors.DarkText)
-            Text(text = "Send the first message.", color = HelloColors.DarkTextMuted)
+            Text(text = "Say hi", color = HelloColors.DarkText)
+            Text(text = "Start the conversation and new messages will appear here instantly.", color = HelloColors.DarkTextMuted)
         }
     }
 }

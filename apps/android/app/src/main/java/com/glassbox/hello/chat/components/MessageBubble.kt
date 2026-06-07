@@ -30,6 +30,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Reply
+import androidx.compose.material.icons.filled.CallMade
+import androidx.compose.material.icons.filled.Phone
+import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.Icon
@@ -97,7 +100,7 @@ fun ChatMessageBubble(
     val themeBubbleAlpha = bubbleOpacity.coerceIn(0.40f, 1f)
     val bubbleColor = when {
         isStickerMessage(message.text) -> Color.Transparent
-        message.isDeleted == true -> Color(0xB31D2930)
+        message.isDeleted == true -> HelloColors.PanelMuted
         isOwn -> HelloColors.BubbleOut.copy(alpha = themeBubbleAlpha)
         else -> HelloColors.BubbleIn.copy(alpha = themeBubbleAlpha)
     }
@@ -153,10 +156,10 @@ fun ChatMessageBubble(
                         Box(
                             modifier = Modifier
                                 .offset { IntOffset(swipeOffset.roundToInt(), 0) }
-                                .shadow(if (isStickerMessage(message.text)) 0.dp else 4.dp, bubbleShape, ambientColor = Color.Black.copy(alpha = 0.16f))
+                                .shadow(if (isStickerMessage(message.text)) 0.dp else 8.dp, bubbleShape, ambientColor = HelloColors.Accent.copy(alpha = 0.18f))
                                 .clip(bubbleShape)
                                 .background(bubbleColor)
-                                .border(1.dp, bubbleBorder, bubbleShape)
+                                .border(1.2.dp, bubbleBorder, bubbleShape)
                                 .combinedClickable(
                                     onClick = {},
                                     onLongClick = {
@@ -308,6 +311,11 @@ private fun MessageBody(
         return
     }
 
+    if (message.callInfo != null || message.messageType == "call_log") {
+        CallSummaryCard(message = message, isOwn = isOwn, textColor = textColor)
+        return
+    }
+
     when {
         message.location != null -> LocationCard(message, onOpenAttachment)
         message.text.startsWith("Contact:", ignoreCase = true) -> ContactCard(message)
@@ -337,6 +345,70 @@ private fun MessageBody(
             style = MaterialTheme.typography.bodyLarge,
             lineHeight = MaterialTheme.typography.bodyLarge.lineHeight
         )
+    }
+}
+
+@Composable
+private fun CallSummaryCard(
+    message: ChatModels.Message,
+    isOwn: Boolean,
+    textColor: Color
+) {
+    val callInfo = message.callInfo
+    val accent = if (callInfo?.status.equals("missed", ignoreCase = true)) HelloColors.DarkDanger else HelloColors.DarkAccentStrong
+    val icon = when {
+        callInfo?.callType.equals("video", ignoreCase = true) -> Icons.Default.Videocam
+        else -> Icons.Default.Phone
+    }
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(16.dp))
+            .background(Color.White.copy(alpha = if (isOwn) 0.08f else 0.06f))
+            .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(16.dp))
+            .padding(horizontal = 12.dp, vertical = 10.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Box(
+                modifier = Modifier
+                    .size(34.dp)
+                    .clip(CircleShape)
+                    .background(accent.copy(alpha = 0.16f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(icon, contentDescription = null, tint = accent, modifier = Modifier.size(18.dp))
+            }
+            Column(modifier = Modifier.weight(1f, fill = false)) {
+                Text(
+                    text = callSummaryLabel(callInfo),
+                    color = textColor,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+                val detail = when {
+                    callInfo?.startedAt != null -> formatTimestamp(callInfo.startedAt)
+                    message.timestamp > 0L -> formatTimestamp(message.timestamp)
+                    else -> ""
+                }
+                if (detail.isNotBlank()) {
+                    Text(
+                        text = detail,
+                        color = HelloColors.DarkTextMuted,
+                        style = MaterialTheme.typography.labelSmall
+                    )
+                }
+            }
+            if (callInfo?.durationSeconds ?: 0L > 0L) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Icon(Icons.Default.CallMade, contentDescription = null, tint = HelloColors.DarkTextMuted, modifier = Modifier.size(14.dp))
+                    Text(
+                        text = formatDuration(callInfo?.durationSeconds ?: 0L),
+                        color = HelloColors.DarkTextMuted,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+            }
+        }
     }
 }
 

@@ -24,8 +24,6 @@ googleServices = "4.4.2"
 firebaseMessaging = "24.1.1"
 firebaseFirestore = "26.0.2"
 coroutinesPlayServices = "1.10.2"
-camerax = "1.5.3"
-mediapipeTasksVision = "0.10.35"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -63,11 +61,6 @@ androidx-room-compiler = { group = "androidx.room", name = "room-compiler", vers
 firebase-messaging = { group = "com.google.firebase", name = "firebase-messaging", version.ref = "firebaseMessaging" }
 firebase-firestore = { group = "com.google.firebase", name = "firebase-firestore", version.ref = "firebaseFirestore" }
 kotlinx-coroutines-play-services = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-play-services", version.ref = "coroutinesPlayServices" }
-androidx-camera-core = { group = "androidx.camera", name = "camera-core", version.ref = "camerax" }
-androidx-camera-camera2 = { group = "androidx.camera", name = "camera-camera2", version.ref = "camerax" }
-androidx-camera-lifecycle = { group = "androidx.camera", name = "camera-lifecycle", version.ref = "camerax" }
-androidx-camera-view = { group = "androidx.camera", name = "camera-view", version.ref = "camerax" }
-mediapipe-tasks-vision = { group = "com.google.mediapipe", name = "tasks-vision", version.ref = "mediapipeTasksVision" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

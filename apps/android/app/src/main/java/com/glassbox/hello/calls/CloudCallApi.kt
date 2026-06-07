@@ -34,22 +34,22 @@ class CloudCallApi(context: Context) {
                 "type" to type
             )
         )
-        val map = gson.fromJson(response, Map::class.java)
+        val map = parseMap(response)
         (map["callId"] as? String) ?: (map["id"] as? String) ?: throw Exception("Call id not returned")
     }
 
     suspend fun history(userId: String): Result<List<ChatModels.CallHistoryItem>> = safeCall {
         val response = get("/api/calls/history?userId=${encode(userId)}")
         val type = object : TypeToken<List<ChatModels.CallHistoryItem>>() {}.type
-        gson.fromJson(response, type)
+        gson.fromJson<List<ChatModels.CallHistoryItem>>(response, type) ?: emptyList()
     }
 
     suspend fun iceServers(): Result<List<CallIceServer>> = safeCall {
         val response = get("/api/calls/ice-servers")
-        val map = gson.fromJson(response, Map::class.java)
+        val map = parseMap(response)
         val raw = map["iceServers"] ?: emptyList<Any>()
         val type = object : TypeToken<List<CallIceServer>>() {}.type
-        gson.fromJson(gson.toJson(raw), type)
+        gson.fromJson<List<CallIceServer>>(gson.toJson(raw), type) ?: emptyList()
     }
 
     suspend fun createGroupRoom(chatId: String, hostId: String, type: String, participantIds: List<String>): Result<CallRoom> = safeCall {
@@ -62,17 +62,17 @@ class CloudCallApi(context: Context) {
                 "participantIds" to participantIds
             )
         )
-        gson.fromJson(response, CallRoom::class.java)
+        parseRequired(response, "Create group call room", CallRoom::class.java)
     }
 
     suspend fun joinGroupRoom(roomId: String, userId: String): Result<CallRoom> = safeCall {
         val response = post("/api/calls/group/${encode(roomId)}/join", mapOf("userId" to userId))
-        gson.fromJson(response, CallRoom::class.java)
+        parseRequired(response, "Join group call room", CallRoom::class.java)
     }
 
     suspend fun leaveGroupRoom(roomId: String, userId: String, ended: Boolean): Result<CallRoom> = safeCall {
         val response = post("/api/calls/group/${encode(roomId)}/leave", mapOf("userId" to userId, "ended" to ended))
-        gson.fromJson(response, CallRoom::class.java)
+        parseRequired(response, "Leave group call room", CallRoom::class.java)
     }
 
     private suspend fun get(path: String): String =
@@ -99,7 +99,7 @@ class CloudCallApi(context: Context) {
         client.newCall(request).execute().use { response ->
             val body = response.body?.string()
             if (!response.isSuccessful) {
-                val message = runCatching { gson.fromJson(body, Map::class.java)["error"] as? String }.getOrNull()
+                val message = parseMap(body)["error"] as? String
                 throw Exception(message ?: "Cloud call HTTP ${response.code}")
             }
             body ?: throw Exception("Empty cloud call response")
@@ -114,4 +114,16 @@ class CloudCallApi(context: Context) {
         }
 
     private fun encode(value: String): String = java.net.URLEncoder.encode(value, "UTF-8").replace("+", "%20")
+
+    private fun parseMap(raw: String?): Map<String, Any?> {
+        if (raw.isNullOrBlank()) return emptyMap()
+        return runCatching { gson.fromJson(raw, Map::class.java) as? Map<*, *> }
+            .getOrNull()
+            ?.entries
+            ?.associate { it.key.toString() to it.value }
+            ?: emptyMap()
+    }
+
+    private fun <T> parseRequired(raw: String, label: String, type: Class<T>): T =
+        gson.fromJson(raw, type) ?: throw Exception("$label response was empty")
 }

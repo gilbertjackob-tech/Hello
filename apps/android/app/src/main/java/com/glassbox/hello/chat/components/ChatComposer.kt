@@ -1,14 +1,7 @@
 package com.glassbox.hello.chat.components
 
 import androidx.compose.animation.animateContentSize
-import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.ExperimentalAnimationApi
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
-import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -51,7 +44,6 @@ import com.glassbox.hello.ui.theme.HelloMotion
 import com.glassbox.hello.ui.theme.HelloShapes
 import com.glassbox.hello.ui.theme.HelloSpacing
 
-@OptIn(ExperimentalAnimationApi::class)
 @Composable
 fun ChatComposer(
     text: String,
@@ -81,8 +73,8 @@ fun ChatComposer(
                 Brush.verticalGradient(
                     listOf(
                         Color.Transparent,
-                        HelloColors.BgBase.copy(alpha = 0.92f),
-                        HelloColors.BgDeep
+                        HelloColors.PanelStrong.copy(alpha = 0.94f),
+                        HelloColors.BgBase.copy(alpha = 0.98f)
                     )
                 )
             )
@@ -117,7 +109,7 @@ fun ChatComposer(
                     Icon(
                         Icons.Default.EmojiEmotions,
                         contentDescription = "Emoji",
-                        tint = if (showEmojiRow) HelloColors.TealPrimary else HelloColors.DarkTextMuted
+                        tint = if (showEmojiRow) HelloColors.AccentStrong else HelloColors.Accent
                     )
                 }
 
@@ -125,8 +117,8 @@ fun ChatComposer(
                     modifier = Modifier
                         .weight(1f)
                         .clip(RoundedCornerShape(HelloDimens.CornerXL))
-                        .background(HelloColors.GlassBgMedium)
-                        .border(0.5.dp, HelloColors.GlassBorderStrong, RoundedCornerShape(HelloDimens.CornerXL))
+                        .background(HelloColors.PanelStrong)
+                        .border(1.2.dp, HelloColors.BorderStrong, RoundedCornerShape(HelloDimens.CornerXL))
                         .padding(horizontal = HelloDimens.SpaceS)
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -140,7 +132,7 @@ fun ChatComposer(
                         )
                         
                         HelloIconButton(onClick = onAttach) {
-                            Icon(Icons.Default.AttachFile, contentDescription = "Attach", tint = HelloColors.DarkTextMuted)
+                            Icon(Icons.Default.AttachFile, contentDescription = "Attach", tint = HelloColors.Accent)
                         }
                     }
                 }
@@ -152,20 +144,12 @@ fun ChatComposer(
                         .scale(actionScale.value)
                         .padding(bottom = 2.dp)
                 ) {
-                    AnimatedContent(
-                        targetState = hasPayload,
-                        transitionSpec = {
-                            (fadeIn(HelloMotion.fast()) + scaleIn(initialScale = 0.8f)) togetherWith
-                                (fadeOut(HelloMotion.fast()) + scaleOut(targetScale = 0.8f))
-                        },
-                        label = "sendMicMorph"
-                    ) { sending ->
-                        Icon(
-                            if (sending) Icons.AutoMirrored.Filled.Send else Icons.Default.Mic,
-                            contentDescription = if (sending) "Send message" else "Voice note",
-                            tint = if (sending || voiceState.active) HelloColors.TealPrimary else HelloColors.DarkTextMuted
-                        )
-                    }
+                    val sending = hasPayload
+                    Icon(
+                        if (sending) Icons.AutoMirrored.Filled.Send else Icons.Default.Mic,
+                        contentDescription = if (sending) "Send message" else "Voice note",
+                        tint = if (sending || voiceState.active) HelloColors.AccentStrong else HelloColors.Accent
+                    )
                 }
             }
         }
@@ -184,7 +168,7 @@ private fun ComposerInput(
     BasicTextField(
         value = value,
         onValueChange = onValueChange,
-        textStyle = MaterialTheme.typography.bodyMedium.copy(color = HelloColors.DarkText),
+        textStyle = MaterialTheme.typography.bodyMedium.copy(color = HelloColors.Text),
         modifier = modifier
             .heightIn(min = 44.dp, max = 124.dp)
             .padding(horizontal = 12.dp, vertical = 12.dp),
@@ -197,7 +181,7 @@ private fun ComposerInput(
                 if (value.isEmpty()) {
                     Text(
                         text = placeholder,
-                        color = HelloColors.DarkTextMuted,
+                        color = HelloColors.TextMuted,
                         style = MaterialTheme.typography.bodyMedium,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis

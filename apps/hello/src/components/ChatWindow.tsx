@@ -17,6 +17,7 @@ import {
   Search,
   Send,
   Smile,
+  MessageCircleMore,
   Paperclip,
   X,
   Mic,
@@ -44,6 +45,7 @@ import { useOptimisticMessage } from "../hooks/useOptimisticMessage";
 import {
   fetchMessages,
   sendMessage,
+  createDirectChat,
   reactToMessage,
   starMessage,
   pinMessage,
@@ -69,10 +71,40 @@ function formatBytes(bytes?: number, decimals = 2) {
   return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
 }
 
+function formatCallSummaryDuration(seconds?: number) {
+  if (seconds === undefined || seconds === null) return "";
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return `${mins}:${secs.toString().padStart(2, "0")}`;
+}
+
+function callSummaryLabel(message: Message) {
+  const callInfo = message.callInfo;
+  const callType = callInfo?.callType === "video" ? "Video" : "Audio";
+  const duration = callInfo?.durationSeconds || 0;
+  switch (callInfo?.status) {
+    case "missed":
+      return `Missed ${callType.toLowerCase()} call`;
+    case "declined":
+      return `${callType} call declined`;
+    case "busy":
+      return `${callType} call busy`;
+    case "unavailable":
+      return `${callType} call unavailable`;
+    case "failed":
+      return `${callType} call failed`;
+    case "cancelled":
+      return `${callType} call cancelled`;
+    default:
+      return duration > 0 ? `${callType} call • ${formatCallSummaryDuration(duration)}` : `${callType} call`;
+  }
+}
+
 interface ChatWindowProps {
   key?: React.Key;
   chat: Chat;
   currentUser: User;
+  onChatResolved?: (chat: Chat) => void;
   onToggleSidebar?: () => void;
   isSidebarOpen?: boolean;
 }
@@ -80,6 +112,7 @@ interface ChatWindowProps {
 export function ChatWindow({
   chat,
   currentUser,
+  onChatResolved,
   onToggleSidebar,
   isSidebarOpen,
 }: ChatWindowProps) {
@@ -158,6 +191,57 @@ export function ChatWindow({
     lastActive?: number;
     privacy: string;
   } | null>(null);
+
+  const resolveDirectTarget = () => {
+    const participant = chat.participants?.find((member) => member.id !== currentUser.id);
+    if (participant?.id) {
+      return { id: participant.id, name: participant.name };
+    }
+    const memberId = chat.members?.find((member) => member !== currentUser.id);
+    if (memberId) {
+      return {
+        id: memberId,
+        name: chat.name,
+      };
+    }
+    const directKeyPeer = chat.directKey
+      ?.split(":")
+      .map((value) => value.trim())
+      .find((value) => value && value !== currentUser.id);
+    if (directKeyPeer) {
+      return {
+        id: directKeyPeer,
+        name: chat.name,
+      };
+    }
+    return null;
+  };
+
+  const ensureSendChat = async (): Promise<Chat> => {
+    if (chat.isGroup) return chat;
+    const target = resolveDirectTarget();
+    if (!target?.id) return chat;
+    const resolvedChat = await createDirectChat(currentUser.id, target.id, {
+      currentUserName: currentUser.name,
+      targetUserName: target.name,
+    });
+    if (resolvedChat.id !== chat.id || resolvedChat.directKey !== chat.directKey) {
+      onChatResolved?.({
+        ...chat,
+        ...resolvedChat,
+        isGroup: false,
+        members: resolvedChat.members?.length ? resolvedChat.members : chat.members,
+        participants: resolvedChat.participants?.length ? resolvedChat.participants : chat.participants,
+      });
+    }
+    return {
+      ...chat,
+      ...resolvedChat,
+      isGroup: false,
+      members: resolvedChat.members?.length ? resolvedChat.members : chat.members,
+      participants: resolvedChat.participants?.length ? resolvedChat.participants : chat.participants,
+    };
+  };
 
   useEffect(() => {
     // If 1-on-1 chat, find the other user's presence
@@ -333,12 +417,6 @@ export function ChatWindow({
     });
 
     const handleNewMessage = (msg: Message) => {
-      console.log("CLIENT SOCKET MSG DEBUG:", {
-        receivedChatId: msg.chatId,
-        currentOpenChatId: chat.id,
-        senderName: msg.senderName,
-      });
-
       if (msg.chatId === chat.id) {
         setMessages((prev) => {
           if (prev.find((m) => m.id === msg.id)) return prev;
@@ -498,6 +576,7 @@ export function ChatWindow({
     setReplyingToMessage(null);
 
     try {
+      const sendChat = await ensureSendChat();
       let attachmentUrl = currentAttachment?.url;
       let attachmentType = currentAttachment?.type;
       let attachmentName = currentAttachment?.name;
@@ -518,7 +597,7 @@ export function ChatWindow({
       }
 
       const realMessage = await sendMessage(
-        chat.id,
+        sendChat.id,
         currentText || " ",
         attachmentUrl,
         attachmentType,
@@ -635,7 +714,7 @@ export function ChatWindow({
 
   const handlePin = async (msgId: string, durationDays: number) => {
     try {
-      await pinMessage(chat.id, msgId, durationDays);
+      await pinMessage(chat.id, msgId, currentUser.id, durationDays);
       setOptionsMsgId(null);
     } catch (err) {
       console.error(err);
@@ -905,6 +984,19 @@ export function ChatWindow({
   const getWallpaperStyles = () => {
     let bg = "";
     switch (chatWallpaper) {
+      case "cute-theme":
+        return {
+          backgroundColor: "#fff0f6",
+          backgroundImage: [
+            "radial-gradient(circle at 18% 18%, rgba(255,255,255,0.78) 0 26px, transparent 27px)",
+            "radial-gradient(circle at 82% 76%, rgba(255,184,213,0.35) 0 44px, transparent 45px)",
+            "radial-gradient(circle at 22px 20px, rgba(236,93,151,0.26) 0 2px, transparent 3px)",
+            "radial-gradient(circle at 8px 8px, rgba(255,255,255,0.88) 0 1px, transparent 2px)",
+            "linear-gradient(135deg, rgba(255,255,255,0.28), transparent 38%, rgba(236,93,151,0.10))"
+          ].join(", "),
+          backgroundSize: "auto, auto, 36px 36px, 26px 26px, 100% 100%",
+          backgroundPosition: "center"
+        };
       case "solid-dark": return { backgroundColor: "#0f172a" };
       case "solid-light": return { backgroundColor: "#f1f5f9" };
       case "emerald": return { backgroundColor: "#064e3b" };
@@ -1203,11 +1295,11 @@ export function ChatWindow({
             ).length === 0 ? (
           <EmptyState
             icon={<MessageCircleMore className="h-8 w-8" />}
-            title={searchQuery ? "No messages match that search" : "No messages yet"}
+            title={searchQuery ? "No messages match that search" : `Say hi to ${chatName}`}
             description={
               searchQuery
                 ? "Try another keyword or clear message search."
-                : "Start the conversation with text, voice, location, files, or a GlassBox share."
+                : "Start with a message, voice note, file, or call. New replies will land here instantly."
             }
             className="mx-auto mt-16 max-w-md"
           />
@@ -1396,6 +1488,39 @@ export function ChatWindow({
                       </div>
                     )}
 
+                    {(msg.callInfo || msg.messageType === "call_log") && (
+                      <div className="mb-2 mt-1 flex items-center gap-3 rounded-2xl border border-black/10 bg-black/5 px-3 py-3 dark:border-white/10 dark:bg-white/5">
+                        <div
+                          className={cn(
+                            "flex h-10 w-10 items-center justify-center rounded-full",
+                            msg.callInfo?.status === "missed"
+                              ? "bg-rose-500/15 text-rose-400"
+                              : "bg-emerald-500/15 text-emerald-400",
+                          )}
+                        >
+                          {msg.callInfo?.callType === "video" ? (
+                            <Video className="h-5 w-5" />
+                          ) : (
+                            <Phone className="h-5 w-5" />
+                          )}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-semibold text-slate-800 dark:text-[#e9edef]">
+                            {callSummaryLabel(msg)}
+                          </p>
+                          <div className="mt-1 flex items-center gap-2 text-[11px] text-slate-500 dark:text-[#8696a0]">
+                            <Clock className="h-3.5 w-3.5" />
+                            <span>{format(new Date(msg.timestamp), "MMM d, HH:mm")}</span>
+                          </div>
+                        </div>
+                        {(msg.callInfo?.durationSeconds || 0) > 0 && (
+                          <span className="rounded-full bg-white/70 px-2 py-1 text-[11px] font-semibold text-slate-600 dark:bg-slate-800 dark:text-slate-200">
+                            {formatCallSummaryDuration(msg.callInfo?.durationSeconds)}
+                          </span>
+                        )}
+                      </div>
+                    )}
+
                     {msg.attachmentUrl && (
                       <div className="mb-2 mt-1">
                         {msg.attachmentType === "image" ? (
@@ -1467,6 +1592,7 @@ export function ChatWindow({
                       </div>
                     )}
 
+                    {!msg.callInfo && msg.messageType !== "call_log" && (
                     <div
                       className={cn(
                         "text-[14px] leading-relaxed break-words pr-16 pb-1 inline-block",
@@ -1493,6 +1619,7 @@ export function ChatWindow({
                         msg.text
                       )}
                     </div>
+                    )}
 
                     {/* Message Options Chevron (Shows on hover) */}
                     {hoveredMsgId === msg.id && !isTerminal && (

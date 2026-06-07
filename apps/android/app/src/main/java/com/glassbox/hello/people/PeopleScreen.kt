@@ -34,6 +34,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.glassbox.hello.chat.ChatModels.User
 import com.glassbox.hello.chat.ChatViewModel
 import com.glassbox.hello.core.ResultState
+import com.glassbox.hello.core.rememberHelloSettingsState
 import com.glassbox.hello.ui.components.ErrorView
 import com.glassbox.hello.ui.components.HelloAvatar
 import com.glassbox.hello.ui.components.HelloEmptyState
@@ -54,19 +55,21 @@ import com.glassbox.hello.ui.theme.HelloSpacing
 @Composable
 fun PeopleScreen(
     currentUserId: String,
+    currentUserName: String,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val viewModel: ChatViewModel = viewModel()
+    val settingsState by rememberHelloSettingsState(context)
     val usersState by viewModel.usersState.collectAsState()
     val createChatState by viewModel.createChatState.collectAsState()
     var query by remember { mutableStateOf("") }
     var groupName by remember { mutableStateOf("") }
     var selectedMemberIds by remember { mutableStateOf(setOf<String>()) }
 
-    LaunchedEffect(currentUserId, query) {
+    LaunchedEffect(currentUserId, query, settingsState.cloudChatEnabled) {
         viewModel.configureCloudChat(context)
-        viewModel.loadUsers(currentUserId, query, cloudChatEnabled = true)
+        viewModel.loadUsers(currentUserId, query, cloudChatEnabled = settingsState.cloudChatEnabled)
     }
 
     Column(
@@ -104,10 +107,10 @@ fun PeopleScreen(
                     onClick = {
                         viewModel.createGroupChat(
                             currentUserId = currentUserId,
-                            currentUserName = currentUserId,
+                            currentUserName = currentUserName,
                             name = groupName.trim(),
                             memberIds = selectedMemberIds.toList(),
-                            cloudChatEnabled = true
+                            cloudChatEnabled = settingsState.cloudChatEnabled
                         )
                         groupName = ""
                         selectedMemberIds = emptySet()
@@ -128,7 +131,7 @@ fun PeopleScreen(
             is ResultState.Loading -> LoadingView(modifier = Modifier.weight(1f))
             is ResultState.Error -> ErrorView(
                 message = (usersState as ResultState.Error).message,
-                onRetry = { viewModel.loadUsers(currentUserId, query, cloudChatEnabled = true) },
+                onRetry = { viewModel.loadUsers(currentUserId, query, cloudChatEnabled = settingsState.cloudChatEnabled) },
                 modifier = Modifier.weight(1f)
             )
             is ResultState.Success -> {
@@ -177,7 +180,15 @@ fun PeopleScreen(
                                                 },
                                                 colors = CheckboxDefaults.colors(checkedColor = HelloColors.DarkAccent)
                                             )
-                                            HelloIconButton(onClick = { viewModel.startDirectChat(currentUserId, currentUserId, user.id, cloudChatEnabled = true) }) {
+                                            HelloIconButton(onClick = {
+                                                viewModel.startDirectChat(
+                                                    currentUserId,
+                                                    currentUserName,
+                                                    user.id,
+                                                    user.name,
+                                                    cloudChatEnabled = settingsState.cloudChatEnabled
+                                                )
+                                            }) {
                                                 Icon(Icons.Default.GroupAdd, contentDescription = "Start chat", tint = HelloColors.DarkAccent)
                                             }
                                         }

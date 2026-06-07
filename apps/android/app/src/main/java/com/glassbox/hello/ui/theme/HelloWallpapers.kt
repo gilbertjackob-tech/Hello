@@ -9,8 +9,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
@@ -25,6 +27,7 @@ import com.glassbox.hello.core.AppConfig
 object HelloWallpapers {
     const val Default = "default"
     const val None = "none"
+    const val ThemeCute = "theme cute"
     const val ThemeMidnight = "theme midnight"
     const val ThemeAmoled = "theme amoled"
     const val ThemeTwilight = "theme twilight"
@@ -45,6 +48,7 @@ object HelloWallpapers {
 
     val Options = listOf(
         Default,
+        ThemeCute,
         ThemeMidnight,
         ThemeAmoled,
         ThemeTwilight,
@@ -84,6 +88,7 @@ fun ChatWallpaperBackground(
     ) {
         when (normalized) {
             HelloWallpapers.None -> Unit
+            HelloWallpapers.ThemeCute -> CuteWallpaperLayer(alpha)
             HelloWallpapers.ThemeMidnight,
             HelloWallpapers.ThemeAmoled,
             HelloWallpapers.ThemeTwilight,
@@ -137,6 +142,112 @@ fun ChatWallpaperBackground(
         )
         content()
     }
+}
+
+@Composable
+private fun CuteWallpaperLayer(alpha: Float) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(
+                Brush.verticalGradient(
+                    listOf(
+                        Color(0xFFFFF6FA).copy(alpha = alpha.coerceAtLeast(0.18f)),
+                        Color(0xFFFFE1EC).copy(alpha = alpha.coerceAtLeast(0.18f)),
+                        Color(0xFFFFF4F8).copy(alpha = alpha.coerceAtLeast(0.18f))
+                    )
+                )
+            )
+    )
+    Canvas(modifier = Modifier.fillMaxSize()) {
+        val cloud = Color.White.copy(alpha = 0.44f * alpha)
+        val pink = Color(0xFFFF6FAE).copy(alpha = 0.18f * alpha)
+        val linePink = Color(0xFFE83F86).copy(alpha = 0.18f * alpha)
+        val star = Color.White.copy(alpha = 0.86f * alpha)
+        drawCircle(cloud, radius = size.minDimension * 0.16f, center = Offset(size.width * 0.18f, size.height * 0.18f))
+        drawCircle(cloud.copy(alpha = cloud.alpha * 0.72f), radius = size.minDimension * 0.20f, center = Offset(size.width * 0.86f, size.height * 0.82f))
+        drawCircle(pink, radius = size.minDimension * 0.18f, center = Offset(size.width * 0.82f, size.height * 0.18f))
+        drawCircle(pink.copy(alpha = pink.alpha * 0.72f), radius = size.minDimension * 0.14f, center = Offset(size.width * 0.12f, size.height * 0.78f))
+
+        val diagonalGap = 64.dp.toPx()
+        var startX = -size.height
+        while (startX < size.width) {
+            drawLine(
+                color = Color.White.copy(alpha = 0.18f * alpha),
+                start = Offset(startX, 0f),
+                end = Offset(startX + size.height, size.height),
+                strokeWidth = 1.dp.toPx(),
+                pathEffect = PathEffect.dashPathEffect(floatArrayOf(6.dp.toPx(), 12.dp.toPx()))
+            )
+            startX += diagonalGap
+        }
+
+        val dotStep = 38.dp.toPx()
+        var y = 14.dp.toPx()
+        var row = 0
+        while (y < size.height) {
+            var x = if (row % 2 == 0) 18.dp.toPx() else 36.dp.toPx()
+            while (x < size.width) {
+                drawCircle(Color(0xFFEC5D97).copy(alpha = 0.12f * alpha), radius = 1.1.dp.toPx(), center = Offset(x, y))
+                x += dotStep
+            }
+            y += dotStep
+            row += 1
+        }
+
+        listOf(
+            Offset(size.width * 0.12f, size.height * 0.34f),
+            Offset(size.width * 0.72f, size.height * 0.28f),
+            Offset(size.width * 0.34f, size.height * 0.72f),
+            Offset(size.width * 0.88f, size.height * 0.58f)
+        ).forEach { center ->
+            val r = 7.dp.toPx()
+            drawLine(star, Offset(center.x - r, center.y), Offset(center.x + r, center.y), strokeWidth = 1.3.dp.toPx())
+            drawLine(star, Offset(center.x, center.y - r), Offset(center.x, center.y + r), strokeWidth = 1.3.dp.toPx())
+        }
+
+        listOf(
+            Offset(size.width * 0.18f, size.height * 0.50f),
+            Offset(size.width * 0.62f, size.height * 0.44f),
+            Offset(size.width * 0.84f, size.height * 0.72f),
+            Offset(size.width * 0.30f, size.height * 0.86f)
+        ).forEach { center ->
+            drawCuteHeart(center, 9.dp.toPx(), Color(0xFFFF6FAE).copy(alpha = 0.22f * alpha))
+        }
+
+        drawArc(
+            color = linePink,
+            startAngle = 95f,
+            sweepAngle = 220f,
+            useCenter = false,
+            topLeft = Offset(size.width * 0.13f, size.height * 0.24f),
+            size = Size(88.dp.toPx(), 88.dp.toPx()),
+            style = Stroke(width = 1.2.dp.toPx())
+        )
+        drawArc(
+            color = linePink.copy(alpha = linePink.alpha * 0.7f),
+            startAngle = 95f,
+            sweepAngle = 220f,
+            useCenter = false,
+            topLeft = Offset(size.width * 0.63f, size.height * 0.58f),
+            size = Size(112.dp.toPx(), 112.dp.toPx()),
+            style = Stroke(width = 1.1.dp.toPx())
+        )
+    }
+}
+
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawCuteHeart(
+    center: Offset,
+    radius: Float,
+    color: Color
+) {
+    val path = Path().apply {
+        moveTo(center.x, center.y + radius * 0.72f)
+        cubicTo(center.x - radius * 1.5f, center.y - radius * 0.1f, center.x - radius * 0.9f, center.y - radius * 1.25f, center.x, center.y - radius * 0.42f)
+        cubicTo(center.x + radius * 0.9f, center.y - radius * 1.25f, center.x + radius * 1.5f, center.y - radius * 0.1f, center.x, center.y + radius * 0.72f)
+        close()
+    }
+    drawPath(path = path, color = color)
 }
 
 @Composable

@@ -47,7 +47,15 @@ const DEFAULT_ICE_SERVERS: RTCIceServer[] = [
   { urls: "stun:stun.l.google.com:19302" },
 ];
 const FORCE_RELAY = (import.meta as any).env?.VITE_WEBRTC_FORCE_RELAY === "true";
-const CALL_DEBUG_UI = (import.meta as any).env?.VITE_CALL_DEBUG_UI === "true";
+const CALL_DEBUG_UI = false;
+const CALL_SIGNAL_REST_FALLBACK_EVENTS = new Set([
+  "call:accepted",
+  "call:answer",
+  "call:ice-candidate",
+  "call:connected",
+  "call:failed",
+  "call:ended",
+]);
 
 const applyRelayPolicy = (config: RTCConfiguration): RTCConfiguration =>
   FORCE_RELAY ? { ...config, iceTransportPolicy: "relay" } : config;
@@ -785,6 +793,29 @@ export function CallOverlay({ currentUser }: CallOverlayProps) {
     return res.json() as Promise<SignalPayload & { id?: string; callId?: string }>;
   };
 
+  const relaySignalByRest = async (event: string, data: SignalPayload, fallbackFor?: string) => {
+    if (!data.callId || !data.toUserId) return;
+    const payload = {
+      ...data,
+      event,
+      eventId: createEventId(),
+      fallbackFor: fallbackFor || data.eventId,
+      timestamp: Date.now(),
+    };
+    const res = await fetch(`${CALL_API_BASE}/calls/${encodeURIComponent(data.callId)}/signal`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...cloudAuthHeaders() },
+      body: JSON.stringify({ event, payload }),
+    });
+    if (!res.ok) throw new Error(`REST call signal failed: ${res.status}`);
+    addCallDebug(`WEB: REST fallback relayed ${event}`, {
+      callId: data.callId,
+      fallbackFor: payload.fallbackFor,
+      hasAnswerSdp: !!payload.answer?.sdp,
+      hasIce: !!payload.candidate?.candidate,
+    });
+  };
+
   const emitSignal = (event: string, data: SignalPayload) => {
     if (!socket || !data.fromUserId || !data.toUserId) return;
     const payload = {
@@ -833,8 +864,24 @@ export function CallOverlay({ currentUser }: CallOverlayProps) {
       window.setTimeout(() => {
         if (pendingAcksRef.current.has(payload.eventId)) {
           console.warn("[CALL_TRACE] missing ack", { side: "web", event, callId: payload.callId, eventId: payload.eventId });
+          if (CALL_SIGNAL_REST_FALLBACK_EVENTS.has(event)) {
+            relaySignalByRest(event, payload, payload.eventId).catch((error) => {
+              console.warn("[CALL_TRACE] REST fallback failed", {
+                side: "web",
+                event,
+                callId: payload.callId,
+                eventId: payload.eventId,
+                error: error instanceof Error ? error.message : String(error),
+              });
+              addCallDebug("WEB: REST fallback failed", {
+                event,
+                callId: payload.callId,
+                error: error instanceof Error ? error.message : String(error),
+              });
+            });
+          }
         }
-      }, 4000);
+      }, event === "call:ice-candidate" ? 1800 : 1200);
     }
   };
 
@@ -1731,7 +1778,16 @@ export function CallOverlay({ currentUser }: CallOverlayProps) {
       }
 
       const pendingOffer = pendingOffersRef.current.get(data.callId);
-      const call = { ...data, offer: pendingOffer?.offer, status: "incoming_ringing" as CallStatus };
+      const call = {
+        ...pendingOffer,
+        ...data,
+        callerName: data.callerName || pendingOffer?.callerName,
+        callerAvatar: data.callerAvatar || pendingOffer?.callerAvatar,
+        calleeName: data.calleeName || pendingOffer?.calleeName,
+        calleeAvatar: data.calleeAvatar || pendingOffer?.calleeAvatar,
+        offer: pendingOffer?.offer,
+        status: "incoming_ringing" as CallStatus,
+      };
       peerUserIdRef.current = data.callerId;
       setIncomingCall(call);
       setCallStatus("incoming_ringing");
@@ -1761,9 +1817,53 @@ export function CallOverlay({ currentUser }: CallOverlayProps) {
         hasOfferSdp: !!data.offer?.sdp,
       });
       console.debug("[CALL_TRACE] queued offer", { side: "web", callId: data.callId, eventId: data.eventId });
-      setIncomingCall((prev) =>
-        prev?.callId === data.callId ? { ...prev, offer: data.offer } : prev,
-      );
+      const mergedIncomingCall = {
+        callId: data.callId,
+        chatId: data.chatId,
+        callerId: data.callerId,
+        callerName: data.callerName || "Hello call",
+        callerAvatar: data.callerAvatar,
+        calleeId: data.calleeId,
+        calleeName: data.calleeName,
+        calleeAvatar: data.calleeAvatar,
+        isVideo: data.isVideo === true || data.type === "video",
+        offer: data.offer,
+        status: "incoming_ringing" as CallStatus,
+      };
+      setIncomingCall((prev) => {
+        if (prev?.callId === data.callId) {
+          return {
+            ...prev,
+            callerName: data.callerName || prev.callerName,
+            callerAvatar: data.callerAvatar || prev.callerAvatar,
+            calleeName: data.calleeName || prev.calleeName,
+            calleeAvatar: data.calleeAvatar || prev.calleeAvatar,
+            offer: data.offer,
+          };
+        }
+        if (prev || activeCallRef.current) return prev;
+        peerUserIdRef.current = data.callerId;
+        emitSignal("call:ringing", {
+          callId: data.callId,
+          chatId: data.chatId,
+          fromUserId: currentUser.id,
+          toUserId: data.callerId,
+          callerId: data.callerId,
+          calleeId: data.calleeId,
+          type: data.type || (data.isVideo ? "video" : "audio"),
+          callerName: data.callerName,
+          callerAvatar: data.callerAvatar,
+          calleeName: data.calleeName,
+          calleeAvatar: data.calleeAvatar,
+          isVideo: data.isVideo,
+        });
+        startIncomingTimeout(mergedIncomingCall);
+        addCallDebug("WEB: bootstrapped incoming call from offer", {
+          callId: data.callId,
+        });
+        setCallStatus("incoming_ringing");
+        return mergedIncomingCall;
+      });
     };
 
     const handleCallAnswer = async (data: SignalPayload) => {
@@ -2040,6 +2140,7 @@ export function CallOverlay({ currentUser }: CallOverlayProps) {
 
         const signal = buildSignal(call, calleeId);
         if (!signal || !offer.sdp) throw new Error("Could not create a valid call offer");
+        emitSignal("call:start", signal);
         emitSignal("call:offer", { ...signal, offer });
         void flushQueuedAnswer(callId);
         startNoAnswerTimeout(call);
@@ -3167,7 +3268,7 @@ export function CallOverlay({ currentUser }: CallOverlayProps) {
     <AnimatePresence>
     <motion.div 
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-      className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4">
+      className="hello-app-ambient fixed inset-0 z-50 flex items-center justify-center bg-[var(--hello-bg)] p-4">
       {CALL_DEBUG_UI && (
         <button
           onClick={() => setShowCallDebug(true)}
@@ -3200,20 +3301,20 @@ export function CallOverlay({ currentUser }: CallOverlayProps) {
       {incomingCall && !activeCall && (
         <motion.div 
           initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}
-          className="bg-slate-900 rounded-2xl p-8 flex flex-col items-center shadow-2xl w-[320px] border border-slate-700 mx-4 shadow-[0_0_40px_rgba(79,70,229,0.2)]">
-          <div className="w-24 h-24 rounded-full bg-slate-800 flex items-center justify-center text-4xl mb-6 shadow-inner relative overflow-hidden">
-            <span className="absolute inset-0 rounded-full animate-ping bg-indigo-500 opacity-20" />
+          className="hello-panel-strong mx-4 flex w-[320px] flex-col items-center rounded-[var(--hello-radius-xl)] p-8 shadow-2xl">
+          <div className="relative mb-6 flex h-24 w-24 items-center justify-center overflow-hidden rounded-full bg-[var(--hello-accent-soft)] text-4xl shadow-inner">
+            <span className="absolute inset-0 rounded-full animate-ping bg-[var(--hello-accent)] opacity-20" />
             {otherAvatar ? (
               <img src={otherAvatar} alt={otherName} className="w-full h-full object-cover relative z-10" />
             ) : (
-              <span className="relative z-10 font-bold text-white">{otherName.charAt(0).toUpperCase()}</span>
+              <span className="relative z-10 font-bold text-[var(--hello-accent)]">{otherName.charAt(0).toUpperCase()}</span>
             )}
           </div>
-          <h2 className="text-white text-xl font-bold mb-2">
+          <h2 className="mb-2 text-xl font-bold text-[var(--hello-text)]">
             Incoming {incomingCall.isVideo ? "Video" : "Audio"} Call
           </h2>
-          <p className="text-slate-400 mb-2">{otherName}</p>
-          <p className="text-emerald-400 text-sm mb-8 font-mono">
+          <p className="mb-2 text-[var(--hello-text-muted)]">{otherName}</p>
+          <p className="mb-8 text-sm font-mono text-[var(--hello-accent)]">
             {hasIncomingOffer ? statusLabel : "Preparing call..."}
           </p>
 

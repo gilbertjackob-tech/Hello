@@ -178,6 +178,8 @@ function initializeHelloRuntime(options: MountHelloOptions = {}) {
 
     CREATE TABLE IF NOT EXISTS drive_items (
       id TEXT PRIMARY KEY,
+      batchId TEXT,
+      eventId TEXT,
       originalName TEXT,
       storedName TEXT,
       mimeType TEXT,
@@ -188,7 +190,79 @@ function initializeHelloRuntime(options: MountHelloOptions = {}) {
       createdAt INTEGER,
       monthKey TEXT,
       deletedAt INTEGER,
-      deletedBy TEXT
+      deletedBy TEXT,
+      updatedAt INTEGER,
+      syncStatus TEXT,
+      caption TEXT,
+      locationName TEXT,
+      latitude REAL,
+      longitude REAL,
+      locationPrivacy TEXT,
+      exifJson TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS drive_events (
+      id TEXT PRIMARY KEY,
+      name TEXT,
+      createdByUserId TEXT,
+      coverItemId TEXT,
+      startDate INTEGER,
+      endDate INTEGER,
+      locationName TEXT,
+      createdAt INTEGER,
+      updatedAt INTEGER
+    );
+
+    CREATE TABLE IF NOT EXISTS drive_circles (
+      id TEXT PRIMARY KEY,
+      name TEXT,
+      ownerUserId TEXT,
+      createdAt INTEGER,
+      updatedAt INTEGER
+    );
+
+    CREATE TABLE IF NOT EXISTS drive_circle_members (
+      circleId TEXT,
+      userId TEXT,
+      role TEXT,
+      name TEXT,
+      username TEXT,
+      avatar TEXT,
+      createdAt INTEGER,
+      PRIMARY KEY (circleId, userId)
+    );
+
+    CREATE TABLE IF NOT EXISTS drive_item_circles (
+      itemId TEXT,
+      circleId TEXT,
+      createdAt INTEGER,
+      PRIMARY KEY (itemId, circleId)
+    );
+
+    CREATE TABLE IF NOT EXISTS drive_item_people (
+      itemId TEXT,
+      userId TEXT,
+      role TEXT,
+      createdAt INTEGER,
+      PRIMARY KEY (itemId, userId)
+    );
+
+    CREATE TABLE IF NOT EXISTS drive_upload_batches (
+      id TEXT PRIMARY KEY,
+      uploaderUserId TEXT,
+      eventId TEXT,
+      totalItems INTEGER,
+      status TEXT,
+      createdAt INTEGER,
+      completedAt INTEGER
+    );
+
+    CREATE TABLE IF NOT EXISTS drive_event_circles (
+      eventId TEXT,
+      circleId TEXT,
+      createdAt INTEGER,
+      createdByUserId TEXT,
+      PRIMARY KEY (eventId, circleId)
     );
 
     CREATE INDEX IF NOT EXISTS idx_drive_items_latest
@@ -207,6 +281,46 @@ function initializeHelloRuntime(options: MountHelloOptions = {}) {
 
     CREATE INDEX IF NOT EXISTS idx_drive_delete_events_user_day
       ON drive_delete_events (userId, deleteDay, deletedAt DESC);
+
+    CREATE TABLE IF NOT EXISTS drive_delete_polls (
+      id TEXT PRIMARY KEY,
+      targetType TEXT,
+      targetId TEXT,
+      circleId TEXT,
+      startedByUserId TEXT,
+      endsAt INTEGER,
+      status TEXT,
+      createdAt INTEGER,
+      resolvedAt INTEGER
+    );
+
+    CREATE TABLE IF NOT EXISTS drive_delete_poll_votes (
+      pollId TEXT,
+      userId TEXT,
+      vote TEXT,
+      createdAt INTEGER,
+      updatedAt INTEGER,
+      PRIMARY KEY (pollId, userId)
+    );
+
+    CREATE TABLE IF NOT EXISTS drive_item_favorites (
+      userId TEXT,
+      itemId TEXT,
+      createdAt INTEGER,
+      PRIMARY KEY (userId, itemId)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_drive_event_circles_circle
+      ON drive_event_circles (circleId, eventId);
+
+    CREATE INDEX IF NOT EXISTS idx_drive_delete_polls_circle
+      ON drive_delete_polls (circleId, status, endsAt);
+
+    CREATE INDEX IF NOT EXISTS idx_drive_delete_poll_votes_poll
+      ON drive_delete_poll_votes (pollId, updatedAt);
+
+    CREATE INDEX IF NOT EXISTS idx_drive_item_favorites_user
+      ON drive_item_favorites (userId, createdAt DESC);
 
     CREATE TABLE IF NOT EXISTS call_logs (
       id TEXT PRIMARY KEY,
@@ -286,8 +400,33 @@ function initializeHelloRuntime(options: MountHelloOptions = {}) {
   try { db.prepare("ALTER TABLE drive_items ADD COLUMN monthKey TEXT").run(); } catch(e){}
   try { db.prepare("ALTER TABLE drive_items ADD COLUMN deletedAt INTEGER").run(); } catch(e){}
   try { db.prepare("ALTER TABLE drive_items ADD COLUMN deletedBy TEXT").run(); } catch(e){}
+  [
+    ["batchId", "TEXT"],
+    ["eventId", "TEXT"],
+    ["updatedAt", "INTEGER"],
+    ["syncStatus", "TEXT"],
+    ["caption", "TEXT"],
+    ["locationName", "TEXT"],
+    ["latitude", "REAL"],
+    ["longitude", "REAL"],
+    ["locationPrivacy", "TEXT"],
+    ["exifJson", "TEXT"],
+  ].forEach(([column, definition]) => ensureColumn("drive_items", column, definition));
+  [
+    ["name", "TEXT"],
+    ["username", "TEXT"],
+    ["avatar", "TEXT"],
+  ].forEach(([column, definition]) => ensureColumn("drive_circle_members", column, definition));
   try { db.prepare("CREATE INDEX IF NOT EXISTS idx_drive_items_latest ON drive_items (deletedAt, createdAt DESC, id DESC)").run(); } catch(e){}
   try { db.prepare("CREATE INDEX IF NOT EXISTS idx_drive_items_month ON drive_items (deletedAt, monthKey, createdAt DESC)").run(); } catch(e){}
+  try { db.prepare("CREATE INDEX IF NOT EXISTS idx_drive_items_event ON drive_items (eventId, deletedAt, createdAt DESC)").run(); } catch(e){}
+  try { db.prepare("CREATE INDEX IF NOT EXISTS idx_drive_items_uploader ON drive_items (uploaderId, createdAt DESC)").run(); } catch(e){}
+  try { db.prepare("CREATE INDEX IF NOT EXISTS idx_drive_items_uploaded ON drive_items (createdAt DESC)").run(); } catch(e){}
+  try { db.prepare("CREATE INDEX IF NOT EXISTS idx_drive_item_circles_circle ON drive_item_circles (circleId, itemId)").run(); } catch(e){}
+  try { db.prepare("CREATE INDEX IF NOT EXISTS idx_drive_item_people_user ON drive_item_people (userId, itemId)").run(); } catch(e){}
+  try { db.prepare("CREATE INDEX IF NOT EXISTS idx_drive_upload_batches_status ON drive_upload_batches (status, createdAt DESC)").run(); } catch(e){}
+  try { db.prepare("CREATE TABLE IF NOT EXISTS drive_event_circles (eventId TEXT, circleId TEXT, createdAt INTEGER, createdByUserId TEXT, PRIMARY KEY (eventId, circleId))").run(); } catch(e){}
+  try { db.prepare("CREATE INDEX IF NOT EXISTS idx_drive_event_circles_circle ON drive_event_circles (circleId, eventId)").run(); } catch(e){}
   try { db.prepare(`
     CREATE TABLE IF NOT EXISTS drive_delete_events (
       id TEXT PRIMARY KEY,
@@ -298,6 +437,12 @@ function initializeHelloRuntime(options: MountHelloOptions = {}) {
     )
   `).run(); } catch(e){}
   try { db.prepare("CREATE INDEX IF NOT EXISTS idx_drive_delete_events_user_day ON drive_delete_events (userId, deleteDay, deletedAt DESC)").run(); } catch(e){}
+  try { db.prepare("CREATE TABLE IF NOT EXISTS drive_delete_polls (id TEXT PRIMARY KEY, targetType TEXT, targetId TEXT, circleId TEXT, startedByUserId TEXT, endsAt INTEGER, status TEXT, createdAt INTEGER, resolvedAt INTEGER)").run(); } catch(e){}
+  try { db.prepare("CREATE TABLE IF NOT EXISTS drive_delete_poll_votes (pollId TEXT, userId TEXT, vote TEXT, createdAt INTEGER, updatedAt INTEGER, PRIMARY KEY (pollId, userId))").run(); } catch(e){}
+  try { db.prepare("CREATE TABLE IF NOT EXISTS drive_item_favorites (userId TEXT, itemId TEXT, createdAt INTEGER, PRIMARY KEY (userId, itemId))").run(); } catch(e){}
+  try { db.prepare("CREATE INDEX IF NOT EXISTS idx_drive_delete_polls_circle ON drive_delete_polls (circleId, status, endsAt)").run(); } catch(e){}
+  try { db.prepare("CREATE INDEX IF NOT EXISTS idx_drive_delete_poll_votes_poll ON drive_delete_poll_votes (pollId, updatedAt)").run(); } catch(e){}
+  try { db.prepare("CREATE INDEX IF NOT EXISTS idx_drive_item_favorites_user ON drive_item_favorites (userId, createdAt DESC)").run(); } catch(e){}
 
   const storage = multer.diskStorage({
     destination: (_req, _file, cb) => {
@@ -491,31 +636,73 @@ function syncDriveFolder(force = false) {
   return { scanned: diskFiles.length, added, removed: missingIds.length, skipped: false };
 }
 
-function driveItemToResponse(row: any) {
-  const monthKey = row.monthKey || getDriveMonthKey(Number(row.createdAt || Date.now()));
-  return {
-    id: row.id,
-    url: `${HELLO_API_PATH}/drive/items/${row.id}/file`,
-    thumbnailUrl: `${HELLO_API_PATH}/drive/items/${row.id}/file`,
-    originalName: row.originalName,
-    mimeType: row.mimeType,
-    type: row.type,
-    size: Number(row.size || 0),
-    uploaderId: row.uploaderId,
-    createdAt: Number(row.createdAt || 0),
-    monthKey,
-    monthLabel: getDriveMonthLabel(monthKey),
-    deletedAt: row.deletedAt ? Number(row.deletedAt) : null,
-    deletedBy: row.deletedBy || null,
-  };
-}
-
 function getDriveActorId(req: express.Request) {
   const candidate =
     req.get("x-user-id") ||
     req.query.userId ||
     (req.body && typeof req.body === "object" ? req.body.userId : null);
   return String(candidate || "unknown").trim() || "unknown";
+}
+
+function readDriveBodyList(value: unknown): string[] {
+  if (Array.isArray(value)) return value.map(String).map((item) => item.trim()).filter(Boolean);
+  if (typeof value !== "string") return [];
+  const trimmed = value.trim();
+  if (!trimmed) return [];
+  if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) return parsed.map(String).map((item) => item.trim()).filter(Boolean);
+    } catch {
+      // Fall through to comma parsing for older clients.
+    }
+  }
+  return trimmed.split(",").map((item) => item.trim()).filter(Boolean);
+}
+
+function getOrCreateDriveEvent(name: string, userId: string, requestedId?: string) {
+  const now = Date.now();
+  const cleanName = String(name || "Daily Memories").trim() || "Daily Memories";
+  if (requestedId) {
+    const existing = db.prepare("SELECT * FROM drive_events WHERE id = ?").get(requestedId) as any;
+    if (existing) {
+      ensureDriveEventFolder(existing);
+      return existing;
+    }
+  }
+  const existingByName = db
+    .prepare("SELECT * FROM drive_events WHERE createdByUserId = ? AND LOWER(name) = LOWER(?) ORDER BY createdAt DESC LIMIT 1")
+    .get(userId, cleanName) as any;
+  if (existingByName) {
+    ensureDriveEventFolder(existingByName);
+    return existingByName;
+  }
+  const id = requestedId || "drive_event_" + Math.random().toString(36).slice(2, 11);
+  db.prepare(
+    "INSERT INTO drive_events (id, name, createdByUserId, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?)",
+  ).run(id, cleanName, userId, now, now);
+  const event = db.prepare("SELECT * FROM drive_events WHERE id = ?").get(id) as any;
+  ensureDriveEventFolder(event);
+  return event;
+}
+
+function driveEventFolderName(event: any) {
+  const safeName = sanitizeFilename(String(event?.name || "Drive Event")).replace(/^_+|_+$/g, "") || "Drive_Event";
+  return `${safeName}_${String(event?.id || "event").replace(/[^a-zA-Z0-9_-]/g, "_")}`;
+}
+
+function ensureDriveEventFolder(event: any) {
+  const targetDir = path.join(FAMILY_DRIVE_DIR, "events", driveEventFolderName(event));
+  fs.mkdirSync(targetDir, { recursive: true });
+  return targetDir;
+}
+
+function moveUploadedDriveFileToEventFolder(file: Express.Multer.File, event: any) {
+  const eventDir = ensureDriveEventFolder(event);
+  const targetPath = path.join(eventDir, path.basename(file.filename));
+  if (path.resolve(file.path) === path.resolve(targetPath)) return file.path;
+  fs.renameSync(file.path, targetPath);
+  return targetPath;
 }
 
 function getDhakaDeleteDay(timestamp: number) {
@@ -541,6 +728,412 @@ function getDriveDeleteAllowance(userId: string, now = Date.now()) {
     remaining: Math.max(0, 20 - used),
     deleteDay,
   };
+}
+
+function getDrivePersonalCircleId(userId: string) {
+  return `drive_circle_personal_${String(userId || "unknown").replace(/[^a-zA-Z0-9_-]/g, "_")}`;
+}
+
+function getDriveUserSummary(userId: string) {
+  return db
+    .prepare("SELECT id, name, avatar FROM users WHERE id = ?")
+    .get(userId) as { id?: string; name?: string; avatar?: string | null } | undefined;
+}
+
+function ensureDrivePersonalCircle(userId: string) {
+  const cleanUserId = String(userId || "").trim();
+  if (!cleanUserId) return null;
+  const now = Date.now();
+  const circleId = getDrivePersonalCircleId(cleanUserId);
+  const user = getDriveUserSummary(cleanUserId);
+  const circleName = user?.name ? `${user.name}'s Circle` : "Personal Circle";
+  db.prepare(
+    "INSERT OR IGNORE INTO drive_circles (id, name, ownerUserId, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?)",
+  ).run(circleId, circleName, cleanUserId, now, now);
+  db.prepare("UPDATE drive_circles SET updatedAt = ? WHERE id = ?").run(now, circleId);
+  db.prepare(
+    "INSERT OR REPLACE INTO drive_circle_members (circleId, userId, role, name, username, avatar, createdAt) VALUES (?, ?, ?, ?, ?, ?, COALESCE((SELECT createdAt FROM drive_circle_members WHERE circleId = ? AND userId = ?), ?))",
+  ).run(circleId, cleanUserId, "owner", user?.name || null, null, user?.avatar || null, circleId, cleanUserId, now);
+  return circleId;
+}
+
+function ensureDriveBackfill() {
+  const backfill = db.transaction(() => {
+    const uncircledItems = db.prepare(
+      `
+      SELECT DISTINCT i.id, i.uploaderId
+      FROM drive_items i
+      LEFT JOIN drive_item_circles ic ON ic.itemId = i.id
+      WHERE ic.itemId IS NULL
+    `,
+    ).all() as Array<{ id: string; uploaderId?: string | null }>;
+    uncircledItems.forEach((item) => {
+      const ownerId = String(item.uploaderId || "").trim();
+      if (!ownerId) return;
+      const circleId = ensureDrivePersonalCircle(ownerId);
+      if (!circleId) return;
+      db.prepare("INSERT OR IGNORE INTO drive_item_circles (itemId, circleId, createdAt) VALUES (?, ?, ?)").run(item.id, circleId, Date.now());
+    });
+
+    const eventCircleLinks = db.prepare(
+      `
+      SELECT DISTINCT i.eventId as eventId, ic.circleId as circleId, i.createdAt as createdAt, i.uploaderId as uploaderId
+      FROM drive_items i
+      JOIN drive_item_circles ic ON ic.itemId = i.id
+      WHERE i.eventId IS NOT NULL AND TRIM(i.eventId) <> ''
+    `,
+    ).all() as Array<{ eventId?: string; circleId?: string; createdAt?: number; uploaderId?: string | null }>;
+    eventCircleLinks.forEach((row) => {
+      const eventId = String(row.eventId || "").trim();
+      const circleId = String(row.circleId || "").trim();
+      if (!eventId || !circleId) return;
+      db.prepare(
+        "INSERT OR IGNORE INTO drive_event_circles (eventId, circleId, createdAt, createdByUserId) VALUES (?, ?, ?, ?)",
+      ).run(eventId, circleId, Number(row.createdAt || Date.now()), row.uploaderId || null);
+    });
+
+    const eventsWithoutCircle = db.prepare(
+      `
+      SELECT e.id, e.createdByUserId
+      FROM drive_events e
+      LEFT JOIN drive_event_circles ec ON ec.eventId = e.id
+      WHERE ec.eventId IS NULL
+    `,
+    ).all() as Array<{ id?: string; createdByUserId?: string | null }>;
+    eventsWithoutCircle.forEach((event) => {
+      const creatorId = String(event.createdByUserId || "").trim();
+      if (!creatorId) return;
+      const circleId = ensureDrivePersonalCircle(creatorId);
+      if (!circleId) return;
+      db.prepare(
+        "INSERT OR IGNORE INTO drive_event_circles (eventId, circleId, createdAt, createdByUserId) VALUES (?, ?, ?, ?)",
+      ).run(event.id, circleId, Date.now(), creatorId);
+    });
+  });
+  backfill();
+}
+
+function getDriveActorCircleIds(userId: string) {
+  return (db.prepare("SELECT circleId FROM drive_circle_members WHERE userId = ?").all(userId) as Array<{ circleId?: string }>)
+    .map((row) => String(row.circleId || "").trim())
+    .filter(Boolean);
+}
+
+function isDriveCircleMember(circleId: string, userId: string) {
+  return Boolean(
+    db.prepare("SELECT 1 FROM drive_circle_members WHERE circleId = ? AND userId = ? LIMIT 1").get(circleId, userId),
+  );
+}
+
+function getDriveCircle(circleId: string) {
+  return db.prepare("SELECT * FROM drive_circles WHERE id = ?").get(circleId) as any;
+}
+
+function getDriveCircleMembers(circleId: string) {
+  return db
+    .prepare("SELECT circleId, userId, role, name, username, avatar, createdAt FROM drive_circle_members WHERE circleId = ? ORDER BY createdAt ASC")
+    .all(circleId) as any[];
+}
+
+function getDriveCircleSummary(circleId: string) {
+  const circle = getDriveCircle(circleId);
+  if (!circle) return null;
+  const members = getDriveCircleMembers(circleId);
+  return {
+    ...circle,
+    memberCount: members.length,
+    members,
+  };
+}
+
+function getDriveEventCircleIds(eventId: string) {
+  return (db.prepare("SELECT circleId FROM drive_event_circles WHERE eventId = ?").all(eventId) as Array<{ circleId?: string }>)
+    .map((row) => String(row.circleId || "").trim())
+    .filter(Boolean);
+}
+
+function isDriveEventVisibleToActor(eventId: string, userId: string) {
+  return Boolean(
+    db.prepare(
+      `
+      SELECT 1
+      FROM drive_event_circles ec
+      JOIN drive_circle_members cm ON cm.circleId = ec.circleId
+      WHERE ec.eventId = ? AND cm.userId = ?
+      LIMIT 1
+    `,
+    ).get(eventId, userId),
+  );
+}
+
+function isDriveItemVisibleToActor(itemId: string, userId: string, includeDeleted = false) {
+  const deletedClause = includeDeleted ? "" : "AND i.deletedAt IS NULL";
+  return Boolean(
+    db.prepare(
+      `
+      SELECT 1
+      FROM drive_items i
+      WHERE i.id = ?
+        ${deletedClause}
+        AND (
+          EXISTS (
+            SELECT 1
+            FROM drive_item_circles ic
+            JOIN drive_circle_members cm ON cm.circleId = ic.circleId
+            WHERE ic.itemId = i.id AND cm.userId = ?
+          )
+          OR EXISTS (
+            SELECT 1
+            FROM drive_item_people ip
+            WHERE ip.itemId = i.id AND ip.userId = ?
+          )
+          OR i.uploaderId = ?
+        )
+      LIMIT 1
+    `,
+    ).get(itemId, userId, userId, userId),
+  );
+}
+
+function getDriveItemCircleIds(itemId: string) {
+  return (db.prepare("SELECT circleId FROM drive_item_circles WHERE itemId = ? ORDER BY circleId ASC").all(itemId) as Array<{ circleId?: string }>)
+    .map((row) => String(row.circleId || "").trim())
+    .filter(Boolean);
+}
+
+function isDriveFavorite(userId: string | null | undefined, itemId: string) {
+  if (!userId) return false;
+  return Boolean(db.prepare("SELECT 1 FROM drive_item_favorites WHERE userId = ? AND itemId = ? LIMIT 1").get(userId, itemId));
+}
+
+function verifyDriveSecurityAnswer(userId: string, answer: unknown) {
+  const cleanAnswer = String(answer || "").trim().toLowerCase();
+  if (!cleanAnswer) return false;
+  const row = db.prepare("SELECT securityAnswer FROM users WHERE id = ?").get(userId) as { securityAnswer?: string | null } | undefined;
+  return String(row?.securityAnswer || "").trim().toLowerCase() === cleanAnswer;
+}
+
+function driveItemToResponse(row: any, actorUserId?: string | null) {
+  const monthKey = row.monthKey || getDriveMonthKey(Number(row.createdAt || Date.now()));
+  return {
+    id: row.id,
+    batchId: row.batchId || null,
+    eventId: row.eventId || null,
+    eventName: row.eventName || null,
+    circleIds: getDriveItemCircleIds(row.id),
+    favorite: isDriveFavorite(actorUserId, row.id),
+    url: `${HELLO_API_PATH}/drive/items/${row.id}/file`,
+    thumbnailUrl: `${HELLO_API_PATH}/drive/items/${row.id}/file`,
+    originalName: row.originalName,
+    mimeType: row.mimeType,
+    type: row.type,
+    size: Number(row.size || 0),
+    uploaderId: row.uploaderId,
+    createdAt: Number(row.createdAt || 0),
+    monthKey,
+    monthLabel: getDriveMonthLabel(monthKey),
+    deletedAt: row.deletedAt ? Number(row.deletedAt) : null,
+    deletedBy: row.deletedBy || null,
+    syncStatus: row.syncStatus || "synced",
+    caption: row.caption || null,
+    locationName: row.locationName || null,
+    locationPrivacy: row.locationPrivacy || null,
+  };
+}
+
+function getDriveItemQuery(actorUserId: string, options: {
+  deleted: boolean;
+  limit?: number;
+  before?: number;
+  circleId?: string | null;
+  eventId?: string | null;
+}) {
+  const clauses = [
+    options.deleted ? "i.deletedAt IS NOT NULL" : "i.deletedAt IS NULL",
+    options.deleted ? "i.deletedAt < @before" : "i.createdAt < @before",
+    `(
+      EXISTS (
+        SELECT 1
+        FROM drive_item_circles ic
+        JOIN drive_circle_members cm ON cm.circleId = ic.circleId
+        WHERE ic.itemId = i.id AND cm.userId = @actorUserId
+      )
+      OR EXISTS (
+        SELECT 1
+        FROM drive_item_people ip
+        WHERE ip.itemId = i.id AND ip.userId = @actorUserId
+      )
+      OR i.uploaderId = @actorUserId
+    )`,
+  ];
+  if (options.circleId) {
+    clauses.push(
+      "EXISTS (SELECT 1 FROM drive_item_circles scoped_ic WHERE scoped_ic.itemId = i.id AND scoped_ic.circleId = @circleId)",
+    );
+  }
+  if (options.eventId) {
+    clauses.push("i.eventId = @eventId");
+  }
+  const orderBy = options.deleted ? "i.deletedAt DESC, i.id DESC" : "i.createdAt DESC, i.id DESC";
+  const query = `
+    SELECT i.*, e.name as eventName
+    FROM drive_items i
+    LEFT JOIN drive_events e ON e.id = i.eventId
+    WHERE ${clauses.join("\n      AND ")}
+    ORDER BY ${orderBy}
+    LIMIT @limit
+  `;
+  return db.prepare(query).all({
+    actorUserId,
+    before: Number(options.before || Date.now() + 1),
+    circleId: options.circleId || null,
+    eventId: options.eventId || null,
+    limit: Math.min(Math.max(Number(options.limit || 60), 1), 121),
+  }) as any[];
+}
+
+function getDriveEventItemsCount(eventId: string) {
+  const row = db.prepare("SELECT COUNT(*) as total FROM drive_items WHERE eventId = ? AND deletedAt IS NULL").get(eventId) as { total?: number };
+  return Number(row?.total || 0);
+}
+
+function getDriveCircleItemsCount(circleId: string) {
+  const row = db.prepare(
+    `
+    SELECT COUNT(DISTINCT i.id) as total
+    FROM drive_items i
+    JOIN drive_item_circles ic ON ic.itemId = i.id
+    WHERE ic.circleId = ? AND i.deletedAt IS NULL
+  `,
+  ).get(circleId) as { total?: number };
+  return Number(row?.total || 0);
+}
+
+function getDriveCircleEvents(circleId: string, actorUserId: string) {
+  if (!isDriveCircleMember(circleId, actorUserId)) return [];
+  const rows = db.prepare(
+    `
+    SELECT e.*, COUNT(i.id) as itemCount
+    FROM drive_event_circles ec
+    JOIN drive_events e ON e.id = ec.eventId
+    LEFT JOIN drive_items i ON i.eventId = e.id AND i.deletedAt IS NULL
+    WHERE ec.circleId = ?
+    GROUP BY e.id
+    ORDER BY e.updatedAt DESC, e.createdAt DESC
+  `,
+  ).all(circleId) as any[];
+  return rows.map((row) => ({ ...row, itemCount: Number(row.itemCount || 0), circleIds: getDriveEventCircleIds(row.id) }));
+}
+
+function deleteDriveEventNow(eventId: string, deletedByUserId: string) {
+  const now = Date.now();
+  const deleteDay = getDhakaDeleteDay(now);
+  const items = db.prepare("SELECT id FROM drive_items WHERE eventId = ? AND deletedAt IS NULL").all(eventId) as Array<{ id?: string }>;
+  items.forEach((item) => {
+    const itemId = String(item.id || "").trim();
+    if (!itemId) return;
+    db.prepare("UPDATE drive_items SET deletedAt = ?, deletedBy = ? WHERE id = ?").run(now, deletedByUserId, itemId);
+    db.prepare("INSERT OR IGNORE INTO drive_delete_events (id, itemId, userId, deletedAt, deleteDay) VALUES (?, ?, ?, ?, ?)").run(
+      `drive_delete_${Math.random().toString(36).slice(2, 11)}`,
+      itemId,
+      deletedByUserId,
+      now,
+      deleteDay,
+    );
+  });
+  db.prepare("DELETE FROM drive_event_circles WHERE eventId = ?").run(eventId);
+  db.prepare("DELETE FROM drive_events WHERE id = ?").run(eventId);
+}
+
+function deleteDriveCircleNow(circleId: string, deletedByUserId: string) {
+  const now = Date.now();
+  const deleteDay = getDhakaDeleteDay(now);
+  const items = db.prepare(
+    `
+    SELECT DISTINCT i.id
+    FROM drive_items i
+    JOIN drive_item_circles ic ON ic.itemId = i.id
+    WHERE ic.circleId = ? AND i.deletedAt IS NULL
+  `,
+  ).all(circleId) as Array<{ id?: string }>;
+  items.forEach((item) => {
+    const itemId = String(item.id || "").trim();
+    if (!itemId) return;
+    db.prepare("UPDATE drive_items SET deletedAt = ?, deletedBy = ? WHERE id = ?").run(now, deletedByUserId, itemId);
+    db.prepare("INSERT OR IGNORE INTO drive_delete_events (id, itemId, userId, deletedAt, deleteDay) VALUES (?, ?, ?, ?, ?)").run(
+      `drive_delete_${Math.random().toString(36).slice(2, 11)}`,
+      itemId,
+      deletedByUserId,
+      now,
+      deleteDay,
+    );
+  });
+  const orphanedEventIds = db.prepare("SELECT eventId FROM drive_event_circles WHERE circleId = ?").all(circleId) as Array<{ eventId?: string }>;
+  db.prepare("DELETE FROM drive_event_circles WHERE circleId = ?").run(circleId);
+  orphanedEventIds.forEach((row) => {
+    const eventId = String(row.eventId || "").trim();
+    if (!eventId) return;
+    const remaining = db.prepare("SELECT COUNT(*) as total FROM drive_event_circles WHERE eventId = ?").get(eventId) as { total?: number };
+    if (Number(remaining?.total || 0) <= 0) {
+      db.prepare("DELETE FROM drive_events WHERE id = ?").run(eventId);
+    }
+  });
+  db.prepare("DELETE FROM drive_circle_members WHERE circleId = ?").run(circleId);
+  db.prepare("DELETE FROM drive_circles WHERE id = ?").run(circleId);
+}
+
+function resolveDriveDeletePoll(poll: any) {
+  if (!poll) return null;
+  if (poll.status !== "open") return poll;
+  const now = Date.now();
+  if (Number(poll.endsAt || 0) > now) return poll;
+  const counts = db.prepare(
+    `
+    SELECT vote, COUNT(*) as total
+    FROM drive_delete_poll_votes
+    WHERE pollId = ?
+    GROUP BY vote
+  `,
+  ).all(poll.id) as Array<{ vote?: string; total?: number }>;
+  const deleteVotes = counts.find((row) => row.vote === "delete")?.total || 0;
+  const keepVotes = counts.find((row) => row.vote === "keep")?.total || 0;
+  if (deleteVotes > keepVotes) {
+    if (poll.targetType === "event") {
+      deleteDriveEventNow(poll.targetId, poll.startedByUserId || "system");
+    } else if (poll.targetType === "circle") {
+      deleteDriveCircleNow(poll.targetId, poll.startedByUserId || "system");
+    }
+    db.prepare("UPDATE drive_delete_polls SET status = 'applied', resolvedAt = ? WHERE id = ?").run(now, poll.id);
+    return db.prepare("SELECT * FROM drive_delete_polls WHERE id = ?").get(poll.id) as any;
+  }
+  db.prepare("UPDATE drive_delete_polls SET status = 'failed', resolvedAt = ? WHERE id = ?").run(now, poll.id);
+  return db.prepare("SELECT * FROM drive_delete_polls WHERE id = ?").get(poll.id) as any;
+}
+
+function getDriveDeletePoll(pollId: string) {
+  const row = db.prepare("SELECT * FROM drive_delete_polls WHERE id = ?").get(pollId) as any;
+  return resolveDriveDeletePoll(row);
+}
+
+function getDriveDeletePollSummary(pollId: string) {
+  const poll = getDriveDeletePoll(pollId);
+  if (!poll) return null;
+  const votes = db.prepare(
+    "SELECT pollId, userId, vote, createdAt, updatedAt FROM drive_delete_poll_votes WHERE pollId = ? ORDER BY updatedAt DESC",
+  ).all(pollId) as any[];
+  return {
+    ...poll,
+    votes,
+    deleteVotes: votes.filter((vote) => vote.vote === "delete").length,
+    keepVotes: votes.filter((vote) => vote.vote === "keep").length,
+  };
+}
+
+function listDriveDeletePolls(circleId: string) {
+  const rows = db.prepare(
+    "SELECT * FROM drive_delete_polls WHERE circleId = ? ORDER BY createdAt DESC",
+  ).all(circleId) as any[];
+  return rows.map((row) => getDriveDeletePollSummary(row.id)).filter(Boolean);
 }
 
 function isDevResetAuthorized(req: express.Request) {
@@ -1576,102 +2169,441 @@ export async function mountHello(
     });
   });
 
-  // Family Drive: central PC-backed photo/video library. No folders, no passwords.
+  // Family Drive: circles-first shared model backed by the local PC store.
   app.get("/api/drive/items", (req, res) => {
     if (String(req.query.sync || "").toLowerCase() === "true") {
       syncDriveFolder(true);
     }
+    const actorUserId = getDriveActorId(req);
+    const circleId = String(req.query.circleId || "").trim() || null;
+    const eventId = String(req.query.eventId || "").trim() || null;
+    if (circleId && !isDriveCircleMember(circleId, actorUserId)) {
+      res.status(403).json({ error: "Circle access denied" });
+      return;
+    }
+    if (eventId && !isDriveEventVisibleToActor(eventId, actorUserId)) {
+      res.status(403).json({ error: "Event access denied" });
+      return;
+    }
     const limit = Math.min(Math.max(Number(req.query.limit || 60), 1), 120);
-    const before = Number(req.query.before || Date.now() + 1);
-
-    const rows = db
-      .prepare(
-        `
-        SELECT * FROM drive_items
-        WHERE deletedAt IS NULL AND createdAt < ?
-        ORDER BY createdAt DESC, id DESC
-        LIMIT ?
-      `,
-      )
-      .all(before, limit + 1) as any[];
-
+    const rows = getDriveItemQuery(actorUserId, {
+      deleted: false,
+      limit: limit + 1,
+      before: Number(req.query.before || Date.now() + 1),
+      circleId,
+      eventId,
+    });
     const visibleRows = rows.slice(0, limit);
     const hasMore = rows.length > limit;
-    const nextCursor = hasMore && visibleRows.length
-      ? Number(visibleRows[visibleRows.length - 1].createdAt)
-      : null;
-    const totalRow = db
-      .prepare("SELECT COUNT(*) as total FROM drive_items WHERE deletedAt IS NULL")
-      .get() as { total?: number };
-
+    const nextCursor = hasMore && visibleRows.length ? Number(visibleRows[visibleRows.length - 1].createdAt) : null;
+    const total = getDriveItemQuery(actorUserId, {
+      deleted: false,
+      limit: 100000,
+      before: Date.now() + 1,
+      circleId,
+      eventId,
+    }).length;
     res.setHeader("Cache-Control", "no-store");
     res.json({
-      items: visibleRows.map(driveItemToResponse),
+      items: visibleRows.map((row) => driveItemToResponse(row, actorUserId)),
       nextCursor,
       hasMore,
-      total: Number(totalRow?.total || 0),
+      total,
     });
   });
 
-  app.get("/api/drive/months", (_req, res) => {
-    syncDriveFolder();
-    const rows = db
-      .prepare(
-        `
-        SELECT monthKey, COUNT(*) as count, MAX(createdAt) as latest
-        FROM drive_items
-        WHERE deletedAt IS NULL
-        GROUP BY monthKey
-        ORDER BY latest DESC
-      `,
-      )
-      .all() as any[];
-
+  app.get("/api/drive/months", (req, res) => {
+    const actorUserId = getDriveActorId(req);
+    const items = getDriveItemQuery(actorUserId, {
+      deleted: false,
+      limit: 100000,
+      before: Date.now() + 1,
+      circleId: String(req.query.circleId || "").trim() || null,
+      eventId: String(req.query.eventId || "").trim() || null,
+    });
+    const months = items.reduce<Record<string, { count: number; latest: number }>>((acc, item) => {
+      const monthKey = item.monthKey || getDriveMonthKey(Number(item.createdAt || Date.now()));
+      if (!acc[monthKey]) acc[monthKey] = { count: 0, latest: 0 };
+      acc[monthKey].count += 1;
+      acc[monthKey].latest = Math.max(acc[monthKey].latest, Number(item.createdAt || 0));
+      return acc;
+    }, {});
     res.setHeader("Cache-Control", "no-store");
     res.json({
-      months: rows.map((row) => ({
-        monthKey: row.monthKey,
-        monthLabel: getDriveMonthLabel(row.monthKey),
-        count: Number(row.count || 0),
-        latest: Number(row.latest || 0),
-      })),
+      months: Object.entries(months)
+        .map(([monthKey, value]) => ({
+          monthKey,
+          monthLabel: getDriveMonthLabel(monthKey),
+          count: value.count,
+          latest: value.latest,
+        }))
+        .sort((a, b) => b.latest - a.latest),
     });
   });
 
   app.get("/api/drive/trash", (req, res) => {
-    if (String(req.query.sync || "").toLowerCase() === "true") {
-      syncDriveFolder(true);
+    const actorUserId = getDriveActorId(req);
+    const circleId = String(req.query.circleId || "").trim() || null;
+    const eventId = String(req.query.eventId || "").trim() || null;
+    if (circleId && !isDriveCircleMember(circleId, actorUserId)) {
+      res.status(403).json({ error: "Circle access denied" });
+      return;
+    }
+    if (eventId && !isDriveEventVisibleToActor(eventId, actorUserId)) {
+      res.status(403).json({ error: "Event access denied" });
+      return;
     }
     const limit = Math.min(Math.max(Number(req.query.limit || 60), 1), 120);
-    const before = Number(req.query.before || Date.now() + 1);
-
-    const rows = db
-      .prepare(
-        `
-        SELECT * FROM drive_items
-        WHERE deletedAt IS NOT NULL AND deletedAt < ?
-        ORDER BY deletedAt DESC, id DESC
-        LIMIT ?
-      `,
-      )
-      .all(before, limit + 1) as any[];
-
+    const rows = getDriveItemQuery(actorUserId, {
+      deleted: true,
+      limit: limit + 1,
+      before: Number(req.query.before || Date.now() + 1),
+      circleId,
+      eventId,
+    });
     const visibleRows = rows.slice(0, limit);
     const hasMore = rows.length > limit;
-    const nextCursor = hasMore && visibleRows.length
-      ? Number(visibleRows[visibleRows.length - 1].deletedAt)
-      : null;
-    const totalRow = db
-      .prepare("SELECT COUNT(*) as total FROM drive_items WHERE deletedAt IS NOT NULL")
-      .get() as { total?: number };
-
+    const nextCursor = hasMore && visibleRows.length ? Number(visibleRows[visibleRows.length - 1].deletedAt) : null;
+    const total = getDriveItemQuery(actorUserId, {
+      deleted: true,
+      limit: 100000,
+      before: Date.now() + 1,
+      circleId,
+      eventId,
+    }).length;
     res.setHeader("Cache-Control", "no-store");
     res.json({
-      items: visibleRows.map(driveItemToResponse),
+      items: visibleRows.map((row) => driveItemToResponse(row, actorUserId)),
       nextCursor,
       hasMore,
-      total: Number(totalRow?.total || 0),
+      total,
     });
+  });
+
+  app.get("/api/drive/circles", (req, res) => {
+    const actorUserId = getDriveActorId(req);
+    const rows = db.prepare(
+      `
+      SELECT c.*
+      FROM drive_circles c
+      JOIN drive_circle_members m ON m.circleId = c.id
+      WHERE m.userId = ?
+      ORDER BY c.updatedAt DESC, c.createdAt DESC
+    `,
+    ).all(actorUserId) as any[];
+    res.setHeader("Cache-Control", "no-store");
+    res.json({
+      circles: rows
+        .map((row) => getDriveCircleSummary(row.id))
+        .filter(Boolean),
+    });
+  });
+
+  app.post("/api/drive/circles", express.json(), (req, res) => {
+    const now = Date.now();
+    const actorUserId = getDriveActorId(req);
+    const id = String(req.body?.id || `drive_circle_${Math.random().toString(36).slice(2, 11)}`);
+    const name = String(req.body?.name || "").trim();
+    if (!name) {
+      res.status(400).json({ error: "Circle name is required" });
+      return;
+    }
+    const inputMembers = Array.isArray(req.body?.members) ? req.body.members : [];
+    const members = inputMembers
+      .map((member: any) => ({
+        userId: String(member?.userId || "").trim(),
+        role: String(member?.role || "member").trim() || "member",
+        name: member?.name ? String(member.name).trim() : null,
+        username: member?.username ? String(member.username).trim() : null,
+        avatar: member?.avatar ? String(member.avatar).trim() : null,
+      }))
+      .filter((member: any) => member.userId);
+    if (!members.some((member: any) => member.userId === actorUserId)) {
+      const actor = getDriveUserSummary(actorUserId);
+      members.unshift({
+        userId: actorUserId,
+        role: "owner",
+        name: actor?.name || null,
+        username: null,
+        avatar: actor?.avatar || null,
+      });
+    }
+    const saveCircle = db.transaction(() => {
+      const existing = getDriveCircle(id);
+      db.prepare("INSERT OR REPLACE INTO drive_circles (id, name, ownerUserId, createdAt, updatedAt) VALUES (?, ?, ?, COALESCE(?, ?), ?)").run(
+        id,
+        name,
+        existing?.ownerUserId || actorUserId,
+        existing?.createdAt || null,
+        now,
+        now,
+      );
+      db.prepare("DELETE FROM drive_circle_members WHERE circleId = ?").run(id);
+      members.forEach((member: any) => {
+        db.prepare(
+          "INSERT OR REPLACE INTO drive_circle_members (circleId, userId, role, name, username, avatar, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        ).run(id, member.userId, member.role, member.name, member.username, member.avatar, now);
+      });
+    });
+    saveCircle();
+    res.json(getDriveCircleSummary(id));
+  });
+
+  app.delete("/api/drive/circles/:id", (req, res) => {
+    const actorUserId = getDriveActorId(req);
+    const circleId = req.params.id;
+    if (!isDriveCircleMember(circleId, actorUserId)) {
+      res.status(403).json({ error: "Circle access denied" });
+      return;
+    }
+    const summary = getDriveCircleSummary(circleId);
+    if (!summary) {
+      res.status(404).json({ error: "Circle not found" });
+      return;
+    }
+    const itemCount = getDriveCircleItemsCount(circleId);
+    if (itemCount > 0 && Number(summary.memberCount || 0) > 1) {
+      res.status(409).json({ error: "Non-empty circles require a delete poll", requiresPoll: true });
+      return;
+    }
+    deleteDriveCircleNow(circleId, actorUserId);
+    res.json({ ok: true });
+  });
+
+  app.post("/api/drive/circles/:id/leave", express.json(), (req, res) => {
+    const actorUserId = getDriveActorId(req);
+    const circleId = req.params.id;
+    if (!isDriveCircleMember(circleId, actorUserId)) {
+      res.status(403).json({ error: "Circle access denied" });
+      return;
+    }
+    db.prepare("DELETE FROM drive_circle_members WHERE circleId = ? AND userId = ?").run(circleId, actorUserId);
+    const remaining = getDriveCircleMembers(circleId);
+    if (!remaining.length) {
+      db.prepare("DELETE FROM drive_circles WHERE id = ?").run(circleId);
+      db.prepare("DELETE FROM drive_event_circles WHERE circleId = ?").run(circleId);
+    }
+    res.json({ ok: true, circleId, leftByUserId: actorUserId });
+  });
+
+  app.get("/api/drive/events", (req, res) => {
+    const actorUserId = getDriveActorId(req);
+    const circleId = String(req.query.circleId || "").trim() || null;
+    if (circleId) {
+      if (!isDriveCircleMember(circleId, actorUserId)) {
+        res.status(403).json({ error: "Circle access denied" });
+        return;
+      }
+      res.setHeader("Cache-Control", "no-store");
+      res.json({ events: getDriveCircleEvents(circleId, actorUserId) });
+      return;
+    }
+    const circleIds = getDriveActorCircleIds(actorUserId);
+    const seen = new Set<string>();
+    const events = circleIds.flatMap((id) => getDriveCircleEvents(id, actorUserId)).filter((event: any) => {
+      if (seen.has(event.id)) return false;
+      seen.add(event.id);
+      return true;
+    });
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ events });
+  });
+
+  app.get("/api/drive/circles/:id/events", (req, res) => {
+    const actorUserId = getDriveActorId(req);
+    const circleId = req.params.id;
+    if (!isDriveCircleMember(circleId, actorUserId)) {
+      res.status(403).json({ error: "Circle access denied" });
+      return;
+    }
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ events: getDriveCircleEvents(circleId, actorUserId) });
+  });
+
+  app.post("/api/drive/circles/:id/events", express.json(), (req, res) => {
+    const actorUserId = getDriveActorId(req);
+    const circleId = req.params.id;
+    if (!isDriveCircleMember(circleId, actorUserId)) {
+      res.status(403).json({ error: "Circle access denied" });
+      return;
+    }
+    const event = getOrCreateDriveEvent(req.body?.name, actorUserId, req.body?.id);
+    db.prepare(
+      "INSERT OR IGNORE INTO drive_event_circles (eventId, circleId, createdAt, createdByUserId) VALUES (?, ?, ?, ?)",
+    ).run(event.id, circleId, Date.now(), actorUserId);
+    res.json({ ...event, itemCount: getDriveEventItemsCount(event.id), circleIds: getDriveEventCircleIds(event.id) });
+  });
+
+  app.post("/api/drive/events", express.json(), (req, res) => {
+    const actorUserId = getDriveActorId(req);
+    const circleId = String(req.body?.circleId || "").trim();
+    if (!circleId || !isDriveCircleMember(circleId, actorUserId)) {
+      res.status(400).json({ error: "A valid circleId is required" });
+      return;
+    }
+    const event = getOrCreateDriveEvent(req.body?.name, actorUserId, req.body?.id);
+    db.prepare(
+      "INSERT OR IGNORE INTO drive_event_circles (eventId, circleId, createdAt, createdByUserId) VALUES (?, ?, ?, ?)",
+    ).run(event.id, circleId, Date.now(), actorUserId);
+    res.json({ ...event, itemCount: getDriveEventItemsCount(event.id), circleIds: getDriveEventCircleIds(event.id) });
+  });
+
+  app.patch("/api/drive/events/:id", express.json(), (req, res) => {
+    const actorUserId = getDriveActorId(req);
+    const eventId = req.params.id;
+    if (!isDriveEventVisibleToActor(eventId, actorUserId)) {
+      res.status(403).json({ error: "Event access denied" });
+      return;
+    }
+    const name = String(req.body?.name || "").trim();
+    if (!name) {
+      res.status(400).json({ error: "Event name is required" });
+      return;
+    }
+    const now = Date.now();
+    db.prepare("UPDATE drive_events SET name = ?, updatedAt = ? WHERE id = ?").run(name, now, eventId);
+    const event = db.prepare("SELECT * FROM drive_events WHERE id = ?").get(eventId) as any;
+    res.json({ ...event, itemCount: getDriveEventItemsCount(eventId), circleIds: getDriveEventCircleIds(eventId) });
+  });
+
+  app.delete("/api/drive/events/:id", (req, res) => {
+    const actorUserId = getDriveActorId(req);
+    const eventId = req.params.id;
+    if (!isDriveEventVisibleToActor(eventId, actorUserId)) {
+      res.status(403).json({ error: "Event access denied" });
+      return;
+    }
+    if (getDriveEventItemsCount(eventId) > 0) {
+      res.status(409).json({ error: "Non-empty events require a delete poll", requiresPoll: true });
+      return;
+    }
+    db.prepare("DELETE FROM drive_event_circles WHERE eventId = ?").run(eventId);
+    db.prepare("DELETE FROM drive_events WHERE id = ?").run(eventId);
+    res.json({ ok: true, eventId });
+  });
+
+  app.get("/api/drive/events/:id/items", (req, res) => {
+    const actorUserId = getDriveActorId(req);
+    const eventId = req.params.id;
+    if (!isDriveEventVisibleToActor(eventId, actorUserId)) {
+      res.status(403).json({ error: "Event access denied" });
+      return;
+    }
+    const rows = getDriveItemQuery(actorUserId, {
+      deleted: false,
+      limit: 100000,
+      before: Date.now() + 1,
+      eventId,
+    });
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ items: rows.map((row) => driveItemToResponse(row, actorUserId)), total: rows.length });
+  });
+
+  app.get("/api/drive/delete-polls", (req, res) => {
+    const actorUserId = getDriveActorId(req);
+    const circleId = String(req.query.circleId || "").trim();
+    if (!circleId || !isDriveCircleMember(circleId, actorUserId)) {
+      res.status(400).json({ error: "A valid circleId is required" });
+      return;
+    }
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ polls: listDriveDeletePolls(circleId) });
+  });
+
+  app.post("/api/drive/delete-polls", express.json(), (req, res) => {
+    const actorUserId = getDriveActorId(req);
+    const targetType = String(req.body?.targetType || "").trim();
+    const targetId = String(req.body?.targetId || "").trim();
+    let circleId = String(req.body?.circleId || "").trim();
+    if (!["circle", "event"].includes(targetType) || !targetId) {
+      res.status(400).json({ error: "targetType and targetId are required" });
+      return;
+    }
+    if (targetType === "circle") {
+      circleId = targetId;
+    } else if (!circleId) {
+      circleId = getDriveEventCircleIds(targetId)[0] || "";
+    }
+    if (!circleId || !isDriveCircleMember(circleId, actorUserId)) {
+      res.status(403).json({ error: "Circle access denied" });
+      return;
+    }
+    const existing = db.prepare(
+      "SELECT id FROM drive_delete_polls WHERE targetType = ? AND targetId = ? AND status = 'open' ORDER BY createdAt DESC LIMIT 1",
+    ).get(targetType, targetId) as { id?: string } | undefined;
+    if (existing?.id) {
+      res.json(getDriveDeletePollSummary(existing.id));
+      return;
+    }
+    const targetItemCount = targetType === "circle" ? getDriveCircleItemsCount(targetId) : getDriveEventItemsCount(targetId);
+    if (targetType === "circle" && getDriveCircleMembers(targetId).length <= 1) {
+      deleteDriveCircleNow(targetId, actorUserId);
+      res.json({ ok: true, status: "applied", targetType, targetId, circleId });
+      return;
+    }
+    if (targetItemCount <= 0) {
+      if (targetType === "circle") deleteDriveCircleNow(targetId, actorUserId);
+      if (targetType === "event") deleteDriveEventNow(targetId, actorUserId);
+      res.json({ ok: true, status: "applied", targetType, targetId, circleId });
+      return;
+    }
+    const now = Date.now();
+    const pollId = `drive_poll_${Math.random().toString(36).slice(2, 11)}`;
+    db.prepare(
+      "INSERT INTO drive_delete_polls (id, targetType, targetId, circleId, startedByUserId, endsAt, status, createdAt, resolvedAt) VALUES (?, ?, ?, ?, ?, ?, 'open', ?, NULL)",
+    ).run(pollId, targetType, targetId, circleId, actorUserId, now + 24 * 60 * 60 * 1000, now);
+    res.json(getDriveDeletePollSummary(pollId));
+  });
+
+  app.post("/api/drive/delete-polls/:id/votes", express.json(), (req, res) => {
+    const actorUserId = getDriveActorId(req);
+    const vote = String(req.body?.vote || "").trim();
+    if (!["delete", "keep"].includes(vote)) {
+      res.status(400).json({ error: "Vote must be delete or keep" });
+      return;
+    }
+    const poll = getDriveDeletePoll(req.params.id);
+    if (!poll) {
+      res.status(404).json({ error: "Delete poll not found" });
+      return;
+    }
+    if (!isDriveCircleMember(String(poll.circleId || ""), actorUserId)) {
+      res.status(403).json({ error: "Circle access denied" });
+      return;
+    }
+    if (poll.status !== "open") {
+      res.json(getDriveDeletePollSummary(req.params.id));
+      return;
+    }
+    const now = Date.now();
+    db.prepare(
+      "INSERT INTO drive_delete_poll_votes (pollId, userId, vote, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?) ON CONFLICT(pollId, userId) DO UPDATE SET vote = excluded.vote, updatedAt = excluded.updatedAt",
+    ).run(req.params.id, actorUserId, vote, now, now);
+    res.json(getDriveDeletePollSummary(req.params.id));
+  });
+
+  app.get("/api/drive/favorites", (req, res) => {
+    const actorUserId = getDriveActorId(req);
+    const rows = db.prepare("SELECT itemId FROM drive_item_favorites WHERE userId = ? ORDER BY createdAt DESC").all(actorUserId) as Array<{ itemId?: string }>;
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ itemIds: rows.map((row) => String(row.itemId || "").trim()).filter(Boolean) });
+  });
+
+  app.post("/api/drive/favorites", express.json(), (req, res) => {
+    const actorUserId = getDriveActorId(req);
+    const itemId = String(req.body?.itemId || "").trim();
+    if (!itemId || !isDriveItemVisibleToActor(itemId, actorUserId, true)) {
+      res.status(404).json({ error: "Drive item not found" });
+      return;
+    }
+    db.prepare("INSERT OR IGNORE INTO drive_item_favorites (userId, itemId, createdAt) VALUES (?, ?, ?)").run(actorUserId, itemId, Date.now());
+    res.json({ ok: true, itemId, favorite: true });
+  });
+
+  app.delete("/api/drive/favorites/:itemId", (req, res) => {
+    const actorUserId = getDriveActorId(req);
+    db.prepare("DELETE FROM drive_item_favorites WHERE userId = ? AND itemId = ?").run(actorUserId, req.params.itemId);
+    res.json({ ok: true, itemId: req.params.itemId, favorite: false });
   });
 
   app.post("/api/drive/upload", driveUpload.array("files", 50), (req, res) => {
@@ -1680,58 +2612,103 @@ export async function mountHello(
       res.status(400).json({ error: "No photos or videos uploaded" });
       return;
     }
-
-    const uploaderId = req.body.uploaderId || "unknown";
+    const actorUserId = getDriveActorId(req);
+    const uploaderId = String(req.body.uploaderId || actorUserId || "unknown").trim() || actorUserId;
+    const circleIds = Array.from(new Set([
+      ...readDriveBodyList(req.body.circleIds),
+      ...readDriveBodyList(req.body["circleIds[]"]),
+    ])).filter(Boolean);
+    if (!circleIds.length) {
+      res.status(400).json({ error: "Please choose a circle before uploading" });
+      return;
+    }
+    if (!circleIds.every((circleId) => isDriveCircleMember(circleId, actorUserId))) {
+      res.status(403).json({ error: "Circle access denied" });
+      return;
+    }
+    const requestedEventId = String(req.body.eventId || "").trim() || undefined;
+    let event: any;
+    if (requestedEventId) {
+      if (!isDriveEventVisibleToActor(requestedEventId, actorUserId)) {
+        res.status(403).json({ error: "Event access denied" });
+        return;
+      }
+      event = db.prepare("SELECT * FROM drive_events WHERE id = ?").get(requestedEventId) as any;
+    } else {
+      event = getOrCreateDriveEvent(req.body.eventName, actorUserId, undefined);
+    }
+    if (!event) {
+      res.status(400).json({ error: "Could not resolve upload event" });
+      return;
+    }
+    const batchId = String(req.body.batchId || `drive_batch_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`);
     const insert = db.prepare(
       `
       INSERT INTO drive_items
-      (id, originalName, storedName, mimeType, type, size, path, uploaderId, createdAt, monthKey, deletedAt)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+      (id, batchId, eventId, originalName, storedName, mimeType, type, size, path, uploaderId, createdAt, monthKey, deletedAt, updatedAt, syncStatus)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, 'synced')
     `,
     );
-
     const uploadStart = Date.now();
-    const uploaded = files.map((file, index) => {
-      const id = "drive_" + Math.random().toString(36).slice(2, 11);
-      const createdAt = uploadStart + index;
-      const type = file.mimetype.startsWith("video/") ? "video" : "image";
-      const monthKey = getDriveMonthKey(createdAt);
-      insert.run(
-        id,
-        file.originalname,
-        file.filename,
-        file.mimetype,
-        type,
-        file.size,
-        file.path,
-        uploaderId,
-        createdAt,
-        monthKey,
-      );
-
-      const row = db.prepare("SELECT * FROM drive_items WHERE id = ?").get(id);
-      return driveItemToResponse(row);
+    const saveUpload = db.transaction(() => {
+      circleIds.forEach((circleId) => {
+        db.prepare(
+          "INSERT OR IGNORE INTO drive_event_circles (eventId, circleId, createdAt, createdByUserId) VALUES (?, ?, ?, ?)",
+        ).run(event.id, circleId, uploadStart, actorUserId);
+      });
+      db.prepare(
+        "INSERT OR REPLACE INTO drive_upload_batches (id, uploaderUserId, eventId, totalItems, status, createdAt, completedAt) VALUES (?, ?, ?, ?, 'synced', ?, ?)",
+      ).run(batchId, uploaderId, event.id, files.length, uploadStart, uploadStart);
+      return files.map((file, index) => {
+        const id = `drive_${Math.random().toString(36).slice(2, 11)}`;
+        const createdAt = uploadStart + index;
+        const type = file.mimetype.startsWith("video/") ? "video" : "image";
+        const monthKey = getDriveMonthKey(createdAt);
+        const eventFilePath = moveUploadedDriveFileToEventFolder(file, event);
+        insert.run(
+          id,
+          batchId,
+          event.id,
+          file.originalname,
+          path.basename(eventFilePath),
+          file.mimetype,
+          type,
+          file.size,
+          eventFilePath,
+          uploaderId,
+          createdAt,
+          monthKey,
+          createdAt,
+        );
+        circleIds.forEach((circleId) => {
+          db.prepare("INSERT OR IGNORE INTO drive_item_circles (itemId, circleId, createdAt) VALUES (?, ?, ?)").run(id, circleId, createdAt);
+        });
+        db.prepare("UPDATE drive_events SET coverItemId = COALESCE(coverItemId, ?), updatedAt = ? WHERE id = ?").run(id, createdAt, event.id);
+        const row = db.prepare("SELECT i.*, e.name as eventName FROM drive_items i LEFT JOIN drive_events e ON e.id = i.eventId WHERE i.id = ?").get(id);
+        return driveItemToResponse(row, actorUserId);
+      });
     });
-
-    res.json({ items: uploaded, count: uploaded.length });
+    const uploaded = saveUpload();
+    res.json({ items: uploaded, count: uploaded.length, batchId, eventId: event.id });
   });
 
   app.get("/api/drive/items/:itemId/file", (req, res) => {
     sendDriveItemFile(req.params.itemId, res);
   });
 
-  app.delete("/api/drive/items/:itemId", (req, res) => {
-    const item = db
-      .prepare("SELECT * FROM drive_items WHERE id = ? AND deletedAt IS NULL")
-      .get(req.params.itemId) as any;
-    if (!item) {
+  app.delete("/api/drive/items/:itemId", express.json(), (req, res) => {
+    const actorUserId = getDriveActorId(req);
+    const item = db.prepare("SELECT * FROM drive_items WHERE id = ? AND deletedAt IS NULL").get(req.params.itemId) as any;
+    if (!item || !isDriveItemVisibleToActor(req.params.itemId, actorUserId)) {
       res.status(404).json({ error: "Drive item not found" });
       return;
     }
-
-    const userId = getDriveActorId(req);
+    if (!verifyDriveSecurityAnswer(actorUserId, req.body?.securityAnswer)) {
+      res.status(403).json({ error: "Security answer did not match" });
+      return;
+    }
     const now = Date.now();
-    const allowance = getDriveDeleteAllowance(userId, now);
+    const allowance = getDriveDeleteAllowance(actorUserId, now);
     if (allowance.remaining <= 0) {
       res.status(429).json({
         error: "Daily Drive delete limit reached. You can delete more tomorrow.",
@@ -1739,46 +2716,36 @@ export async function mountHello(
       });
       return;
     }
-
-    const eventId = "drive_delete_" + Math.random().toString(36).slice(2, 11);
-    const moveToTrash = db.transaction(() => {
-      db.prepare("UPDATE drive_items SET deletedAt = ?, deletedBy = ? WHERE id = ?").run(now, userId, req.params.itemId);
-      db.prepare(
-        "INSERT INTO drive_delete_events (id, itemId, userId, deletedAt, deleteDay) VALUES (?, ?, ?, ?, ?)",
-      ).run(eventId, req.params.itemId, userId, now, allowance.deleteDay);
-    });
-    moveToTrash();
-
+    db.prepare("UPDATE drive_items SET deletedAt = ?, deletedBy = ? WHERE id = ?").run(now, actorUserId, req.params.itemId);
+    db.prepare(
+      "INSERT INTO drive_delete_events (id, itemId, userId, deletedAt, deleteDay) VALUES (?, ?, ?, ?, ?)",
+    ).run(`drive_delete_${Math.random().toString(36).slice(2, 11)}`, req.params.itemId, actorUserId, now, allowance.deleteDay);
     res.json({
       ok: true,
-      item: driveItemToResponse({ ...item, deletedAt: now, deletedBy: userId }),
-      deleteLimit: getDriveDeleteAllowance(userId, now),
+      item: driveItemToResponse({ ...item, deletedAt: now, deletedBy: actorUserId }, actorUserId),
+      deleteLimit: getDriveDeleteAllowance(actorUserId, now),
     });
   });
 
-  app.post("/api/drive/items/:itemId/restore", (req, res) => {
-    const item = db
-      .prepare("SELECT * FROM drive_items WHERE id = ? AND deletedAt IS NOT NULL")
-      .get(req.params.itemId) as any;
-    if (!item) {
+  app.post("/api/drive/items/:itemId/restore", express.json(), (req, res) => {
+    const actorUserId = getDriveActorId(req);
+    const item = db.prepare("SELECT * FROM drive_items WHERE id = ? AND deletedAt IS NOT NULL").get(req.params.itemId) as any;
+    if (!item || !isDriveItemVisibleToActor(req.params.itemId, actorUserId, true)) {
       res.status(404).json({ error: "Drive trash item not found" });
       return;
     }
-
     db.prepare("UPDATE drive_items SET deletedAt = NULL, deletedBy = NULL WHERE id = ?").run(req.params.itemId);
-    const restored = db.prepare("SELECT * FROM drive_items WHERE id = ?").get(req.params.itemId);
-    res.json({ ok: true, item: driveItemToResponse(restored) });
+    const restored = db.prepare("SELECT i.*, e.name as eventName FROM drive_items i LEFT JOIN drive_events e ON e.id = i.eventId WHERE i.id = ?").get(req.params.itemId);
+    res.json({ ok: true, item: driveItemToResponse(restored, actorUserId) });
   });
 
-  app.delete("/api/drive/items/:itemId/permanent", (req, res) => {
-    const item = db
-      .prepare("SELECT * FROM drive_items WHERE id = ? AND deletedAt IS NOT NULL")
-      .get(req.params.itemId) as any;
-    if (!item) {
+  app.delete("/api/drive/items/:itemId/permanent", express.json(), (req, res) => {
+    const actorUserId = getDriveActorId(req);
+    const item = db.prepare("SELECT * FROM drive_items WHERE id = ? AND deletedAt IS NOT NULL").get(req.params.itemId) as any;
+    if (!item || !isDriveItemVisibleToActor(req.params.itemId, actorUserId, true)) {
       res.status(404).json({ error: "Drive trash item not found" });
       return;
     }
-
     if (item.path && fs.existsSync(item.path)) {
       try {
         fs.unlinkSync(item.path);
@@ -1786,6 +2753,9 @@ export async function mountHello(
         console.warn("[DRIVE_DELETE_FILE_FAILED]", error);
       }
     }
+    db.prepare("DELETE FROM drive_item_favorites WHERE itemId = ?").run(req.params.itemId);
+    db.prepare("DELETE FROM drive_item_people WHERE itemId = ?").run(req.params.itemId);
+    db.prepare("DELETE FROM drive_item_circles WHERE itemId = ?").run(req.params.itemId);
     db.prepare("DELETE FROM drive_items WHERE id = ?").run(req.params.itemId);
     res.json({ ok: true });
   });

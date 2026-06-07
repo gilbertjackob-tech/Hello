@@ -44,6 +44,29 @@
   --hello-shadow-soft: 0 12px 28px rgba(0, 0, 0, 0.24);
 }
 
+.cute {
+  --hello-bg: #ffe1ec;
+  --hello-bg-strong: #fff3f8;
+  --hello-panel: rgba(255, 242, 248, 0.78);
+  --hello-panel-strong: rgba(255, 246, 250, 0.94);
+  --hello-panel-muted: rgba(255, 225, 237, 0.62);
+  --hello-border: rgba(236, 93, 143, 0.22);
+  --hello-border-strong: rgba(219, 39, 119, 0.34);
+  --hello-text: #84234b;
+  --hello-text-muted: #b55d7e;
+  --hello-accent: #ec5d97;
+  --hello-accent-strong: #db2777;
+  --hello-accent-soft: rgba(236, 93, 151, 0.18);
+  --hello-danger: #e44768;
+  --hello-warning: #f2a53b;
+  --hello-shadow: 0 22px 46px rgba(219, 39, 119, 0.18);
+  --hello-shadow-soft: 0 12px 28px rgba(219, 39, 119, 0.12);
+  --hello-radius-xl: 32px;
+  --hello-radius-lg: 24px;
+  --hello-radius-md: 18px;
+  --hello-radius-sm: 14px;
+}
+
 @layer base {
   * {
     border-color: var(--hello-border);
@@ -106,6 +129,21 @@
     backdrop-filter: blur(20px);
   }
 
+  .hello-app-ambient {
+    background:
+      radial-gradient(circle at 8% 18%, color-mix(in srgb, var(--hello-accent) 18%, transparent), transparent 28%),
+      radial-gradient(circle at 92% 78%, color-mix(in srgb, var(--hello-warning) 20%, transparent), transparent 30%);
+  }
+
+  .cute .hello-app-ambient {
+    background:
+      radial-gradient(circle at 14% 18%, rgba(255, 255, 255, 0.74), transparent 18%),
+      radial-gradient(circle at 82% 82%, rgba(255, 180, 211, 0.42), transparent 28%),
+      radial-gradient(circle at 68% 12%, rgba(255, 255, 255, 0.58), transparent 16%),
+      linear-gradient(135deg, rgba(255, 255, 255, 0.18) 0 10%, transparent 10% 20%, rgba(255, 255, 255, 0.16) 20% 30%, transparent 30% 40%);
+    background-size: auto, auto, auto, 34px 34px;
+  }
+
   .hello-panel-strong {
     background: var(--hello-panel-strong);
     border: 1px solid var(--hello-border-strong);
@@ -124,6 +162,24 @@
     background: var(--hello-panel-strong);
     border: 1px solid var(--hello-border);
     box-shadow: var(--hello-shadow-soft);
+  }
+
+  .cute .hello-panel,
+  .cute .hello-panel-strong,
+  .cute .hello-card,
+  .cute .hello-pill,
+  .cute .hello-input {
+    border-style: dashed;
+    box-shadow:
+      0 12px 28px rgba(236, 93, 151, 0.12),
+      inset 0 1px 0 rgba(255, 255, 255, 0.72);
+  }
+
+  .cute .hello-card,
+  .cute .hello-panel-strong {
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.76), rgba(255, 239, 247, 0.9)),
+      var(--hello-panel-strong);
   }
 
   .hello-pill {

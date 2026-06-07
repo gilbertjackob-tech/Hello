@@ -32,6 +32,14 @@ fun checkPcDriveNetwork(): NetworkProbeResult {
 fun checkCloudChatNetwork(useFallback: Boolean = false): NetworkProbeResult {
     val url = if (useFallback) AppConfig.CHAT_CLOUD_FALLBACK_HEALTH_URL else AppConfig.CHAT_CLOUD_HEALTH_URL
     val probe = probeJsonOk(url)
+    if (!useFallback && probe.status != NetworkStatus.Connected) {
+        val fallbackProbe = probeJsonOk(AppConfig.CHAT_CLOUD_FALLBACK_HEALTH_URL)
+        if (fallbackProbe.status == NetworkStatus.Connected) {
+            return fallbackProbe.copy(
+                detail = "${fallbackProbe.detail}\nCloud chat fallback connected after production failed: ${probe.detail}"
+            )
+        }
+    }
     return probe.copy(
         detail = "${probe.detail}\n${if (useFallback) "Cloud chat fallback" else "Cloud chat production"}"
     )

@@ -21,6 +21,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import com.glassbox.hello.chat.ChatModels
 import com.glassbox.hello.chat.CloudChatApi
@@ -86,12 +87,13 @@ private fun SharedAttachmentList(
     emptyTitle: String,
     emptyMessage: String
 ) {
+    val context = LocalContext.current
     if (chatId.isNullOrBlank()) {
         HelloEmptyState(title = emptyTitle, message = "Open a chat first. $emptyMessage")
         return
     }
 
-    val api = remember { CloudChatApi() }
+    val api = remember(context) { CloudChatApi(context) }
     var state by remember { mutableStateOf<ResultState<List<ChatModels.AttachmentItem>>>(ResultState.Loading) }
 
     LaunchedEffect(chatId) {

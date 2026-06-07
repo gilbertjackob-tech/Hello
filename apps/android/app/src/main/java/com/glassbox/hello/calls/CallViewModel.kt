@@ -8,6 +8,7 @@ import com.glassbox.hello.chat.ChatModels
 import com.glassbox.hello.chat.otherParticipant
 import com.glassbox.hello.core.AppConfig
 import com.glassbox.hello.core.User
+import com.glassbox.hello.debug.HelloDebugLog
 import com.glassbox.hello.network.SocketManager
 import com.glassbox.hello.notifications.IncomingCallRinger
 import kotlinx.coroutines.Job
@@ -27,6 +28,7 @@ class CallViewModel(
 ) : ViewModel() {
     private val _state = MutableStateFlow(CallUiState())
     val state: StateFlow<CallUiState> = _state.asStateFlow()
+    var onSessionRevoked: ((JSONObject) -> Unit)? = null
 
     private var currentUser: User? = null
     private var appContext: Context? = null
@@ -34,9 +36,12 @@ class CallViewModel(
     private var missedTimeoutJob: Job? = null
     private var connectionTimeoutJob: Job? = null
     private var terminalResetJob: Job? = null
+    private var historyRefreshJob: Job? = null
     private val pendingOffers = mutableMapOf<String, CallSignal>()
     private val seenCallEventIds = linkedSetOf<String>()
+    private val startedCallIds = linkedSetOf<String>()
     private var iceConfigLoaded = false
+    private var incomingMediaStartCallId: String? = null
 
     init {
         socketManager.onConnectedChanged = { connected ->
@@ -46,8 +51,20 @@ class CallViewModel(
             }
         }
         socketManager.onCallEvent = { event, payload -> handleSocketEvent(event, payload) }
+        if (socketManager is SocketManager) {
+            (socketManager as SocketManager).onSessionRevoked = { payload -> onSessionRevoked?.invoke(payload) }
+        }
         callEngine.onOfferReady = { outgoing ->
             activeSignalWith(outgoing)?.let {
+                if (!it.offerSdp.isNullOrBlank() && startedCallIds.add(it.callId)) {
+                    addDebug("ANDROID: emit call:start")
+                    socketManager.startCall(it.toJson())
+                    if (startedCallIds.size > 64) {
+                        val keep = startedCallIds.toList().takeLast(32)
+                        startedCallIds.clear()
+                        startedCallIds.addAll(keep)
+                    }
+                }
                 addDebug("ANDROID: emit call:offer hasOfferSdp=${!it.offerSdp.isNullOrBlank()} callId=${it.callId}")
                 socketManager.sendOffer(it.toJson())
             }
@@ -114,12 +131,14 @@ class CallViewModel(
 
     fun connect(user: User) {
         currentUser = user
+        HelloDebugLog.d("Call", "connectLocal userId=${user.id}")
         socketManager.connect(user)
     }
 
     fun connect(context: Context, user: User) {
         currentUser = user
         appContext = context.applicationContext
+        HelloDebugLog.d("Call", "connectCloud userId=${user.id}")
         repository = CloudCallRepository(context.applicationContext)
         socketManager = CallSignalingClient(context.applicationContext).also { cloudSocket ->
             cloudSocket.onConnectedChanged = { connected ->
@@ -129,6 +148,7 @@ class CallViewModel(
                 }
             }
             cloudSocket.onCallEvent = { event, payload -> handleSocketEvent(event, payload) }
+            cloudSocket.onSessionRevoked = { payload -> onSessionRevoked?.invoke(payload) }
         }
         socketManager.connect(user)
     }
@@ -160,6 +180,7 @@ class CallViewModel(
             appendLine("Type: ${signal?.type ?: state.activeRoom?.type ?: "unknown"}")
             appendLine("Last received event: ${state.debugLastEvent ?: "none"}")
             appendLine("Offer received: ${if (state.debugOfferReceived) "yes" else "no"}")
+            appendLine("Answer received: ${if (state.debugAnswerReceived) "yes" else "no"}")
             appendLine("Answer sent: ${if (state.debugAnswerSent) "yes" else "no"}")
             appendLine("ICE sent count: ${state.debugIceSentCount}")
             appendLine("ICE received count: ${state.debugIceReceivedCount}")
@@ -180,11 +201,14 @@ class CallViewModel(
 
     fun loadHistory(userId: String) {
         viewModelScope.launch {
+            HelloDebugLog.d("Call", "loadHistory userId=$userId")
             _state.value = _state.value.copy(loadingHistory = true, historyError = null)
             val result = repository.loadHistory(userId)
             _state.value = if (result.isSuccess) {
+                HelloDebugLog.d("Call", "loadHistory success userId=$userId count=${result.getOrNull().orEmpty().size}")
                 _state.value.copy(history = result.getOrNull().orEmpty(), loadingHistory = false, historyError = null)
             } else {
+                HelloDebugLog.w("Call", "loadHistory failure userId=$userId error=${result.exceptionOrNull()?.message}")
                 _state.value.copy(
                     loadingHistory = false,
                     historyError = result.exceptionOrNull()?.message ?: "Failed to load calls"
@@ -194,6 +218,8 @@ class CallViewModel(
     }
 
     fun startCall(context: Context?, chat: ChatModels.Chat, user: User, isVideo: Boolean) {
+        HelloDebugLog.d("Call", "startCall chatId=${chat.id} userId=${user.id} isGroup=${chat.isGroup} isVideo=$isVideo")
+        appContext = context?.applicationContext ?: appContext
         if (chat.isGroup) {
             startGroupCall(context, chat, user, isVideo)
             return
@@ -248,10 +274,25 @@ class CallViewModel(
                 mediaPhase = CallMediaPhase.Preparing
             )
             addDebug("ANDROID: outgoing call created callId=$callId type=$type to=${other.id}")
-            ensureIceConfig()
-            addDebug("ANDROID: emit call:start")
-            socketManager.startCall(signal.toJson())
-            callEngine.startOutgoing(context, isVideo)
+            if (startedCallIds.add(signal.callId)) {
+                addDebug("ANDROID: emit call:start")
+                socketManager.startCall(signal.toJson())
+                if (startedCallIds.size > 64) {
+                    val keep = startedCallIds.toList().takeLast(32)
+                    startedCallIds.clear()
+                    startedCallIds.addAll(keep)
+                }
+            }
+            prepareIceConfigSafely()
+            runCatching {
+                callEngine.startOutgoing(context, isVideo)
+            }.onFailure { error ->
+                _state.value = _state.value.copy(
+                    debugLastError = error.message ?: "outgoing_start_failed",
+                    message = "Calling..."
+                )
+                addDebug("ANDROID: media bootstrap warning error=${error.message}")
+            }
             startMissedTimeout(signal)
             startConnectionTimeout(signal)
         }
@@ -279,41 +320,48 @@ class CallViewModel(
         }
 
         viewModelScope.launch {
-            val type = "audio"
-            val room = repository.createGroupRoom(
-                chatId = chat.id,
-                hostId = user.id,
-                type = type,
-                participantIds = memberIds
-            ).getOrElse {
-                terminal(CallUiStatus.Failed, callStartErrorMessage(it.message), null)
-                return@launch
+            runCatching {
+                val type = "audio"
+                val room = repository.createGroupRoom(
+                    chatId = chat.id,
+                    hostId = user.id,
+                    type = type,
+                    participantIds = memberIds
+                ).getOrElse {
+                    terminal(CallUiStatus.Failed, callStartErrorMessage(it.message), null)
+                    return@launch
+                }
+                val activeRoom = room.copy(participantIds = room.participantIds.ifEmpty { listOf(user.id) + memberIds })
+                _state.value = CallUiState(
+                    status = CallUiStatus.Active,
+                    activeRoom = activeRoom,
+                    peerName = chat.name.ifBlank { "Group call" },
+                    message = "Group call live",
+                    socketConnected = socketManager.isConnected(),
+                    mediaPhase = CallMediaPhase.Connected,
+                    nativeMediaReady = true,
+                    roomParticipants = activeRoom.participantIds
+                )
+                socketManager.createRoom(
+                    JSONObject()
+                        .put("room", activeRoom.toJson())
+                        .put("roomId", activeRoom.id)
+                        .put("fromUserId", user.id)
+                        .put("participantIds", JSONArray(activeRoom.participantIds))
+                )
+                callEngine.startOutgoing(context, isVideo = false)
+                startTimer()
+            }.onFailure { error ->
+                addDebug("ANDROID: group start failed error=${error.message}")
+                terminal(CallUiStatus.Failed, error.message ?: "Could not start group call", _state.value.signal)
             }
-            val activeRoom = room.copy(participantIds = room.participantIds.ifEmpty { listOf(user.id) + memberIds })
-            _state.value = CallUiState(
-                status = CallUiStatus.Active,
-                activeRoom = activeRoom,
-                peerName = chat.name.ifBlank { "Group call" },
-                message = "Group call live",
-                socketConnected = socketManager.isConnected(),
-                mediaPhase = CallMediaPhase.Connected,
-                nativeMediaReady = true,
-                roomParticipants = activeRoom.participantIds
-            )
-            socketManager.createRoom(
-                JSONObject()
-                    .put("room", activeRoom.toJson())
-                    .put("roomId", activeRoom.id)
-                    .put("fromUserId", user.id)
-                    .put("participantIds", JSONArray(activeRoom.participantIds))
-            )
-            callEngine.startOutgoing(context, isVideo = false)
-            startTimer()
         }
     }
 
     fun acceptIncoming(context: Context?, forceAudio: Boolean = false) {
         val user = currentUser ?: return
+        appContext = context?.applicationContext ?: appContext
+        HelloDebugLog.d("Call", "acceptIncoming userId=${user.id} callId=${_state.value.signal?.callId ?: _state.value.activeRoom?.id} forceAudio=$forceAudio")
         _state.value.activeRoom?.let {
             IncomingCallRinger.stop(it.id)
             acceptIncomingGroup(context, user, it)
@@ -335,15 +383,25 @@ class CallViewModel(
             mediaPhase = CallMediaPhase.Preparing
         )
         viewModelScope.launch {
-            ensureIceConfig()
-            socketManager.acceptCall(accept.toJson())
-            addDebug("ANDROID: startIncoming called")
-            callEngine.startIncoming(context, acceptedSignal.isVideo, acceptedSignal.offerSdp)
+            prepareIceConfigSafely()
+            runCatching {
+                socketManager.acceptCall(accept.toJson())
+            }.onFailure { error ->
+                addDebug("ANDROID: accept signal failed error=${error.message}")
+                terminal(CallUiStatus.Failed, error.message ?: "Could not accept call", acceptedSignal)
+                return@launch
+            }
             startConnectionTimeout(acceptedSignal)
+            if (acceptedSignal.offerSdp.isNullOrBlank()) {
+                addDebug("ANDROID: waiting for offer after accept")
+            } else {
+                startIncomingMedia(acceptedSignal)
+            }
         }
     }
 
     fun showIncomingCall(signal: CallSignal) {
+        HelloDebugLog.d("Call", "showIncomingCall callId=${signal.callId} caller=${signal.callerId} callee=${signal.calleeId} isVideo=${signal.isVideo}")
         val current = _state.value
         if (current.status != CallUiStatus.Idle && current.signal?.callId != signal.callId) {
             currentUser?.id?.let { userId ->
@@ -368,28 +426,33 @@ class CallViewModel(
 
     private fun acceptIncomingGroup(context: Context?, user: User, room: CallRoom) {
         viewModelScope.launch {
-            val joined = repository.joinGroupRoom(room.id, user.id).getOrElse {
-                terminal(CallUiStatus.Failed, it.message ?: "Could not join group call", null)
-                return@launch
+            runCatching {
+                val joined = repository.joinGroupRoom(room.id, user.id).getOrElse {
+                    terminal(CallUiStatus.Failed, it.message ?: "Could not join group call", null)
+                    return@launch
+                }
+                val nextRoom = joined.copy(participantIds = joined.participantIds.ifEmpty { room.participantIds })
+                _state.value = _state.value.copy(
+                    status = CallUiStatus.Active,
+                    activeRoom = nextRoom,
+                    peerName = _state.value.peerName,
+                    message = "Group call live",
+                    mediaPhase = CallMediaPhase.Connected,
+                    nativeMediaReady = true,
+                    roomParticipants = nextRoom.participantIds
+                )
+                socketManager.joinRoom(
+                    JSONObject()
+                        .put("roomId", nextRoom.id)
+                        .put("fromUserId", user.id)
+                        .put("userId", user.id)
+                )
+                callEngine.startOutgoing(context, nextRoom.type == "video")
+                startTimer()
+            }.onFailure { error ->
+                addDebug("ANDROID: group accept failed error=${error.message}")
+                terminal(CallUiStatus.Failed, error.message ?: "Could not join group call", null)
             }
-            val nextRoom = joined.copy(participantIds = joined.participantIds.ifEmpty { room.participantIds })
-            _state.value = _state.value.copy(
-                status = CallUiStatus.Active,
-                activeRoom = nextRoom,
-                peerName = _state.value.peerName,
-                message = "Group call live",
-                mediaPhase = CallMediaPhase.Connected,
-                nativeMediaReady = true,
-                roomParticipants = nextRoom.participantIds
-            )
-            socketManager.joinRoom(
-                JSONObject()
-                    .put("roomId", nextRoom.id)
-                    .put("fromUserId", user.id)
-                    .put("userId", user.id)
-            )
-            callEngine.startOutgoing(context, nextRoom.type == "video")
-            startTimer()
         }
     }
 
@@ -452,6 +515,8 @@ class CallViewModel(
         callEngine.dispose()
         IncomingCallRinger.stop(_state.value.signal?.callId ?: _state.value.activeRoom?.id)
         pendingOffers.clear()
+        startedCallIds.remove(_state.value.signal?.callId)
+        incomingMediaStartCallId = null
         _state.value = _state.value.copy(
             status = CallUiStatus.Idle,
             signal = null,
@@ -462,6 +527,7 @@ class CallViewModel(
             mediaPhase = CallMediaPhase.Idle,
             roomParticipants = emptyList(),
             debugOfferReceived = false,
+            debugAnswerReceived = false,
             debugAnswerSent = false,
             debugIceSentCount = 0,
             debugIceReceivedCount = 0,
@@ -520,9 +586,22 @@ class CallViewModel(
             "call:ack" -> handleAck(payload)
             "call:start" -> payload.toCallSignalOrLog(event)?.let { handleIncomingStart(user, it) }
             "call:offer" -> payload.toCallSignalOrLog(event)?.let { handleOffer(it) }
-            "call:answer" -> payload.toCallSignalOrLog(event)?.answerSdp?.let {
-                addDebug("ANDROID: acceptAnswer called")
-                callEngine.acceptAnswer(it)
+            "call:answer" -> {
+                val signal = payload.toCallSignalOrLog(event) ?: return
+                if (_state.value.signal?.callId == signal.callId) {
+                    missedTimeoutJob?.cancel()
+                    _state.value = _state.value.copy(
+                        status = CallUiStatus.Connecting,
+                        message = "Connecting...",
+                        mediaPhase = CallMediaPhase.Connecting,
+                        debugAnswerReceived = true
+                    )
+                    startConnectionTimeout(signal)
+                }
+                signal.answerSdp?.let {
+                    addDebug("ANDROID: acceptAnswer called")
+                    callEngine.acceptAnswer(it)
+                }
             }
             "call:ice-candidate" -> payload.toCallSignalOrLog(event)?.let { signal ->
                 signal.candidate?.let {
@@ -556,13 +635,15 @@ class CallViewModel(
                     startTimer()
                 }
             }
-            "call:busy" -> terminal(CallUiStatus.Busy, "User busy", payload.toCallSignal())
-            "call:missed" -> terminal(CallUiStatus.Missed, "No answer", payload.toCallSignal())
-            "call:unavailable" -> terminal(CallUiStatus.Unavailable, "User unavailable", payload.toCallSignal())
-            "call:declined" -> terminal(CallUiStatus.Declined, "Call declined", payload.toCallSignal())
-            "call:ended" -> terminal(CallUiStatus.Ended, "Call ended", payload.toCallSignal())
-            "call:failed" -> terminal(CallUiStatus.Failed, payload.optString("reason", "Call failed"), payload.toCallSignal())
-            "call:history-updated" -> currentUser?.id?.let { loadHistory(it) }
+            "call:busy" -> payload.toCallSignal()?.let { terminalIfCurrent(it, CallUiStatus.Busy, "User busy") }
+            "call:missed" -> payload.toCallSignal()?.let { terminalIfCurrent(it, CallUiStatus.Missed, "No answer") }
+            "call:unavailable" -> payload.toCallSignal()?.let { terminalIfCurrent(it, CallUiStatus.Unavailable, "User unavailable") }
+            "call:declined" -> payload.toCallSignal()?.let { terminalIfCurrent(it, CallUiStatus.Declined, "Call declined") }
+            "call:ended" -> payload.toCallSignal()?.let { terminalIfCurrent(it, CallUiStatus.Ended, "Call ended") }
+            "call:failed" -> payload.toCallSignal()?.let { signal ->
+                terminalIfCurrent(signal, CallUiStatus.Failed, payload.optString("reason", "Call failed"))
+            }
+            "call:history-updated" -> currentUser?.id?.let { scheduleHistoryRefresh(it) }
             "call:room-created" -> handleRoomCreated(payload)
             "call:room-join" -> handleRoomJoin(payload)
             "call:room-leave" -> handleRoomLeave(payload)
@@ -651,6 +732,16 @@ class CallViewModel(
             }
     }
 
+    private suspend fun prepareIceConfigSafely() {
+        runCatching { ensureIceConfig() }
+            .onFailure { error ->
+                _state.value = _state.value.copy(
+                    debugLastError = error.message ?: "ice_config_failed"
+                )
+                addDebug("ANDROID: ice config warning error=${error.message}")
+            }
+    }
+
     private fun handleIncomingStart(user: User?, signal: CallSignal) {
         if (user == null || signal.toUserId != user.id) return
         if (isCallOccupying(_state.value.status)) {
@@ -703,18 +794,34 @@ class CallViewModel(
         )
         if (_state.value.status == CallUiStatus.Connecting || _state.value.status == CallUiStatus.Active) {
             signal.offerSdp?.let {
-                addDebug("ANDROID: acceptOffer called")
-                callEngine.acceptOffer(it)
+                if (incomingMediaStartCallId == signal.callId) {
+                    addDebug("ANDROID: acceptOffer called")
+                    callEngine.acceptOffer(it)
+                } else {
+                    startIncomingMedia(merged)
+                }
             }
         }
     }
 
+    private fun terminalIfCurrent(signal: CallSignal, status: CallUiStatus, message: String) {
+        val currentCallId = _state.value.signal?.callId ?: _state.value.activeRoom?.id
+        if (!currentCallId.isNullOrBlank() && currentCallId != signal.callId) {
+            addDebug("ANDROID: ignored stale terminal event status=$status callId=${signal.callId} currentCallId=$currentCallId")
+            return
+        }
+        terminal(status, message, signal)
+    }
+
     private fun terminal(status: CallUiStatus, message: String, signal: CallSignal?) {
+        HelloDebugLog.w("Call", "terminal status=$status callId=${signal?.callId ?: _state.value.signal?.callId ?: _state.value.activeRoom?.id} message=${HelloDebugLog.snippet(message)}")
         missedTimeoutJob?.cancel()
         connectionTimeoutJob?.cancel()
         terminalResetJob?.cancel()
+        historyRefreshJob?.cancel()
         stopTimer()
         callEngine.dispose()
+        incomingMediaStartCallId = null
         IncomingCallRinger.stop(signal?.callId ?: _state.value.activeRoom?.id)
         val terminalSignal = signal ?: _state.value.signal
         val terminalRoom = _state.value.activeRoom
@@ -727,10 +834,7 @@ class CallViewModel(
             nativeMediaReady = false
         )
         currentUser?.id?.let { userId ->
-            viewModelScope.launch {
-                delay(500)
-                loadHistory(userId)
-            }
+            scheduleHistoryRefresh(userId, 500L)
         }
         terminalResetJob = viewModelScope.launch {
             delay(900)
@@ -799,6 +903,39 @@ class CallViewModel(
                 failed?.let { socketManager.failed(it.toJson()) }
                 terminal(CallUiStatus.Failed, "Call connection timed out", current.signal)
             }
+        }
+    }
+
+    private fun startIncomingMedia(signal: CallSignal) {
+        val context = appContext
+        if (context == null) {
+            addDebug("ANDROID: startIncoming skipped reason=no_context")
+            terminal(CallUiStatus.Failed, "Could not accept call", signal)
+            return
+        }
+        if (incomingMediaStartCallId == signal.callId) {
+            signal.offerSdp?.let {
+                addDebug("ANDROID: acceptOffer called")
+                callEngine.acceptOffer(it)
+            }
+            return
+        }
+        incomingMediaStartCallId = signal.callId
+        runCatching {
+            addDebug("ANDROID: startIncoming called hasOfferSdp=${!signal.offerSdp.isNullOrBlank()}")
+            callEngine.startIncoming(context, signal.isVideo, signal.offerSdp)
+        }.onFailure { error ->
+            incomingMediaStartCallId = null
+            addDebug("ANDROID: startIncoming failed error=${error.message}")
+            terminal(CallUiStatus.Failed, error.message ?: "Could not accept call", signal)
+        }
+    }
+
+    private fun scheduleHistoryRefresh(userId: String, delayMs: Long = 250L) {
+        historyRefreshJob?.cancel()
+        historyRefreshJob = viewModelScope.launch {
+            delay(delayMs)
+            loadHistory(userId)
         }
     }
 

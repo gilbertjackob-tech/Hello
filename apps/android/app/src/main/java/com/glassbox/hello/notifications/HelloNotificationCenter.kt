@@ -21,6 +21,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.graphics.drawable.IconCompat
 import com.glassbox.hello.MainActivity
 import com.glassbox.hello.R
+import com.glassbox.hello.auth.CloudSessionManager
 import com.glassbox.hello.calls.CallSignal
 import com.glassbox.hello.chat.ChatModels
 import com.glassbox.hello.network.SocketManager
@@ -112,6 +113,19 @@ object HelloNotificationCenter {
         socketManager.onNotification = notificationListener
     }
 
+    fun resetForLogout(context: Context) {
+        appContext = context.applicationContext
+        currentUserId = null
+        initializedForUserId = null
+        openChatId = null
+        _bannerState.value = null
+        _incomingCallState.value = null
+        val socketManager = SocketManager.getInstance()
+        socketManager.removeMessageListener(messageListener)
+        socketManager.onNotification = null
+        NotificationManagerCompat.from(context.applicationContext).cancelAll()
+    }
+
     fun setAppForeground(foreground: Boolean) {
         appForeground = foreground
     }
@@ -156,8 +170,28 @@ object HelloNotificationCenter {
     fun handleRemoteMessage(context: Context, payload: JSONObject) {
         appContext = context.applicationContext
         ensureChannels(context.applicationContext)
+        val activeUserId = activeUserId(context.applicationContext)
+        val recipientId = payload.optString("recipientId")
+            .ifBlank { payload.optString("toUserId") }
+            .ifBlank { payload.optString("calleeId") }
+            .ifBlank { null }
+        if (activeUserId.isNullOrBlank()) {
+            Log.d(TAG, "Dropping remote notification because no user is signed in")
+            return
+        }
+        if (!recipientId.isNullOrBlank() && recipientId != activeUserId) {
+            Log.d(TAG, "Dropping remote notification for inactive user")
+            return
+        }
+        currentUserId = activeUserId
         handleRealtimeNotification(payload, forceSystemNotification = true)
     }
+
+    private fun activeUserId(context: Context): String? =
+        currentUserId
+            ?: CloudSessionManager(context).let { session ->
+                session.cachedUser()?.id?.takeIf { !session.token().isNullOrBlank() }
+            }
 
     private fun handleIncomingMessage(message: ChatModels.Message) {
         val context = appContext ?: return

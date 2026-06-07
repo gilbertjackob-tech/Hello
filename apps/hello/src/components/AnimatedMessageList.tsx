@@ -80,9 +80,17 @@ export const AnimatedMessageList = React.memo(
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="text-center text-gray-500 py-8"
+            className="py-10 text-center"
           >
-            No messages yet
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-slate-200 text-slate-500 dark:bg-slate-800 dark:text-slate-300">
+              <span className="text-lg">Hi</span>
+            </div>
+            <div className="mt-3 text-sm font-semibold text-slate-700 dark:text-slate-200">
+              No messages yet
+            </div>
+            <div className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+              Start the conversation and the timeline will animate in here.
+            </div>
           </motion.div>
         )}
       </AnimatePresence>

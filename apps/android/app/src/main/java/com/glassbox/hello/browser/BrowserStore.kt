@@ -6,6 +6,8 @@ import android.util.Log
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import com.google.gson.Gson
+import com.google.gson.JsonElement
+import com.google.gson.JsonObject
 import java.io.File
 
 class BrowserStore(context: Context) {
@@ -28,7 +30,8 @@ class BrowserStore(context: Context) {
 
         val loaded = runCatching {
             stateFile.bufferedReader().use { reader ->
-                gson.fromJson(reader, BrowserPersistedState::class.java)
+                val raw = gson.fromJson(reader, JsonObject::class.java)
+                raw?.toPersistedState()
             }
         }.getOrElse { null }
 
@@ -49,6 +52,7 @@ class BrowserStore(context: Context) {
 
     private fun BrowserPersistedState.ensureDefaults(): BrowserPersistedState {
         val profiles = profiles
+            .map(::normalizeProfile)
             .filter { profile -> isEmailAddress(profile.email.orEmpty()) || (profile.pendingSignIn && profile.id == activeProfileId) }
             .ifEmpty { listOf(defaultSignInProfile()) }
             .map { profile ->
@@ -64,7 +68,7 @@ class BrowserStore(context: Context) {
         val tabsByProfile = tabsByProfile
             .filterKeys { it in profileIds }
             .mapValues { (_, tabs) ->
-            tabs.map { tab ->
+            tabs.map(::normalizeTab).map { tab ->
                 if (tab.url == "about:blank") {
                     tab.copy(url = DEFAULT_BROWSER_HOME_URL, title = if (tab.title == "New tab") "Google" else tab.title)
                 } else {
@@ -176,6 +180,245 @@ class BrowserStore(context: Context) {
             pendingSignIn = true
         )
     }
+
+    private fun normalizeProfile(profile: BrowserProfileRecord): BrowserProfileRecord {
+        val id = rawString(profile.id).ifBlank { DEFAULT_BROWSER_PROFILE_ID }
+        val email = rawString(profile.email).lowercase().takeIf { it.isNotBlank() }
+        val displayName = rawString(profile.name).ifBlank {
+            email?.substringBefore('@')?.takeIf { it.isNotBlank() } ?: "Sign in"
+        }
+        return profile.copy(
+            id = id,
+            name = displayName,
+            email = email,
+            avatarUrl = rawString(profile.avatarUrl).takeIf { it.isNotBlank() }
+        )
+    }
+
+    private fun normalizeTab(tab: BrowserTabRecord): BrowserTabRecord {
+        val profileId = rawString(tab.profileId).ifBlank { DEFAULT_BROWSER_PROFILE_ID }
+        val tabId = rawString(tab.id).ifBlank { "tab-$profileId" }
+        val url = rawString(tab.url).ifBlank { DEFAULT_BROWSER_HOME_URL }
+        val title = rawString(tab.title).ifBlank { if (url == DEFAULT_BROWSER_HOME_URL) "Google" else url }
+        return tab.copy(
+            id = tabId,
+            profileId = profileId,
+            url = url,
+            title = title,
+            lastError = rawString(tab.lastError).takeIf { it.isNotBlank() }
+        )
+    }
+
+    private fun rawString(value: String?): String = value?.trim().orEmpty()
+
+    private fun JsonObject.toPersistedState(): BrowserPersistedState {
+        val profiles = getAsJsonArray("profiles")
+            ?.mapNotNull { it.asJsonObjectOrNull()?.toBrowserProfileRecord() }
+            .orEmpty()
+        val activeProfileId = get("activeProfileId").asTrimmedString()
+            .ifBlank { profiles.firstOrNull()?.id ?: DEFAULT_BROWSER_PROFILE_ID }
+        val tabsByProfile = getAsJsonObject("tabsByProfile")
+            ?.entrySet()
+            ?.associate { entry ->
+                val profileId = entry.key.trim()
+                val tabs = entry.value.asJsonArrayOrNull()
+                    ?.mapNotNull { it.asJsonObjectOrNull()?.toBrowserTabRecord(profileId) }
+                    .orEmpty()
+                profileId to tabs
+            }
+            .orEmpty()
+        val selectedTabByProfile = getAsJsonObject("selectedTabByProfile")
+            ?.entrySet()
+            ?.associate { entry -> entry.key.trim() to entry.value.asTrimmedString().ifBlank { null } }
+            .orEmpty()
+        val historyByProfile = getAsJsonObject("historyByProfile")
+            ?.entrySet()
+            ?.associate { entry ->
+                entry.key.trim() to entry.value.asJsonArrayOrNull()
+                    ?.mapNotNull { it.asJsonObjectOrNull()?.toBrowserHistoryRecord(entry.key) }
+                    .orEmpty()
+            }
+            .orEmpty()
+        val downloadsByProfile = getAsJsonObject("downloadsByProfile")
+            ?.entrySet()
+            ?.associate { entry ->
+                entry.key.trim() to entry.value.asJsonArrayOrNull()
+                    ?.mapNotNull { it.asJsonObjectOrNull()?.toBrowserDownloadRecord(entry.key) }
+                    .orEmpty()
+            }
+            .orEmpty()
+        val passwordsByProfile = getAsJsonObject("passwordsByProfile")
+            ?.entrySet()
+            ?.associate { entry ->
+                entry.key.trim() to entry.value.asJsonArrayOrNull()
+                    ?.mapNotNull { it.asJsonObjectOrNull()?.toBrowserPasswordRecord(entry.key) }
+                    .orEmpty()
+            }
+            .orEmpty()
+        val storageByProfile = getAsJsonObject("storageByProfile")
+            ?.entrySet()
+            ?.associate { entry ->
+                entry.key.trim() to entry.value.asJsonObjectOrNull()
+                    ?.entrySet()
+                    ?.associate { originEntry ->
+                        originEntry.key.trim() to (originEntry.value.asJsonObjectOrNull()?.toBrowserStoredOriginData()
+                            ?: BrowserStoredOriginData())
+                    }
+                    .orEmpty()
+            }
+            .orEmpty()
+        return BrowserPersistedState(
+            profiles = profiles,
+            activeProfileId = activeProfileId,
+            tabsByProfile = tabsByProfile,
+            selectedTabByProfile = selectedTabByProfile,
+            historyByProfile = historyByProfile,
+            downloadsByProfile = downloadsByProfile,
+            passwordsByProfile = passwordsByProfile,
+            storageByProfile = storageByProfile
+        )
+    }
+
+    private fun JsonObject.toBrowserProfileRecord(): BrowserProfileRecord? {
+        val id = get("id").asTrimmedString()
+        if (id.isBlank()) return null
+        return BrowserProfileRecord(
+            id = id,
+            name = get("name").asTrimmedString(),
+            email = get("email").asTrimmedString().ifBlank { null },
+            avatarUrl = get("avatarUrl").asTrimmedString().ifBlank { null },
+            authProvider = get("authProvider").asTrimmedString().ifBlank { BROWSER_PROVIDER_LOCAL },
+            pendingSignIn = get("pendingSignIn").asBoolean(false),
+            createdAt = get("createdAt").asLong(System.currentTimeMillis())
+        )
+    }
+
+    private fun JsonObject.toBrowserTabRecord(profileIdFallback: String? = null): BrowserTabRecord? {
+        val profileId = get("profileId").asTrimmedString().ifBlank { profileIdFallback.orEmpty() }
+        if (profileId.isBlank()) return null
+        val id = get("id").asTrimmedString().ifBlank { "tab-$profileId" }
+        return BrowserTabRecord(
+            id = id,
+            profileId = profileId,
+            url = get("url").asTrimmedString().ifBlank { DEFAULT_BROWSER_HOME_URL },
+            title = get("title").asTrimmedString().ifBlank { "Google" },
+            isLoading = get("isLoading").asBoolean(false),
+            canGoBack = get("canGoBack").asBoolean(false),
+            canGoForward = get("canGoForward").asBoolean(false),
+            progress = get("progress").asInt(0),
+            lastError = get("lastError").asTrimmedString().ifBlank { null },
+            createdAt = get("createdAt").asLong(System.currentTimeMillis()),
+            updatedAt = get("updatedAt").asLong(System.currentTimeMillis())
+        )
+    }
+
+    private fun JsonObject.toBrowserHistoryRecord(profileIdFallback: String): BrowserHistoryRecord? {
+        val id = get("id").asTrimmedString()
+        val url = get("url").asTrimmedString()
+        if (id.isBlank() || url.isBlank()) return null
+        return BrowserHistoryRecord(
+            id = id,
+            profileId = get("profileId").asTrimmedString().ifBlank { profileIdFallback },
+            title = get("title").asTrimmedString().ifBlank { url },
+            url = url,
+            visitedAt = get("visitedAt").asLong(System.currentTimeMillis())
+        )
+    }
+
+    private fun JsonObject.toBrowserDownloadRecord(profileIdFallback: String): BrowserDownloadRecord? {
+        val id = get("id").asTrimmedString()
+        val url = get("url").asTrimmedString()
+        if (id.isBlank() || url.isBlank()) return null
+        return BrowserDownloadRecord(
+            id = id,
+            profileId = get("profileId").asTrimmedString().ifBlank { profileIdFallback },
+            fileName = get("fileName").asTrimmedString().ifBlank { url.substringAfterLast('/') },
+            url = url,
+            mimeType = get("mimeType").asTrimmedString().ifBlank { null },
+            destination = get("destination").asTrimmedString().ifBlank { null },
+            sizeBytes = get("sizeBytes").asLongOrNull(),
+            status = get("status").asTrimmedString().ifBlank { "queued" },
+            createdAt = get("createdAt").asLong(System.currentTimeMillis())
+        )
+    }
+
+    private fun JsonObject.toBrowserPasswordRecord(profileIdFallback: String): BrowserPasswordRecord? {
+        val id = get("id").asTrimmedString()
+        val origin = get("origin").asTrimmedString()
+        if (id.isBlank() || origin.isBlank()) return null
+        return BrowserPasswordRecord(
+            id = id,
+            profileId = get("profileId").asTrimmedString().ifBlank { profileIdFallback },
+            origin = origin,
+            username = get("username").asTrimmedString().ifBlank { "Account" },
+            password = get("password").asTrimmedString(),
+            createdAt = get("createdAt").asLong(System.currentTimeMillis()),
+            updatedAt = get("updatedAt").asLong(System.currentTimeMillis())
+        )
+    }
+
+    private fun JsonObject.toBrowserStoredOriginData(): BrowserStoredOriginData {
+        return BrowserStoredOriginData(
+            cookies = get("cookies").asTrimmedString().ifBlank { null },
+            localStorage = getAsJsonObject("localStorage")
+                ?.entrySet()
+                ?.associate { it.key to it.value.asTrimmedString() }
+                .orEmpty(),
+            sessionStorage = getAsJsonObject("sessionStorage")
+                ?.entrySet()
+                ?.associate { it.key to it.value.asTrimmedString() }
+                .orEmpty(),
+            updatedAt = get("updatedAt").asLong(System.currentTimeMillis())
+        )
+    }
+
+    private fun JsonElement?.asJsonObjectOrNull(): JsonObject? =
+        this?.takeIf { it.isJsonObject }?.asJsonObject
+
+    private fun JsonElement?.asJsonArrayOrNull() =
+        this?.takeIf { it.isJsonArray }?.asJsonArray
+
+    private fun JsonElement?.asTrimmedString(): String =
+        when {
+            this == null || isJsonNull -> ""
+            isJsonPrimitive && asJsonPrimitive.isString -> asString.trim()
+            isJsonPrimitive -> runCatching { asJsonPrimitive.toString().trim('"').trim() }.getOrDefault("")
+            else -> ""
+        }
+
+    private fun JsonElement?.asBoolean(default: Boolean): Boolean =
+        runCatching {
+            when {
+                this == null || isJsonNull -> default
+                isJsonPrimitive && asJsonPrimitive.isBoolean -> asBoolean
+                isJsonPrimitive && asJsonPrimitive.isString -> asString.equals("true", ignoreCase = true)
+                isJsonPrimitive && asJsonPrimitive.isNumber -> asInt != 0
+                else -> default
+            }
+        }.getOrDefault(default)
+
+    private fun JsonElement?.asInt(default: Int): Int =
+        runCatching {
+            when {
+                this == null || isJsonNull -> default
+                isJsonPrimitive && asJsonPrimitive.isNumber -> asInt
+                isJsonPrimitive && asJsonPrimitive.isString -> asString.toIntOrNull() ?: default
+                else -> default
+            }
+        }.getOrDefault(default)
+
+    private fun JsonElement?.asLong(default: Long): Long =
+        asLongOrNull() ?: default
+
+    private fun JsonElement?.asLongOrNull(): Long? =
+        runCatching {
+            when {
+                this == null || isJsonNull -> null
+                isJsonPrimitive && asJsonPrimitive.isNumber -> asLong
+                isJsonPrimitive && asJsonPrimitive.isString -> asString.toLongOrNull()
+                else -> null
+            }
+        }.getOrNull()
 
     private companion object {
         private const val TAG: String = "BrowserStore"

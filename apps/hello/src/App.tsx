@@ -14,7 +14,7 @@ import { ThemeProvider } from "./ThemeContext";
 import { NotificationProvider } from "./NotificationContext";
 import { ToastProvider } from "./ToastContext";
 import { cn } from "./lib/utils";
-import { fetchCloudCurrentUser, fetchUser } from "./api";
+import { CLOUD_SESSION_TOKEN_KEY, fetchCloudCurrentUser, fetchUser } from "./api";
 import {
   Menu,
   ArrowLeft,
@@ -99,6 +99,9 @@ export default function App() {
     const saved = localStorage.getItem("whatsclone_user_real");
     return saved ? JSON.parse(saved) : null;
   });
+  const [resolvingCloudIdentity, setResolvingCloudIdentity] = useState(() =>
+    Boolean(localStorage.getItem(CLOUD_SESSION_TOKEN_KEY)),
+  );
 
   const [hasRequestedPermissions, setHasRequestedPermissions] = useState(() => {
     return localStorage.getItem("whatsclone_permissions") === "true";
@@ -163,13 +166,66 @@ export default function App() {
   }, [currentUser?.id]);
 
   useEffect(() => {
+    const token = localStorage.getItem(CLOUD_SESSION_TOKEN_KEY);
+    if (!token) {
+      setResolvingCloudIdentity(false);
+      return;
+    }
+
+    let cancelled = false;
+    setResolvingCloudIdentity(true);
+
+    fetchCloudCurrentUser()
+      .then((cloudUser) => {
+        if (cancelled) return;
+        setCurrentUser((existing) => mergeUserIfChanged(existing, cloudUser));
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        console.error("Failed to restore cloud session", error);
+        localStorage.removeItem(CLOUD_SESSION_TOKEN_KEY);
+        localStorage.removeItem("whatsclone_user_real");
+        setActiveChat(null);
+        setCurrentUser(null);
+      })
+      .finally(() => {
+        if (!cancelled) setResolvingCloudIdentity(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
     if (VALID_RAIL_TABS.has(activeRailTab)) {
       localStorage.setItem(ACTIVE_RAIL_TAB_STORAGE_KEY, activeRailTab);
     }
   }, [activeRailTab]);
 
+  if (resolvingCloudIdentity) {
+    return (
+      <ThemeProvider>
+        <div className="relative flex h-[100dvh] w-full items-center justify-center bg-transparent text-[var(--hello-text)]">
+          <div className="hello-app-ambient pointer-events-none absolute inset-0" />
+          <div className="hello-panel-strong relative flex min-w-[240px] flex-col items-center gap-3 rounded-[28px] px-8 py-10 text-center">
+            <Cloud className="h-8 w-8 text-[var(--hello-accent)]" />
+            <div>
+              <h2 className="text-lg font-semibold text-[var(--hello-text)]">Restoring cloud session</h2>
+              <p className="mt-1 text-sm text-[var(--hello-text-muted)]">Syncing your Hello account before chat loads.</p>
+            </div>
+          </div>
+        </div>
+      </ThemeProvider>
+    );
+  }
+
   if (!currentUser) {
-    return <AuthScreen onAuthSuccess={setCurrentUser} />;
+    return (
+      <ThemeProvider>
+        <AuthScreen onAuthSuccess={setCurrentUser} />
+      </ThemeProvider>
+    );
   }
 
   return (
@@ -186,10 +242,7 @@ export default function App() {
             />
           )}
           <div className="relative flex h-[100dvh] w-full overflow-hidden bg-transparent text-[var(--hello-text)] transition-colors duration-300">
-            <div className="pointer-events-none absolute inset-0">
-              <div className="absolute left-[-10%] top-[-15%] h-[280px] w-[280px] rounded-full bg-emerald-300/20 blur-3xl dark:bg-emerald-500/10" />
-              <div className="absolute bottom-[-10%] right-[-6%] h-[260px] w-[260px] rounded-full bg-amber-200/30 blur-3xl dark:bg-cyan-500/10" />
-            </div>
+            <div className="hello-app-ambient pointer-events-none absolute inset-0" />
             <div
               className={cn(
                 "relative flex h-full w-full flex-col overflow-hidden px-2 pb-2 sm:px-3 sm:pb-3 md:flex-row md:gap-3",
@@ -393,6 +446,7 @@ export default function App() {
                   key={activeChat.id}
                   chat={activeChat}
                   currentUser={currentUser}
+                  onChatResolved={selectChat}
                   onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
                   isSidebarOpen={isSidebarOpen}
                 />

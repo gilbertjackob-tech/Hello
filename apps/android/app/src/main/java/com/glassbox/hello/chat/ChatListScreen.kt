@@ -1,5 +1,6 @@
 package com.glassbox.hello.chat
 
+import android.util.Log
 import androidx.compose.foundation.background
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
@@ -57,12 +58,13 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.glassbox.hello.attachments.SharedFilesScreen
 import com.glassbox.hello.attachments.SharedLinksScreen
 import com.glassbox.hello.attachments.SharedMediaScreen
+import com.glassbox.hello.auth.CloudSessionManager
 import com.glassbox.hello.chat.ChatModels.Chat
 import com.glassbox.hello.chat.ChatModels.User
 import com.glassbox.hello.core.HelloPreferences
 import com.glassbox.hello.core.ResultState
 import com.glassbox.hello.core.User as CoreUser
-import com.glassbox.hello.network.HelloApiClient
+import com.glassbox.hello.core.rememberHelloSettingsState
 import com.glassbox.hello.network.SocketManager
 import com.glassbox.hello.networkstatus.NetworkStatus
 import com.glassbox.hello.networkstatus.checkCloudChatNetwork
@@ -80,7 +82,6 @@ import com.glassbox.hello.ui.components.HelloPanel
 import com.glassbox.hello.ui.components.HelloPill
 import com.glassbox.hello.ui.components.HelloPrimaryButton
 import com.glassbox.hello.ui.components.HelloSearchBar
-import com.glassbox.hello.ui.components.HelloStatusAvatarRing
 import com.glassbox.hello.ui.components.HelloTextField
 import com.glassbox.hello.ui.components.LoadingView
 import com.glassbox.hello.ui.components.ShimmerChatCard
@@ -105,25 +106,29 @@ private enum class ChatFilter(val label: String) {
     Pinned("Pinned")
 }
 
+private const val INBOX_DEBUG_TAG = "HelloInbox"
+
 @Composable
 fun ChatListScreen(
     currentUserId: String,
     currentUserName: String,
     onChatSelected: (Chat) -> Unit,
     onOpenSettings: () -> Unit,
-    onOpenStories: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    val viewModel: ChatViewModel = viewModel()
+    val viewModel: ChatViewModel = viewModel(key = "chat-list-$currentUserId")
     val chatsState by viewModel.chatsState.collectAsState()
     val chatsRefreshing by viewModel.chatsRefreshing.collectAsState()
     val usersState by viewModel.usersState.collectAsState()
     val createChatState by viewModel.createChatState.collectAsState()
     val context = LocalContext.current
     val coroutineScope = androidx.compose.runtime.rememberCoroutineScope()
-    val cloudChatEnabled = HelloPreferences.read(context).cloudChatEnabled
+    val settingsState by rememberHelloSettingsState(context)
+    val cloudChatEnabled = settingsState.cloudChatEnabled
+    val cloudSessionManager = remember { CloudSessionManager(context) }
+    val cloudSessionUser = cloudSessionManager.cachedUser()
+    val cloudTokenPresent = !cloudSessionManager.token().isNullOrBlank()
     val socketManager = remember { SocketManager.getInstance() }
-    val api = remember { HelloApiClient() }
 
     var showNewChat by remember { mutableStateOf(false) }
     var showGroupChat by remember { mutableStateOf(false) }
@@ -142,9 +147,12 @@ fun ChatListScreen(
     var vpnDetail by remember { mutableStateOf("PC Drive not checked yet") }
     var cloudChatOnline by remember { mutableStateOf(false) }
     var cloudChatDetail by remember { mutableStateOf("Cloud Chat not checked yet") }
-    var storyGroups by remember { mutableStateOf<List<InboxStoryGroup>>(emptyList()) }
 
     LaunchedEffect(currentUserId, cloudChatEnabled) {
+        Log.d(
+            INBOX_DEBUG_TAG,
+            "screen_init userId=$currentUserId userName=$currentUserName cloudChatEnabled=$cloudChatEnabled cloudTokenPresent=$cloudTokenPresent cloudSessionUserId=${cloudSessionUser?.id.orEmpty()} cloudSessionUserName=${cloudSessionUser?.name.orEmpty()}"
+        )
         viewModel.configureCloudChat(context)
         viewModel.loadChats(currentUserId, cloudChatEnabled = cloudChatEnabled)
         vpnChecking = true
@@ -157,53 +165,59 @@ fun ChatListScreen(
         vpnChecking = false
     }
 
-    LaunchedEffect(currentUserId) {
-        val cutoff = System.currentTimeMillis() - 24L * 60L * 60L * 1000L
-        storyGroups = api.fetchStatuses(currentUserId)
-            .getOrNull()
-            .orEmpty()
-            .filter { it.timestamp >= cutoff }
-            .groupBy { it.userId }
-            .map { (userId, statuses) ->
-                val latest = statuses.maxByOrNull { it.timestamp }
-                InboxStoryGroup(
-                    userId = userId,
-                    name = latest?.userName ?: if (userId == currentUserId) currentUserName else "Hello user",
-                    avatarUrl = latest?.userAvatar,
-                    timestamp = latest?.timestamp ?: 0L,
-                    unseen = statuses.any { status ->
-                        status.views?.none { view -> view["userId"] == currentUserId } != false
-                    }
-                )
-            }
-            .sortedWith(compareByDescending<InboxStoryGroup> { it.userId == currentUserId }.thenByDescending { it.timestamp })
-    }
-
     DisposableEffect(currentUserId, currentUserName, cloudChatEnabled) {
-        socketManager.onChatUpdated = { chat ->
+        val chatListener: (Chat) -> Unit = { chat ->
+            Log.d(
+                INBOX_DEBUG_TAG,
+                "socket_chat_updated currentUserId=$currentUserId chatId=${chat.id} directKey=${chat.directKey.orEmpty()} memberCount=${chat.memberIds().size} lastMessage=${chat.lastMessage.orEmpty().take(60)}"
+            )
             viewModel.upsertChatFromSocket(chat, currentUserId)
             viewModel.loadChats(currentUserId, cloudChatEnabled = cloudChatEnabled)
         }
-        socketManager.onMessageReceived = { message ->
+        val messageListener: (com.glassbox.hello.chat.ChatModels.Message) -> Unit = { message ->
+            Log.d(
+                INBOX_DEBUG_TAG,
+                "socket_message currentUserId=$currentUserId chatId=${message.chatId} senderId=${message.senderId} text=${message.text.take(60)}"
+            )
             viewModel.appendFromSocket(message, currentUserId = currentUserId)
             viewModel.loadChats(currentUserId, cloudChatEnabled = cloudChatEnabled)
         }
-        socketManager.onPresenceUpdated = {
-            viewModel.loadChats(currentUserId, cloudChatEnabled = cloudChatEnabled)
-            viewModel.loadUsers(currentUserId, null, cloudChatEnabled = cloudChatEnabled)
+        val presenceListener: (org.json.JSONObject) -> Unit = presenceListener@{
+            val payloadUserId = it.optString("userId").ifBlank { it.optString("id") }
+            if (payloadUserId == currentUserId) {
+                Log.d(INBOX_DEBUG_TAG, "socket_presence_ignored_self currentUserId=$currentUserId payload=$it")
+                return@presenceListener
+            }
+            Log.d(INBOX_DEBUG_TAG, "socket_presence currentUserId=$currentUserId payload=$it")
+            viewModel.applyPresenceUpdate(it)
         }
+        socketManager.addChatUpdateListener(chatListener)
+        socketManager.addMessageListener(messageListener)
+        socketManager.addPresenceListener(presenceListener)
         socketManager.connect(context, CoreUser(id = currentUserId, name = currentUserName))
         onDispose {
-            socketManager.onChatUpdated = null
-            socketManager.onMessageReceived = null
-            socketManager.onPresenceUpdated = null
+            socketManager.removeChatUpdateListener(chatListener)
+            socketManager.removeMessageListener(messageListener)
+            socketManager.removePresenceListener(presenceListener)
         }
     }
 
     LaunchedEffect(showNewChat, showGroupChat, userSearchQuery, groupSearchQuery) {
         when {
-            showNewChat -> viewModel.loadUsers(currentUserId, userSearchQuery, cloudChatEnabled = cloudChatEnabled)
-            showGroupChat -> viewModel.loadUsers(currentUserId, groupSearchQuery, cloudChatEnabled = cloudChatEnabled)
+            showNewChat -> {
+                Log.d(
+                    INBOX_DEBUG_TAG,
+                    "open_new_chat currentUserId=$currentUserId query=$userSearchQuery cloudChatEnabled=$cloudChatEnabled cloudTokenPresent=$cloudTokenPresent"
+                )
+                viewModel.loadUsers(currentUserId, userSearchQuery, cloudChatEnabled = cloudChatEnabled)
+            }
+            showGroupChat -> {
+                Log.d(
+                    INBOX_DEBUG_TAG,
+                    "open_group_chat currentUserId=$currentUserId query=$groupSearchQuery cloudChatEnabled=$cloudChatEnabled cloudTokenPresent=$cloudTokenPresent"
+                )
+                viewModel.loadUsers(currentUserId, groupSearchQuery, cloudChatEnabled = cloudChatEnabled)
+            }
         }
     }
 
@@ -255,13 +269,13 @@ fun ChatListScreen(
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = "Hello",
-                        fontSize = 26.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = HelloColors.TextPrimary
+                        fontSize = 38.sp,
+                        fontWeight = FontWeight.Black,
+                        color = HelloColors.AccentStrong
                     )
                     Text(
-                        text = "Inbox",
-                        fontSize = 13.sp,
+                        text = "Inbox ♡",
+                        fontSize = 18.sp,
                         color = HelloColors.TealPrimary,
                         fontWeight = FontWeight.Bold
                     )
@@ -340,15 +354,19 @@ fun ChatListScreen(
 
             Spacer(Modifier.height(HelloDimens.SpaceM))
 
-            InboxStoryStrip(
-                currentUserId = currentUserId,
-                currentUserName = currentUserName,
-                groups = storyGroups,
-                onOpenStories = onOpenStories,
-                modifier = Modifier.fillMaxWidth()
-            )
+            if (!cloudChatEnabled || !cloudTokenPresent) {
+                CloudChatStatusBanner(
+                    cloudChatEnabled = cloudChatEnabled,
+                    cloudSessionUserName = cloudSessionUser?.name,
+                    onEnableSync = { HelloPreferences.setCloudChatEnabled(context, true) },
+                    onOpenSettings = onOpenSettings,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = HelloDimens.SpaceL)
+                )
 
-            Spacer(Modifier.height(HelloDimens.SpaceM))
+                Spacer(Modifier.height(HelloDimens.SpaceM))
+            }
 
             // ─ Filter chips
             LazyRow(
@@ -408,15 +426,15 @@ fun ChatListScreen(
 
                     if (chats.isEmpty()) {
                         HelloEmptyState(
-                            title = "No chats yet",
-                            message = "Start a direct chat with another Hello user.",
+                            title = "No messages yet",
+                            message = "Your Hello inbox is clear. Start a chat and say hi to someone from the + button.",
                             modifier = Modifier
                                 .weight(1f)
                                 .fillMaxWidth()
                                 .padding(horizontal = HelloDimens.SpaceL),
                             action = {
                                 HelloPrimaryButton(
-                                    text = "New chat",
+                                    text = "Say hi",
                                     onClick = { showNewChat = true },
                                     modifier = Modifier.fillMaxWidth(0.7f)
                                 )
@@ -566,95 +584,59 @@ private enum class SharedContentMode {
     Links
 }
 
-private data class InboxStoryGroup(
-    val userId: String,
-    val name: String,
-    val avatarUrl: String?,
-    val timestamp: Long,
-    val unseen: Boolean
-)
-
 @Composable
-private fun InboxStoryStrip(
-    currentUserId: String,
-    currentUserName: String,
-    groups: List<InboxStoryGroup>,
-    onOpenStories: () -> Unit,
+private fun CloudChatStatusBanner(
+    cloudChatEnabled: Boolean,
+    cloudSessionUserName: String?,
+    onEnableSync: () -> Unit,
+    onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    LazyRow(
-        modifier = modifier,
-        contentPadding = PaddingValues(horizontal = HelloDimens.SpaceL),
-        horizontalArrangement = Arrangement.spacedBy(HelloDimens.SpaceM)
-    ) {
-        item {
-            val myGroup = groups.firstOrNull { it.userId == currentUserId }
-            InboxStoryItem(
-                name = "My story",
-                avatarName = currentUserName,
-                imageUrl = myGroup?.avatarUrl,
-                unseen = true,
-                plus = true,
-                onClick = onOpenStories
-            )
-        }
-        items(groups.filterNot { it.userId == currentUserId }.take(12), key = { it.userId }) { group ->
-            InboxStoryItem(
-                name = group.name,
-                avatarName = group.name,
-                imageUrl = group.avatarUrl,
-                unseen = group.unseen,
-                plus = false,
-                onClick = onOpenStories
-            )
-        }
+    val title: String
+    val message: String
+    if (!cloudChatEnabled) {
+        title = "Chat sync is off"
+        message = "This inbox is using the old local path. Turn on Chat sync to load cloud chats and cloud users on mobile."
+    } else {
+        title = "Cloud session missing"
+        val activeName = cloudSessionUserName?.takeIf { it.isNotBlank() } ?: "this device"
+        message = "Cloud chat is on, but there is no active cloud session for $activeName. Sign in again if chats and users stay empty."
     }
-}
 
-@Composable
-private fun InboxStoryItem(
-    name: String,
-    avatarName: String,
-    imageUrl: String?,
-    unseen: Boolean,
-    plus: Boolean,
-    onClick: () -> Unit
-) {
-    Column(
-        modifier = Modifier
-            .width(76.dp)
-            .clickable(onClick = onClick),
-        horizontalAlignment = Alignment.CenterHorizontally
+    HelloPanel(
+        modifier = modifier,
+        strong = false,
+        shape = HelloShapes.Md
     ) {
-        Box {
-            HelloStatusAvatarRing(name = avatarName, seen = !unseen, imageUrl = imageUrl)
-            if (plus) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .size(22.dp)
-                        .clip(androidx.compose.foundation.shape.CircleShape)
-                        .background(HelloColors.StoryPrimaryButton)
-                        .border(2.dp, HelloColors.Bg, androidx.compose.foundation.shape.CircleShape),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        Icons.Default.Add,
-                        contentDescription = null,
-                        tint = HelloColors.StoryPrimaryButtonText,
-                        modifier = Modifier.size(15.dp)
+        Column(
+            modifier = Modifier.padding(HelloSpacing.Md),
+            verticalArrangement = Arrangement.spacedBy(HelloSpacing.Sm)
+        ) {
+            Text(
+                text = title,
+                color = HelloColors.DarkText,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                text = message,
+                color = HelloColors.DarkTextMuted,
+                style = MaterialTheme.typography.bodySmall
+            )
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(HelloSpacing.Sm),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (!cloudChatEnabled) {
+                    HelloPrimaryButton(
+                        text = "Turn on",
+                        onClick = onEnableSync
                     )
+                }
+                TextButton(onClick = onOpenSettings) {
+                    Text("Settings", color = HelloColors.DarkAccent)
                 }
             }
         }
-        Spacer(modifier = Modifier.height(HelloDimens.SpaceXS))
-        Text(
-            text = name,
-            color = HelloColors.TextSecondary,
-            style = MaterialTheme.typography.labelSmall,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
     }
 }
 
@@ -730,7 +712,7 @@ private fun NewChatDialog(
                     is ResultState.Success -> {
                         val users = usersState.data
                         if (users.isEmpty()) {
-                            Text("No users found.", color = HelloColors.DarkTextMuted)
+                            Text("No Hello users found for that search.", color = HelloColors.DarkTextMuted)
                         } else {
                             LazyColumn(
                                 modifier = Modifier.height(280.dp),
@@ -846,6 +828,15 @@ private fun GroupChatDialog(
                                                     maxLines = 1,
                                                     overflow = TextOverflow.Ellipsis
                                                 )
+                                                user.username?.takeIf { it.isNotBlank() }?.let { username ->
+                                                    Text(
+                                                        text = "@$username",
+                                                        color = HelloColors.DarkAccent,
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis
+                                                    )
+                                                }
                                                 Text(
                                                     text = user.profileSubtitle(),
                                                     color = HelloColors.DarkTextMuted,
@@ -968,6 +959,7 @@ private fun UserDiscoveryItem(
 private fun User.profileSubtitle(): String {
     return when {
         online == true -> "Online"
+        !username.isNullOrBlank() -> "@$username"
         !email.isNullOrBlank() -> email
         !phone.isNullOrBlank() -> phone
         else -> "Hello contact"

@@ -19,3 +19,19 @@
 # If you keep the line number information, uncomment this to
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
+
+# Keep metadata that Gson, Retrofit, Firebase, and annotation-driven AndroidX
+# integrations use while still allowing R8 to remove unused code.
+-keepattributes Signature,*Annotation*
+-keep class com.google.gson.reflect.TypeToken { *; }
+-keep class * extends com.google.gson.reflect.TypeToken
+
+# Room generates database implementations reflectively; release minification
+# must keep their constructors so WorkManager and app databases can initialize.
+-keep class * extends androidx.room.RoomDatabase { <init>(); }
+-keep class *Database_Impl { *; }
+
+# WebRTC call setup runs in the shipped release APK. Keep the WebRTC surface
+# and the app's call stack stable so release behavior matches debug behavior.
+-keep class org.webrtc.** { *; }
+-keep class com.glassbox.hello.calls.** { *; }

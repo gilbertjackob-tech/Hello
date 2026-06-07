@@ -54,6 +54,8 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.glassbox.hello.calls.CallViewModel
 import com.glassbox.hello.core.ResultState
 import com.glassbox.hello.core.User
+import com.glassbox.hello.core.rememberHelloSettingsState
+import com.glassbox.hello.ui.components.AppBackground
 import com.glassbox.hello.ui.components.HelloAvatar
 import com.glassbox.hello.ui.components.HelloIconButton
 import com.glassbox.hello.ui.components.HelloPanel
@@ -73,6 +75,7 @@ fun ContactInfoScreen(
 ) {
     val context = LocalContext.current
     val viewModel: ChatViewModel = viewModel()
+    val settingsState by rememberHelloSettingsState(context)
     val messagesState by viewModel.messagesState.collectAsState()
     var pendingVideoCall by remember { mutableStateOf(false) }
     var showPermissionDialog by remember { mutableStateOf(false) }
@@ -83,14 +86,14 @@ fun ContactInfoScreen(
     val title = chat.displayName(currentUser.id)
     val avatar = other?.avatar ?: chat.avatar
     val subtitle = when {
-        chat.isGroup -> "${chat.members?.size ?: chat.participants?.size ?: 0} participants"
+        chat.isGroup -> "${chat.participantCount()} participants"
         other?.online == true -> "Online"
         other?.lastActive != null -> "Last active ${formatLastActive(other.lastActive)}"
         else -> "Hello user"
     }
 
-    LaunchedEffect(chat.id) {
-        viewModel.loadMessages(chat.id)
+    LaunchedEffect(chat.id, settingsState.cloudChatEnabled) {
+        viewModel.loadMessages(chat.id, cloudChatEnabled = settingsState.cloudChatEnabled)
     }
 
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -128,24 +131,24 @@ fun ContactInfoScreen(
         }
     }
 
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .safeDrawingPadding()
-            .background(HelloColors.DarkBg)
-    ) {
+    AppBackground(modifier = modifier.fillMaxSize()) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .safeDrawingPadding()
+        ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(HelloColors.DarkBgStrong)
+                .background(HelloColors.PanelStrong)
                 .padding(horizontal = HelloSpacing.Sm, vertical = HelloSpacing.Xs),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(HelloSpacing.Sm)
         ) {
             HelloIconButton(onClick = onBack) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = HelloColors.DarkText)
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = HelloColors.AccentStrong)
             }
-            Text("Contact Info", color = HelloColors.DarkText, fontWeight = FontWeight.Bold)
+            Text("Contact Info", color = HelloColors.AccentStrong, fontWeight = FontWeight.Black, style = MaterialTheme.typography.headlineSmall)
         }
 
         Column(
@@ -156,7 +159,7 @@ fun ContactInfoScreen(
         ) {
             HelloAvatar(name = title, online = other?.online == true, size = 132.dp, imageUrl = avatar)
             Spacer(modifier = Modifier.height(HelloSpacing.Md))
-            Text(title, color = HelloColors.DarkText, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+            Text(title, color = HelloColors.AccentStrong, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black)
             Text(subtitle, color = if (other?.online == true) HelloColors.DarkAccent else HelloColors.DarkTextMuted)
             Spacer(modifier = Modifier.height(HelloSpacing.Lg))
 
@@ -186,6 +189,7 @@ fun ContactInfoScreen(
             ActionRow("Clear chat locally", Icons.Default.Block, danger = true) { showClearChat = true }
             ActionRow("Delete chat locally", Icons.Default.Delete, danger = true) { showDeleteChat = true }
         }
+        }
     }
 
     if (showPermissionDialog) {
@@ -213,7 +217,7 @@ fun ContactInfoScreen(
             onDismiss = { showClearChat = false },
             onConfirm = {
                 showClearChat = false
-                viewModel.clearChat(chat.id, currentUser.id)
+                viewModel.clearChat(chat.id, currentUser.id, settingsState.cloudChatEnabled)
             }
         )
     }
@@ -225,7 +229,7 @@ fun ContactInfoScreen(
             onDismiss = { showDeleteChat = false },
             onConfirm = {
                 showDeleteChat = false
-                viewModel.deleteChat(chat.id, currentUser.id)
+                viewModel.deleteChat(chat.id, currentUser.id, settingsState.cloudChatEnabled)
                 onChatDeleted()
             }
         )
@@ -236,7 +240,7 @@ fun ContactInfoScreen(
 private fun ProfileAction(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, onClick: () -> Unit) {
     HelloPanel(
         modifier = Modifier
-            .size(width = 104.dp, height = 76.dp)
+            .size(width = 118.dp, height = 88.dp)
             .clickable(onClick = onClick),
         strong = true,
         shape = HelloShapes.Md
@@ -246,8 +250,8 @@ private fun ProfileAction(label: String, icon: androidx.compose.ui.graphics.vect
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
-            Icon(icon, contentDescription = label, tint = HelloColors.DarkAccent)
-            Text(label, color = HelloColors.DarkText, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+            Icon(icon, contentDescription = label, tint = HelloColors.Accent, modifier = Modifier.size(32.dp))
+            Text(label, color = HelloColors.AccentStrong, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
         }
     }
 }
@@ -262,7 +266,7 @@ private fun SectionPanel(title: String, content: @Composable () -> Unit) {
         shape = HelloShapes.Md
     ) {
         Column(modifier = Modifier.padding(HelloSpacing.Md), verticalArrangement = Arrangement.spacedBy(HelloSpacing.Sm)) {
-            Text(title, color = HelloColors.DarkTextMuted, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+            Text("$title ♡", color = HelloColors.AccentStrong, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Black)
             content()
         }
     }
@@ -284,9 +288,9 @@ private fun SummaryCard(label: String, count: Int, icon: androidx.compose.ui.gra
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
-            Icon(icon, contentDescription = label, tint = HelloColors.DarkAccent)
-            Text("$count", color = HelloColors.DarkText, fontWeight = FontWeight.Bold)
-            Text(label, color = HelloColors.DarkTextMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Icon(icon, contentDescription = label, tint = HelloColors.Accent, modifier = Modifier.size(30.dp))
+            Text("$count", color = HelloColors.AccentStrong, fontWeight = FontWeight.Black)
+            Text(label, color = HelloColors.TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }
@@ -301,10 +305,10 @@ private fun ActionRow(label: String, icon: androidx.compose.ui.graphics.vector.I
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(HelloSpacing.Md)
     ) {
-        Icon(icon, contentDescription = label, tint = if (danger) HelloColors.DarkDanger else HelloColors.DarkTextMuted)
+        Icon(icon, contentDescription = label, tint = if (danger) HelloColors.DarkDanger else HelloColors.Accent)
         Text(
             text = if (muted) "$label (inside chat)" else label,
-            color = if (danger) HelloColors.DarkDanger else if (muted) HelloColors.DarkTextMuted else HelloColors.DarkText,
+            color = if (danger) HelloColors.DarkDanger else if (muted) HelloColors.TextSecondary else HelloColors.Text,
             fontWeight = FontWeight.Medium
         )
     }

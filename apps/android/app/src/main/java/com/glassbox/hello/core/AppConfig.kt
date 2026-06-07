@@ -5,7 +5,7 @@ import com.glassbox.hello.BuildConfig
 object AppConfig {
     const val PC_DRIVE_ORIGIN = "https://home.bookhelloctg.com"
     const val CHAT_CLOUD_BASE_URL = "https://chat.bookhelloctg.com"
-    const val CHAT_CLOUD_FALLBACK_URL = "https://hello-chat-worker.gilbert-jackob3.workers.dev"
+    const val CHAT_CLOUD_FALLBACK_URL = CHAT_CLOUD_BASE_URL
     const val CHAT_SERVER_ORIGIN = CHAT_CLOUD_BASE_URL
     const val CALL_SERVER_ORIGIN = CHAT_CLOUD_BASE_URL
     val DRIVE_PC_BASE_URL: String = BuildConfig.DRIVE_PC_BASE_URL.trimEnd('/')

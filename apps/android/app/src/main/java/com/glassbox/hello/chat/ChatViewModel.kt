@@ -1,6 +1,7 @@
 package com.glassbox.hello.chat
 
 import android.content.Context
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.glassbox.hello.chat.ChatModels.Chat
@@ -12,6 +13,7 @@ import com.glassbox.hello.network.HelloApiClient
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import org.json.JSONObject
 
 class ChatViewModel : ViewModel() {
     private val api = HelloApiClient()
@@ -49,13 +51,16 @@ class ChatViewModel : ViewModel() {
 
     companion object {
         private const val MESSAGE_PAGE_SIZE = 50
+        private const val TAG = "HelloInbox"
     }
 
     fun configureCloudChat(context: Context) {
+        Log.d(TAG, "configure_cloud_chat context=${context.applicationContext.javaClass.simpleName}")
         repository = ChatRepository(api, CloudChatRepository(context.applicationContext))
     }
 
-    fun loadUsers(currentUserId: String, query: String? = null, cloudChatEnabled: Boolean = false) {
+    fun loadUsers(currentUserId: String, query: String? = null, cloudChatEnabled: Boolean = true) {
+        Log.d(TAG, "vm_load_users_start currentUserId=$currentUserId query=${query.orEmpty()} cloudChatEnabled=$cloudChatEnabled")
         _usersState.value = ResultState.Loading
         viewModelScope.launch {
             val result = repository.fetchUsers(query, cloudChatEnabled)
@@ -65,10 +70,18 @@ class ChatViewModel : ViewModel() {
                         .orEmpty()
                         .filter { it.id != currentUserId }
                         .filter { cloudChatEnabled || query?.isNotBlank() == true || !it.isGeneratedIdentity() }
-                        .sortedWith(compareByDescending<User> { it.online == true }.thenBy { it.name.lowercase() })
+                        .sortedWith(compareByDescending<User> { it.online == true }.thenBy { normalizedSortKey(it.name) })
+                    Log.d(
+                        TAG,
+                        "vm_load_users_success currentUserId=$currentUserId query=${query.orEmpty()} cloudChatEnabled=$cloudChatEnabled rawCount=${result.getOrNull().orEmpty().size} visibleCount=${users.size} ids=${users.take(8).joinToString(",") { it.id }}"
+                    )
                     ResultState.Success(users)
                 }
-                result.isFailure -> ResultState.Error(result.exceptionOrNull()?.message ?: "Failed to load users")
+                result.isFailure -> {
+                    val error = result.exceptionOrNull()?.message ?: "Failed to load users"
+                    Log.w(TAG, "vm_load_users_error currentUserId=$currentUserId query=${query.orEmpty()} cloudChatEnabled=$cloudChatEnabled error=$error")
+                    ResultState.Error(error)
+                }
                 else -> ResultState.Error("Unknown error")
             }
         }
@@ -79,14 +92,17 @@ class ChatViewModel : ViewModel() {
         currentUserName: String,
         targetUserId: String,
         targetUserName: String? = null,
-        cloudChatEnabled: Boolean = false
+        cloudChatEnabled: Boolean = true
     ) {
         _createChatState.value = ResultState.Loading
         viewModelScope.launch {
             val result = repository.createDirectChat(currentUserId, targetUserId, currentUserName, targetUserName, cloudChatEnabled)
             _createChatState.value = when {
                 result.isSuccess -> {
-                    val chat = result.getOrNull()!!
+                    val chat = result.getOrNull()
+                        ?: return@launch run {
+                            _createChatState.value = ResultState.Error("Start chat response was empty")
+                        }
                     upsertChat(chat, currentUserId)
                     ResultState.Success(chat)
                 }
@@ -101,25 +117,31 @@ class ChatViewModel : ViewModel() {
         currentUserName: String,
         name: String,
         memberIds: List<String>,
-        cloudChatEnabled: Boolean = false
+        cloudChatEnabled: Boolean = true
     ) {
         _createChatState.value = ResultState.Loading
         viewModelScope.launch {
             val members = (memberIds + currentUserId).distinct()
             val result = repository.createGroupChat(currentUserId, currentUserName, name, members, cloudChatEnabled)
             _createChatState.value = when {
-                result.isSuccess -> ResultState.Success(result.getOrNull()!!)
+                result.isSuccess -> result.getOrNull()
+                    ?.let { ResultState.Success(it) }
+                    ?: ResultState.Error("Create group response was empty")
                 result.isFailure -> ResultState.Error(result.exceptionOrNull()?.message ?: "Failed to create group")
                 else -> ResultState.Error("Unknown error")
             }
         }
     }
 
-    fun loadChats(userId: String, cloudChatEnabled: Boolean = false) {
+    fun loadChats(userId: String, cloudChatEnabled: Boolean = true) {
         val hasCached = _chatsState.value is ResultState.Success
         val cachedCloudChats = repository.cachedChats(userId, cloudChatEnabled)
             .dedupeDirectChats(userId)
             .filter { it.isProfessionalInboxItem(userId) }
+        Log.d(
+            TAG,
+            "vm_load_chats_start userId=$userId cloudChatEnabled=$cloudChatEnabled hadVisibleState=$hasCached cachedVisibleCount=${cachedCloudChats.size} cachedIds=${cachedCloudChats.take(8).joinToString(",") { it.id }}"
+        )
         if (cachedCloudChats.isNotEmpty()) {
             _chatsState.value = ResultState.Success(cachedCloudChats)
         }
@@ -132,20 +154,32 @@ class ChatViewModel : ViewModel() {
         viewModelScope.launch {
             val result = repository.fetchChats(userId, cloudChatEnabled)
             if (result.isSuccess) {
+                val chats = result.getOrNull()
+                    .orEmpty()
+                    .dedupeDirectChats(userId)
+                    .filter { it.isProfessionalInboxItem(userId) }
+                Log.d(
+                    TAG,
+                    "vm_load_chats_success userId=$userId cloudChatEnabled=$cloudChatEnabled visibleCount=${chats.size} ids=${chats.take(8).joinToString(",") { it.id }} previews=${chats.take(4).joinToString(" | ") { "${it.id}:${it.lastMessage.orEmpty().take(30)}" }}"
+                )
                 _chatsState.value = ResultState.Success(
-                    result.getOrNull()
-                        .orEmpty()
-                        .dedupeDirectChats(userId)
-                        .filter { it.isProfessionalInboxItem(userId) }
+                    chats
                 )
             } else if (!hasVisibleChats) {
-                _chatsState.value = ResultState.Error(result.exceptionOrNull()?.message ?: "Failed to load chats")
+                val error = result.exceptionOrNull()?.message ?: "Failed to load chats"
+                Log.w(TAG, "vm_load_chats_error userId=$userId cloudChatEnabled=$cloudChatEnabled error=$error")
+                _chatsState.value = ResultState.Error(error)
+            } else {
+                Log.w(
+                    TAG,
+                    "vm_load_chats_refresh_error userId=$userId cloudChatEnabled=$cloudChatEnabled error=${result.exceptionOrNull()?.message ?: "Failed to load chats"}"
+                )
             }
             _chatsRefreshing.value = false
         }
     }
 
-    fun loadMessages(chatId: String, cloudChatEnabled: Boolean = false) {
+    fun loadMessages(chatId: String, cloudChatEnabled: Boolean = true) {
         _messagesPaginationOffset.value = 0
         _hasMoreOlderMessages.value = true
         val hasCached = _messagesState.value is ResultState.Success
@@ -171,7 +205,7 @@ class ChatViewModel : ViewModel() {
     /**
      * Load older messages for pagination (scroll to top to load history)
      */
-    fun loadOlderMessages(chatId: String, cloudChatEnabled: Boolean = false) {
+    fun loadOlderMessages(chatId: String, cloudChatEnabled: Boolean = true) {
         if (_isLoadingOlderMessages.value || !_hasMoreOlderMessages.value) return
         
         _isLoadingOlderMessages.value = true
@@ -209,7 +243,7 @@ class ChatViewModel : ViewModel() {
         messageId: String,
         emoji: String,
         userId: String,
-        cloudChatEnabled: Boolean = false
+        cloudChatEnabled: Boolean = true
     ) {
         viewModelScope.launch {
             applyReactionPatch(messageId, emoji, userId)  // Optimistic UI update
@@ -218,7 +252,7 @@ class ChatViewModel : ViewModel() {
                 result.getOrNull()?.let { upsertMessage(it) }  // Patch with server response
             } else {
                 // Only reload on error (rare)
-                loadMessages(chatId)
+                loadMessages(chatId, cloudChatEnabled = cloudChatEnabled)
             }
         }
     }
@@ -227,15 +261,15 @@ class ChatViewModel : ViewModel() {
      * Star message with optimistic update - NO FULL RELOAD
      * Updates message instantly, reverts on API failure
      */
-    fun starMessage(chatId: String, messageId: String, userId: String) {
+    fun starMessage(chatId: String, messageId: String, userId: String, cloudChatEnabled: Boolean = true) {
         viewModelScope.launch {
             applyStarPatch(messageId, userId)  // Optimistic UI update
-            val result = repository.starMessage(chatId, messageId, userId)
+            val result = repository.starMessage(chatId, messageId, userId, cloudChatEnabled)
             if (result.isSuccess) {
                 result.getOrNull()?.let { upsertMessage(it) }  // Patch with server response
             } else {
                 // Only reload on error (rare)
-                loadMessages(chatId)
+                loadMessages(chatId, cloudChatEnabled = cloudChatEnabled)
             }
         }
     }
@@ -244,15 +278,15 @@ class ChatViewModel : ViewModel() {
      * Pin message with optimistic update - NO FULL RELOAD
      * Updates message instantly, reverts on API failure
      */
-    fun pinMessage(chatId: String, messageId: String, durationDays: Int = 7) {
+    fun pinMessage(chatId: String, messageId: String, userId: String, durationDays: Int = 7, cloudChatEnabled: Boolean = true) {
         viewModelScope.launch {
             applyPinPatch(messageId, durationDays)  // Optimistic UI update
-            val result = repository.pinMessage(chatId, messageId, durationDays)
+            val result = repository.pinMessage(chatId, messageId, userId, durationDays, cloudChatEnabled)
             if (result.isSuccess) {
                 result.getOrNull()?.let { upsertMessage(it) }  // Patch with server response
             } else {
                 // Only reload on error (rare)
-                loadMessages(chatId)
+                loadMessages(chatId, cloudChatEnabled = cloudChatEnabled)
             }
         }
     }
@@ -261,33 +295,33 @@ class ChatViewModel : ViewModel() {
      * Delete message with optimistic update - NO FULL RELOAD
      * Updates message instantly, reverts on API failure
      */
-    fun deleteMessage(chatId: String, messageId: String, userId: String, type: String = "message") {
+    fun deleteMessage(chatId: String, messageId: String, userId: String, type: String = "message", cloudChatEnabled: Boolean = true) {
         viewModelScope.launch {
             applyDeletePatch(messageId, userId)  // Optimistic UI update
-            val result = repository.deleteMessage(chatId, messageId, userId, type)
+            val result = repository.deleteMessage(chatId, messageId, userId, type, cloudChatEnabled)
             if (result.isSuccess) {
                 result.getOrNull()?.let { upsertMessage(it) }  // Patch with server response
             } else {
                 // Only reload on error (rare)
-                loadMessages(chatId)
+                loadMessages(chatId, cloudChatEnabled = cloudChatEnabled)
             }
         }
     }
 
-    fun clearChat(chatId: String, userId: String) {
+    fun clearChat(chatId: String, userId: String, cloudChatEnabled: Boolean = true) {
         viewModelScope.launch {
             val previous = _messagesState.value
             _messagesState.value = ResultState.Success(emptyList())
-            val result = repository.clearChat(chatId, userId)
+            val result = repository.clearChat(chatId, userId, cloudChatEnabled)
             if (result.isFailure) {
                 _messagesState.value = previous
             }
         }
     }
 
-    fun deleteChat(chatId: String, userId: String) {
+    fun deleteChat(chatId: String, userId: String, cloudChatEnabled: Boolean = true) {
         viewModelScope.launch {
-            repository.deleteChat(chatId, userId)
+            repository.deleteChat(chatId, userId, cloudChatEnabled)
             _messagesState.value = ResultState.Success(emptyList())
         }
     }
@@ -299,10 +333,13 @@ class ChatViewModel : ViewModel() {
         senderAvatar: String?,
         lat: Double,
         lng: Double,
-        label: String? = null
+        label: String? = null,
+        cloudChatEnabled: Boolean = true,
+        chat: Chat? = null
     ) {
         viewModelScope.launch {
-            val text = label ?: "Location shared"
+            val mapUrl = "https://maps.google.com/?q=$lat,$lng"
+            val text = label ?: if (cloudChatEnabled && chat != null) "Location shared: $mapUrl" else "Location shared"
             val optimistic = OptimisticMessageManager.createOptimisticMessage(
                 chatId = chatId,
                 text = text,
@@ -317,9 +354,11 @@ class ChatViewModel : ViewModel() {
                 senderId = senderId,
                 senderName = senderName,
                 senderAvatar = senderAvatar,
-                location = ChatModels.LocationData(lat = lat, lng = lng, isLive = false)
+                location = if (cloudChatEnabled && chat != null) null else ChatModels.LocationData(lat = lat, lng = lng, isLive = false),
+                cloudChatEnabled = cloudChatEnabled,
+                chat = chat
             )
-            result.getOrNull()?.let { upsertMessage(it) }
+            result.getOrNull()?.let { upsertMessage(it, optimistic.tempId) }
         }
     }
 
@@ -328,7 +367,9 @@ class ChatViewModel : ViewModel() {
         senderId: String,
         senderName: String,
         senderAvatar: String?,
-        contact: User
+        contact: User,
+        cloudChatEnabled: Boolean = true,
+        chat: Chat? = null
     ) {
         val details = buildString {
             append("Contact: ${contact.name}")
@@ -340,7 +381,9 @@ class ChatViewModel : ViewModel() {
             text = details,
             senderId = senderId,
             senderName = senderName,
-            senderAvatar = senderAvatar
+            senderAvatar = senderAvatar,
+            cloudChatEnabled = cloudChatEnabled,
+            chat = chat
         )
     }
 
@@ -356,7 +399,7 @@ class ChatViewModel : ViewModel() {
         attachmentSize: Long? = null,
         replyTo: ChatModels.ReplyTo? = null,
         optimisticTempId: String? = null,
-        cloudChatEnabled: Boolean = false,
+        cloudChatEnabled: Boolean = true,
         chat: Chat? = null
     ) {
         _sendMessageState.value = ResultState.Loading
@@ -377,7 +420,11 @@ class ChatViewModel : ViewModel() {
             )
             _sendMessageState.value = when {
                 result.isSuccess -> {
-                    val message = result.getOrNull()!!
+                    val message = result.getOrNull()
+                        ?: return@launch run {
+                            optimisticTempId?.let { markMessageFailed(it) }
+                            _sendMessageState.value = ResultState.Error("Send message response was empty")
+                        }
                     upsertMessage(message, optimisticTempId)
                     upsertChatFromMessage(
                         message = message,
@@ -408,7 +455,7 @@ class ChatViewModel : ViewModel() {
         caption: String = "",
         replyTo: ChatModels.ReplyTo? = null,
         optimisticTempId: String? = null,
-        cloudChatEnabled: Boolean = false,
+        cloudChatEnabled: Boolean = true,
         chat: Chat? = null
     ) {
         _uploadState.value = ResultState.Loading
@@ -423,7 +470,12 @@ class ChatViewModel : ViewModel() {
                 _uploadState.value = ResultState.Error(upload.exceptionOrNull()?.message ?: "Failed to upload file")
                 return@launch
             }
-            val file = upload.getOrNull()!!
+            val file = upload.getOrNull()
+                ?: run {
+                    optimisticTempId?.let { markMessageFailed(it) }
+                    _uploadState.value = ResultState.Error("Upload response was empty")
+                    return@launch
+                }
             _uploadState.value = ResultState.Success(file)
             sendMessage(
                 chatId = chatId,
@@ -451,7 +503,7 @@ class ChatViewModel : ViewModel() {
         senderAvatar: String? = null,
         caption: String = "",
         replyTo: ChatModels.ReplyTo? = null,
-        cloudChatEnabled: Boolean = false,
+        cloudChatEnabled: Boolean = true,
         chat: Chat? = null
     ) {
         if (attachments.isEmpty()) return
@@ -487,7 +539,12 @@ class ChatViewModel : ViewModel() {
                     continue
                 }
 
-                val file = upload.getOrNull()!!
+                val file = upload.getOrNull()
+                if (file == null) {
+                    markMessageFailed(optimistic.tempId)
+                    firstError = firstError ?: "Upload response was empty"
+                    continue
+                }
                 lastUploaded = file
 
                 val result = repository.sendMessage(
@@ -536,6 +593,10 @@ class ChatViewModel : ViewModel() {
         activeChatId: String? = null,
         baseChat: Chat? = null
     ) {
+        Log.d(
+            TAG,
+            "vm_append_from_socket currentUserId=${currentUserId.orEmpty()} chatId=${message.chatId} senderId=${message.senderId} activeChatId=${activeChatId.orEmpty()} text=${message.text.take(60)}"
+        )
         upsertMessage(message)
         if (currentUserId != null) {
             upsertChatFromMessage(
@@ -553,10 +614,14 @@ class ChatViewModel : ViewModel() {
     }
 
     fun upsertChatFromSocket(chat: Chat, currentUserId: String) {
+        Log.d(
+            TAG,
+            "vm_upsert_chat_from_socket currentUserId=$currentUserId chatId=${chat.id} directKey=${chat.directKey.orEmpty()} members=${chat.memberIds().joinToString(",")} lastMessage=${chat.lastMessage.orEmpty().take(60)}"
+        )
         upsertChat(chat, currentUserId)
     }
 
-    fun clearUnreadForChat(chatId: String, currentUserId: String, cloudChatEnabled: Boolean = false) {
+    fun clearUnreadForChat(chatId: String, currentUserId: String, cloudChatEnabled: Boolean = true) {
         val current = _chatsState.value
         if (current is ResultState.Success) {
             _chatsState.value = ResultState.Success(
@@ -566,6 +631,66 @@ class ChatViewModel : ViewModel() {
             )
         }
         repository.clearCachedUnread(currentUserId, chatId, cloudChatEnabled)
+    }
+
+    fun applyPresenceUpdate(payload: JSONObject) {
+        val userId = payload.optString("userId").ifBlank { payload.optString("id") }
+        if (userId.isBlank()) return
+
+        val updatedUser = User(
+            id = userId,
+            name = payload.optString("name").ifBlank { payload.optString("displayName") }.ifBlank { "Hello user" },
+            avatar = payload.optString("avatar").ifBlank { payload.optString("avatarUrl") }.ifBlank { null },
+            username = payload.optString("username").ifBlank { null },
+            phone = payload.optString("phone").ifBlank { null },
+            email = payload.optString("email").ifBlank { null },
+            online = payload.takeIf { it.has("online") }?.optBoolean("online"),
+            lastActive = payload.takeIf { it.has("lastActive") }?.optLong("lastActive"),
+            privacy = payload.optString("privacy").ifBlank { null },
+            lastActivePrivacy = payload.optString("lastActivePrivacy").ifBlank { null }
+        )
+
+        val currentUsers = _usersState.value
+        if (currentUsers is ResultState.Success) {
+            var changed = false
+            val nextUsers = currentUsers.data.map { existing ->
+                if (existing.id != userId) {
+                    existing
+                } else {
+                    val merged = existing.mergePresence(updatedUser)
+                    changed = changed || merged != existing
+                    merged
+                }
+            }
+            if (changed) {
+                _usersState.value = ResultState.Success(nextUsers)
+            }
+        }
+
+        val currentChats = _chatsState.value
+        if (currentChats is ResultState.Success) {
+            var changed = false
+            val nextChats = currentChats.data.map { chat ->
+                val participants = chat.participants.orEmpty()
+                if (participants.none { it.id == userId }) {
+                    chat
+                } else {
+                    val nextParticipants = participants.map { participant ->
+                        if (participant.id == userId) {
+                            val merged = participant.mergePresence(updatedUser)
+                            changed = changed || merged != participant
+                            merged
+                        } else {
+                            participant
+                        }
+                    }
+                    if (nextParticipants == participants) chat else chat.copy(participants = nextParticipants)
+                }
+            }
+            if (changed) {
+                _chatsState.value = ResultState.Success(nextChats)
+            }
+        }
     }
 
     /**
@@ -724,6 +849,23 @@ class ChatViewModel : ViewModel() {
                 candidate.attachmentName == incoming.attachmentName &&
                 kotlin.math.abs(candidate.timestamp - incoming.timestamp) <= 120_000
         }?.id
+    }
+
+    private fun normalizedSortKey(value: String?): String =
+        value?.trim()?.lowercase().orEmpty()
+
+    private fun User.mergePresence(incoming: User): User {
+        return copy(
+            name = incoming.name.takeIf { it.isNotBlank() } ?: name,
+            avatar = incoming.avatar ?: avatar,
+            username = incoming.username ?: username,
+            phone = incoming.phone ?: phone,
+            email = incoming.email ?: email,
+            online = incoming.online ?: online,
+            lastActive = incoming.lastActive ?: lastActive,
+            privacy = incoming.privacy ?: privacy,
+            lastActivePrivacy = incoming.lastActivePrivacy ?: lastActivePrivacy
+        )
     }
 
     fun resetSendMessageState() {

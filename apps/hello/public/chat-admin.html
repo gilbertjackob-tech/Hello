@@ -1,0 +1,348 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hello Chat Admin</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0f1115;
+      --panel: #171a21;
+      --border: #2a3040;
+      --text: #edf1f7;
+      --muted: #98a2b3;
+      --accent: #4f8cff;
+      --danger: #e5484d;
+      --danger-soft: #2b1719;
+      --ok: #21c55d;
+      --input: #11151d;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+    .wrap {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: 320px 1fr;
+      gap: 20px;
+    }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+    }
+    h1, h2, h3 { margin: 0 0 12px; }
+    h1 { font-size: 24px; }
+    h2 { font-size: 18px; }
+    .muted { color: var(--muted); }
+    label {
+      display: block;
+      margin: 10px 0 6px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+    input, textarea, button {
+      width: 100%;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: var(--input);
+      color: var(--text);
+      padding: 10px 12px;
+      font: inherit;
+    }
+    textarea { min-height: 96px; resize: vertical; }
+    button {
+      cursor: pointer;
+      background: #1c2330;
+      transition: background .15s ease;
+    }
+    button:hover { background: #232c3c; }
+    button.primary { background: var(--accent); border-color: var(--accent); color: white; }
+    button.danger { background: var(--danger-soft); border-color: #5a2024; color: #ffb4b7; }
+    .row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .row > * { flex: 1; }
+    .controls { display: flex; flex-direction: column; gap: 12px; }
+    .table-wrap {
+      max-height: 70vh;
+      overflow: auto;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+    th, td {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      position: sticky;
+      top: 0;
+      background: #141821;
+      z-index: 1;
+    }
+    code {
+      background: #0b0d12;
+      padding: 2px 6px;
+      border-radius: 6px;
+    }
+    .status {
+      white-space: pre-wrap;
+      font-size: 13px;
+      line-height: 1.5;
+      background: #0c1017;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px;
+      min-height: 120px;
+    }
+    .small { font-size: 12px; }
+    @media (max-width: 900px) {
+      .grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Hello Chat Admin</h1>
+    <p class="muted">Simple controller page for chat-worker admin actions.</p>
+
+    <div class="grid">
+      <div class="panel controls">
+        <div>
+          <h2>Connection</h2>
+          <label for="baseUrl">Worker Base URL</label>
+          <input id="baseUrl" value="https://chat.bookhelloctg.com" />
+          <label for="secret">Dev Reset Secret</label>
+          <input id="secret" type="password" placeholder="DEV_RESET_SECRET" />
+          <div class="row" style="margin-top:12px;">
+            <button id="loadUsers" class="primary">Load Users</button>
+            <button id="clearSelected">Clear Selected</button>
+          </div>
+        </div>
+
+        <div>
+          <h2>Delete Chats</h2>
+          <button id="deleteChatsSelected">Delete Chats for Selected Users</button>
+          <button id="deleteChatsAll" class="danger" style="margin-top:8px;">Delete All Chats</button>
+        </div>
+
+        <div>
+          <h2>Delete Users</h2>
+          <button id="deleteUsersSelected">Delete Selected Users</button>
+          <button id="deleteUsersAll" class="danger" style="margin-top:8px;">Delete All Users</button>
+        </div>
+
+        <div>
+          <h2>Manual User IDs</h2>
+          <label for="manualIds">One user id per line</label>
+          <textarea id="manualIds" placeholder="usr_xxx&#10;usr_yyy"></textarea>
+          <p class="muted small">Manual IDs are merged with checked users.</p>
+        </div>
+
+        <div>
+          <h2>Result</h2>
+          <div id="status" class="status">Ready.</div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="row" style="margin-bottom:12px;">
+          <h2 style="margin:0;">Users</h2>
+          <div style="text-align:right;" class="muted small">
+            Checked users are the target for selected actions.
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th style="width:42px;"><input id="checkAll" type="checkbox" /></th>
+                <th>Name</th>
+                <th>User ID</th>
+                <th>Username</th>
+                <th>Chats</th>
+                <th>Sent</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="usersBody">
+              <tr><td colspan="7" class="muted">No data loaded.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const state = { users: [] };
+
+    const els = {
+      baseUrl: document.getElementById("baseUrl"),
+      secret: document.getElementById("secret"),
+      status: document.getElementById("status"),
+      usersBody: document.getElementById("usersBody"),
+      checkAll: document.getElementById("checkAll"),
+      manualIds: document.getElementById("manualIds"),
+    };
+
+    function setStatus(message, data) {
+      const text = data ? `${message}\n\n${JSON.stringify(data, null, 2)}` : message;
+      els.status.textContent = text;
+    }
+
+    function baseUrl() {
+      return (els.baseUrl.value || "").trim().replace(/\/+$/, "");
+    }
+
+    function secret() {
+      return (els.secret.value || "").trim();
+    }
+
+    function selectedIds() {
+      const checked = Array.from(document.querySelectorAll("input[data-user-id]:checked"))
+        .map((node) => node.getAttribute("data-user-id"))
+        .filter(Boolean);
+      const manual = (els.manualIds.value || "")
+        .split(/\r?\n/)
+        .map((value) => value.trim())
+        .filter(Boolean);
+      return Array.from(new Set([...checked, ...manual]));
+    }
+
+    function requireSecret() {
+      if (!secret()) {
+        throw new Error("DEV_RESET_SECRET is required.");
+      }
+    }
+
+    function renderUsers() {
+      if (!state.users.length) {
+        els.usersBody.innerHTML = '<tr><td colspan="7" class="muted">No users found.</td></tr>';
+        return;
+      }
+      els.usersBody.innerHTML = state.users.map((user) => `
+        <tr>
+          <td><input type="checkbox" data-user-id="${escapeHtml(user.id)}"></td>
+          <td>${escapeHtml(user.name || "")}</td>
+          <td><code>${escapeHtml(user.id || "")}</code></td>
+          <td>${escapeHtml(user.username || "")}</td>
+          <td>${Number(user.conversationCount || 0)}</td>
+          <td>${Number(user.sentMessageCount || 0)}</td>
+          <td>${Number(user.statusCount || 0)}</td>
+        </tr>
+      `).join("");
+    }
+
+    function escapeHtml(value) {
+      return String(value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/\"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
+    async function callAdmin(path, options = {}) {
+      requireSecret();
+      const response = await fetch(`${baseUrl()}${path}`, {
+        ...options,
+        headers: {
+          "content-type": "application/json",
+          "x-dev-reset-secret": secret(),
+          ...(options.headers || {}),
+        },
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok || body.ok === false) {
+        throw new Error(body.error || `HTTP ${response.status}`);
+      }
+      return body;
+    }
+
+    async function loadUsers() {
+      setStatus("Loading users...");
+      const result = await callAdmin("/api/admin/users", { method: "GET" });
+      state.users = result.users || [];
+      renderUsers();
+      setStatus(`Loaded ${state.users.length} users.`, result);
+    }
+
+    async function deleteChats(all) {
+      const userIds = selectedIds();
+      if (!all && userIds.length === 0) {
+        throw new Error("Select at least one user or enter manual user ids.");
+      }
+      const label = all ? "Delete all chats?" : `Delete chats for ${userIds.length} user(s)?`;
+      if (!window.confirm(label)) return;
+      setStatus("Deleting chats...");
+      const result = await callAdmin("/api/admin/delete-chats", {
+        method: "POST",
+        body: JSON.stringify(all ? { all: true } : { all: false, userIds }),
+      });
+      setStatus("Chat delete completed.", result);
+      await loadUsers();
+    }
+
+    async function deleteUsers(all) {
+      const userIds = selectedIds();
+      if (!all && userIds.length === 0) {
+        throw new Error("Select at least one user or enter manual user ids.");
+      }
+      const label = all ? "Delete ALL users and their chats?" : `Delete ${userIds.length} user(s) and their chats?`;
+      if (!window.confirm(label)) return;
+      setStatus("Deleting users...");
+      const result = await callAdmin("/api/admin/delete-users", {
+        method: "POST",
+        body: JSON.stringify(all ? { all: true } : { all: false, userIds }),
+      });
+      setStatus("User delete completed.", result);
+      await loadUsers();
+    }
+
+    document.getElementById("loadUsers").addEventListener("click", () => {
+      loadUsers().catch((error) => setStatus(error.message));
+    });
+    document.getElementById("deleteChatsSelected").addEventListener("click", () => {
+      deleteChats(false).catch((error) => setStatus(error.message));
+    });
+    document.getElementById("deleteChatsAll").addEventListener("click", () => {
+      deleteChats(true).catch((error) => setStatus(error.message));
+    });
+    document.getElementById("deleteUsersSelected").addEventListener("click", () => {
+      deleteUsers(false).catch((error) => setStatus(error.message));
+    });
+    document.getElementById("deleteUsersAll").addEventListener("click", () => {
+      deleteUsers(true).catch((error) => setStatus(error.message));
+    });
+    document.getElementById("clearSelected").addEventListener("click", () => {
+      document.querySelectorAll("input[data-user-id]").forEach((node) => { node.checked = false; });
+      els.checkAll.checked = false;
+      els.manualIds.value = "";
+    });
+    els.checkAll.addEventListener("change", (event) => {
+      const checked = Boolean(event.target.checked);
+      document.querySelectorAll("input[data-user-id]").forEach((node) => { node.checked = checked; });
+    });
+  </script>
+</body>
+</html>

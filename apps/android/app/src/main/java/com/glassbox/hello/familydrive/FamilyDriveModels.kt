@@ -2,6 +2,11 @@ package com.glassbox.hello.familydrive
 
 data class DriveItem(
     val id: String,
+    val batchId: String? = null,
+    val eventId: String? = null,
+    val eventName: String? = null,
+    val circleIds: List<String> = emptyList(),
+    val favorite: Boolean = false,
     val url: String,
     val thumbnailUrl: String? = null,
     val originalName: String? = null,
@@ -55,6 +60,7 @@ data class DriveCircleMember(
     val userId: String,
     val role: String = "Can only see",
     val name: String? = null,
+    val username: String? = null,
     val avatar: String? = null
 )
 
@@ -65,6 +71,7 @@ data class DriveCirclesResponse(
 data class DriveContact(
     val id: String,
     val name: String,
+    val username: String? = null,
     val avatar: String? = null,
     val sourceChatId: String? = null
 )
@@ -92,6 +99,33 @@ data class DriveDeleteResponse(
     val ok: Boolean = false,
     val item: DriveItem? = null,
     val deleteLimit: DriveDeleteLimit? = null
+)
+
+data class DriveDeletePollVote(
+    val pollId: String,
+    val userId: String,
+    val vote: String,
+    val createdAt: Long = 0L,
+    val updatedAt: Long = 0L
+)
+
+data class DriveDeletePoll(
+    val id: String,
+    val targetType: String,
+    val targetId: String,
+    val circleId: String,
+    val startedByUserId: String? = null,
+    val endsAt: Long = 0L,
+    val status: String = "open",
+    val createdAt: Long = 0L,
+    val resolvedAt: Long? = null,
+    val deleteVotes: Int = 0,
+    val keepVotes: Int = 0,
+    val votes: List<DriveDeletePollVote> = emptyList()
+)
+
+data class DriveDeletePollsResponse(
+    val polls: List<DriveDeletePoll> = emptyList()
 )
 
 data class DriveItemActionResponse(

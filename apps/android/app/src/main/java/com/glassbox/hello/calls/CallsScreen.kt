@@ -22,14 +22,18 @@ import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -39,18 +43,22 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.VolumeOff
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.CallEnd
-import androidx.compose.material.icons.filled.Cameraswitch
+import androidx.compose.material.icons.filled.CropFree
+import androidx.compose.material.icons.filled.FlipCameraAndroid
+import androidx.compose.material.icons.filled.Fullscreen
+import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.PhoneDisabled
-import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Speaker
-import androidx.compose.material.icons.filled.SpeakerNotesOff
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material.icons.filled.VideocamOff
 import androidx.compose.material3.AlertDialog
@@ -90,9 +98,12 @@ import com.glassbox.hello.ui.components.HelloPanel
 import com.glassbox.hello.ui.components.HelloPill
 import com.glassbox.hello.ui.components.HelloTopBar
 import com.glassbox.hello.ui.components.LoadingView
+import com.glassbox.hello.ui.theme.ChatThemeStore
+import com.glassbox.hello.ui.theme.ChatWallpaperBackground
 import com.glassbox.hello.ui.theme.HelloColors
 import com.glassbox.hello.ui.theme.HelloShapes
 import com.glassbox.hello.ui.theme.HelloSpacing
+import com.glassbox.hello.ui.theme.HelloThemeRuntime
 import org.webrtc.RendererCommon
 import org.webrtc.SurfaceViewRenderer
 import kotlin.math.absoluteValue
@@ -208,6 +219,7 @@ fun GlobalCallOverlay(
         )
         CallUiStatus.Outgoing, CallUiStatus.Connecting -> OutgoingCallScreen(
             name = callState.peerName,
+            avatarUrl = callState.peerAvatar,
             video = callState.signal?.isVideo == true,
             message = callState.message ?: "Calling...",
             onCancel = { callViewModel.endCall("ended_by_caller") },
@@ -240,6 +252,7 @@ fun GlobalCallOverlay(
             } else {
                 ActiveCallScreen(
                     name = callState.peerName,
+                    avatarUrl = callState.peerAvatar,
                     video = callState.signal?.isVideo == true,
                     durationSeconds = callState.durationSeconds,
                     mediaPhase = callState.mediaPhase,
@@ -268,7 +281,19 @@ fun GlobalCallOverlay(
         CallUiStatus.Missed,
         CallUiStatus.Busy,
         CallUiStatus.Unavailable,
-        CallUiStatus.Failed -> Unit
+        CallUiStatus.Failed -> CallStatusDialog(
+            title = when (callState.status) {
+                CallUiStatus.Ended -> "Call ended"
+                CallUiStatus.Declined -> "Call declined"
+                CallUiStatus.Missed -> "Missed call"
+                CallUiStatus.Busy -> "User busy"
+                CallUiStatus.Unavailable -> "User unavailable"
+                CallUiStatus.Failed -> "Call failed"
+                else -> "Call status"
+            },
+            message = callState.message ?: "Call ended.",
+            onDismiss = { callViewModel.dismissCallOverlay() }
+        )
         CallUiStatus.PermissionDenied -> PermissionRequiredDialog(
             message = callState.message ?: "Camera/microphone permission is needed for calls.",
             onOpenSettings = {
@@ -336,6 +361,25 @@ private fun PermissionRequiredDialog(
     )
 }
 
+@Composable
+private fun CallStatusDialog(
+    title: String,
+    message: String,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = HelloColors.DarkPanelStrong,
+        title = { Text(title, color = HelloColors.DarkText, fontWeight = FontWeight.Bold) },
+        text = { Text(message, color = HelloColors.DarkTextMuted) },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("OK", color = HelloColors.DarkAccent)
+            }
+        }
+    )
+}
+
 private fun formatCallTime(timestamp: Long): String {
     return java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()).format(java.util.Date(timestamp))
 }
@@ -350,45 +394,55 @@ fun IncomingCallScreen(
     onDecline: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    CallStage(
-        modifier = modifier,
+    CallLobbyScreen(
+        modifier = modifier.fillMaxSize(),
         name = name,
         avatarUrl = avatarUrl,
-        label = "Incoming ${if (video) "Video" else "Audio"} Call",
-        detail = message.ifBlank { "Ringing" },
-        pulsingAvatar = true
+        title = name,
+        subtitle = message.ifBlank { "Ringing..." },
+        status = "Incoming ${if (video) "video" else "audio"} call",
+        pulsingAvatar = true,
+        controlsPanel = {
+            SwipeCallControls(
+                video = video,
+                onAccept = onAccept,
+                onDecline = onDecline
+            )
+        }
     ) {
-        SwipeCallControls(
-            video = video,
-            onAccept = onAccept,
-            onDecline = onDecline
-        )
     }
 }
 
 @Composable
 fun OutgoingCallScreen(
     name: String,
+    avatarUrl: String? = null,
     video: Boolean,
     message: String = "Calling...",
     onCancel: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    CallStage(
-        modifier = modifier,
+    CallLobbyScreen(
+        modifier = modifier.fillMaxSize(),
         name = name,
-        label = if (video) "Video Call" else "Audio Call",
-        detail = message
-    ) {
-        RoundCallButton(onClick = onCancel, danger = true, size = 72.dp) {
-            Icon(Icons.Default.CallEnd, contentDescription = "Cancel", tint = HelloColors.AuthText)
+        avatarUrl = avatarUrl,
+        title = name,
+        subtitle = message,
+        status = if (video) "Outgoing video call" else "Outgoing audio call",
+        pulsingAvatar = true,
+        controlsPanel = {
+            LobbyActionRow {
+                EndCallButton(onClick = onCancel)
+            }
         }
+    ) {
     }
 }
 
 @Composable
 fun ActiveCallScreen(
     name: String,
+    avatarUrl: String? = null,
     video: Boolean,
     durationSeconds: Long = 0,
     mediaPhase: CallMediaPhase = CallMediaPhase.Connected,
@@ -410,75 +464,86 @@ fun ActiveCallScreen(
     onEnd: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    Box(
+    var focusLocalVideo by remember { mutableStateOf(false) }
+    CallThemeBackdrop(
         modifier = modifier
             .fillMaxSize()
-            .background(HelloColors.DarkBg)
     ) {
         if (video) {
             VideoCallSurface(
                 name = name,
+                avatarUrl = avatarUrl,
                 mediaPhase = mediaPhase,
                 cameraOff = cameraOff,
+                focusLocalVideo = focusLocalVideo,
+                onToggleFocus = { focusLocalVideo = !focusLocalVideo },
                 visualLook = visualLook,
                 onAttachLocalRenderer = onAttachLocalRenderer,
                 onAttachRemoteRenderer = onAttachRemoteRenderer
             )
         } else {
-            AudioCallSurface(name = name, durationSeconds = durationSeconds, mediaPhase = mediaPhase)
-        }
-        Column(
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                .background(HelloColors.DarkBg.copy(alpha = 0.72f))
-                .padding(horizontal = HelloSpacing.Lg, vertical = HelloSpacing.Xl),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(HelloSpacing.Md)
-        ) {
-            Text(
-                text = if (mediaPhase == CallMediaPhase.Connected) formatCallDuration(durationSeconds) else phaseLabel(mediaPhase),
-                color = HelloColors.DarkTextMuted,
-                fontWeight = FontWeight.Medium
+            AudioCallSurface(
+                name = name,
+                avatarUrl = avatarUrl,
+                durationSeconds = durationSeconds,
+                mediaPhase = mediaPhase
             )
-            if (video) {
-                if (videoSettingsOpen) {
-                    VideoCallSettingsPanel(
-                        videoQuality = videoQuality,
-                        visualLook = visualLook,
-                        onSelectQuality = onSelectQuality,
-                        onSelectVisualLook = onSelectVisualLook,
-                        onClose = onToggleVideoSettings
+        }
+        CallBottomDock(
+            modifier = Modifier.align(Alignment.BottomCenter),
+            title = name,
+            subtitle = if (mediaPhase == CallMediaPhase.Connected) formatCallDuration(durationSeconds) else phaseLabel(mediaPhase),
+            videoSettingsOpen = video && videoSettingsOpen,
+            settingsPanel = {
+                VideoCallSettingsPanel(
+                    videoQuality = videoQuality,
+                    visualLook = visualLook,
+                    onSelectQuality = onSelectQuality,
+                    onSelectVisualLook = onSelectVisualLook,
+                    onClose = onToggleVideoSettings
+                )
+            },
+            controls = {
+                CallControlButton(
+                    onClick = onMute,
+                    active = muted,
+                    icon = if (muted) Icons.Default.MicOff else Icons.Default.Mic,
+                    label = if (muted) "Unmute" else "Mute"
+                )
+                CallControlButton(
+                    onClick = onSpeaker,
+                    active = speakerOn,
+                    icon = if (speakerOn) Icons.AutoMirrored.Filled.VolumeUp else Icons.AutoMirrored.Filled.VolumeOff,
+                    label = if (speakerOn) "Speaker" else "Earpiece"
+                )
+                if (video) {
+                    CallControlButton(
+                        onClick = onCamera,
+                        active = !cameraOff,
+                        icon = if (cameraOff) Icons.Default.VideocamOff else Icons.Default.Videocam,
+                        label = if (cameraOff) "Camera off" else "Camera"
+                    )
+                    CallControlButton(
+                        onClick = { focusLocalVideo = !focusLocalVideo },
+                        active = focusLocalVideo,
+                        icon = if (focusLocalVideo) Icons.Default.FullscreenExit else Icons.Default.Fullscreen,
+                        label = if (focusLocalVideo) "Remote focus" else "Self focus"
+                    )
+                    CallControlButton(
+                        onClick = onSwitchCamera,
+                        icon = Icons.Default.FlipCameraAndroid,
+                        label = "Flip"
+                    )
+                    CallControlButton(
+                        onClick = onToggleVideoSettings,
+                        active = videoSettingsOpen,
+                        icon = Icons.Default.Settings,
+                        label = "Settings"
                     )
                 }
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                RoundCallButton(onClick = onMute, active = muted, size = 64.dp) {
-                    Icon(if (muted) Icons.Default.MicOff else Icons.Default.Mic, contentDescription = "Mute", tint = HelloColors.AuthText)
-                }
-                RoundCallButton(onClick = onSpeaker, active = speakerOn, size = 64.dp) {
-                    Icon(if (speakerOn) Icons.Default.Speaker else Icons.Default.SpeakerNotesOff, contentDescription = "Speaker", tint = HelloColors.AuthText)
-                }
-                if (video) {
-                    RoundCallButton(onClick = onCamera, active = cameraOff, size = 64.dp) {
-                        Icon(if (cameraOff) Icons.Default.VideocamOff else Icons.Default.Videocam, contentDescription = "Camera", tint = HelloColors.AuthText)
-                    }
-                    RoundCallButton(onClick = onSwitchCamera, size = 64.dp) {
-                        Icon(Icons.Default.Cameraswitch, contentDescription = "Switch camera", tint = HelloColors.AuthText)
-                    }
-                    RoundCallButton(onClick = onToggleVideoSettings, active = videoSettingsOpen, size = 64.dp) {
-                        Icon(Icons.Default.Settings, contentDescription = "Video settings", tint = HelloColors.AuthText)
-                    }
-                } else {
-                    RoundCallButton(onClick = {}, size = 64.dp) {
-                        Icon(Icons.Default.RecordVoiceOver, contentDescription = "Audio", tint = HelloColors.DarkTextMuted)
-                    }
-                }
-                RoundCallButton(onClick = onEnd, danger = true, size = 72.dp) {
-                    Icon(Icons.Default.CallEnd, contentDescription = "End call", tint = HelloColors.AuthText)
-                }
-            }
-        }
+            },
+            endCall = { EndCallButton(onClick = onEnd) }
+        )
     }
 }
 
@@ -504,10 +569,9 @@ fun GroupActiveCallScreen(
     onEnd: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    Box(
+    CallThemeBackdrop(
         modifier = modifier
             .fillMaxSize()
-            .background(HelloColors.DarkBg)
             .padding(HelloSpacing.Xl)
     ) {
         Column(
@@ -557,20 +621,20 @@ fun GroupActiveCallScreen(
                 Icon(if (muted) Icons.Default.MicOff else Icons.Default.Mic, contentDescription = "Mute", tint = HelloColors.AuthText)
             }
             RoundCallButton(onClick = onSpeaker, active = speakerOn, size = 64.dp) {
-                Icon(if (speakerOn) Icons.Default.Speaker else Icons.Default.SpeakerNotesOff, contentDescription = "Speaker", tint = HelloColors.AuthText)
+                Icon(if (speakerOn) Icons.AutoMirrored.Filled.VolumeUp else Icons.AutoMirrored.Filled.VolumeOff, contentDescription = "Speaker", tint = HelloColors.AuthText)
             }
             if (video) {
                 RoundCallButton(onClick = onCamera, active = cameraOff, size = 64.dp) {
                     Icon(if (cameraOff) Icons.Default.VideocamOff else Icons.Default.Videocam, contentDescription = "Camera", tint = HelloColors.AuthText)
                 }
                 RoundCallButton(onClick = onSwitchCamera, size = 64.dp) {
-                    Icon(Icons.Default.Cameraswitch, contentDescription = "Switch camera", tint = HelloColors.AuthText)
+                    Icon(Icons.Default.FlipCameraAndroid, contentDescription = "Switch camera", tint = HelloColors.AuthText)
                 }
                 RoundCallButton(onClick = onToggleVideoSettings, active = videoSettingsOpen, size = 64.dp) {
                     Icon(Icons.Default.Settings, contentDescription = "Video settings", tint = HelloColors.AuthText)
                 }
             }
-            RoundCallButton(onClick = onEnd, danger = true, size = 72.dp) {
+            RoundCallButton(onClick = onEnd, danger = true, size = 82.dp) {
                 Icon(Icons.Default.CallEnd, contentDescription = "Leave group call", tint = HelloColors.AuthText)
             }
         }
@@ -580,17 +644,50 @@ fun GroupActiveCallScreen(
 @Composable
 private fun VideoCallSurface(
     name: String,
+    avatarUrl: String? = null,
     mediaPhase: CallMediaPhase,
     cameraOff: Boolean,
+    focusLocalVideo: Boolean,
+    onToggleFocus: () -> Unit,
     visualLook: CallVisualLook,
     onAttachLocalRenderer: ((SurfaceViewRenderer) -> Unit)?,
     onAttachRemoteRenderer: ((SurfaceViewRenderer) -> Unit)?
 ) {
-    Box(modifier = Modifier.fillMaxSize()) {
-        WebRtcRenderer(
-            modifier = Modifier.fillMaxSize(),
-            onRenderer = { onAttachRemoteRenderer?.invoke(it) }
-        )
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(
+                Brush.verticalGradient(
+                    listOf(
+                        HelloColors.DarkBg,
+                        HelloColors.BgDeep,
+                        HelloColors.DarkBg
+                    )
+                )
+            )
+    ) {
+        if (focusLocalVideo) {
+            if (cameraOff) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        HelloAvatar(name = "You", size = 120.dp, online = true)
+                        Spacer(modifier = Modifier.height(HelloSpacing.Md))
+                        Text("Your camera is off", color = HelloColors.DarkText, fontWeight = FontWeight.Bold)
+                    }
+                }
+            } else {
+                WebRtcRenderer(
+                    modifier = Modifier.fillMaxSize(),
+                    mirror = true,
+                    onRenderer = { onAttachLocalRenderer?.invoke(it) }
+                )
+            }
+        } else {
+            WebRtcRenderer(
+                modifier = Modifier.fillMaxSize(),
+                onRenderer = { onAttachRemoteRenderer?.invoke(it) }
+            )
+        }
         if (mediaPhase != CallMediaPhase.Connected) {
             Box(
                 modifier = Modifier
@@ -599,24 +696,30 @@ private fun VideoCallSurface(
                 contentAlignment = Alignment.Center
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    HelloAvatar(name = name, size = 112.dp, online = true)
+                    HelloAvatar(name = name, size = 112.dp, online = true, imageUrl = avatarUrl)
                     Spacer(modifier = Modifier.height(HelloSpacing.Lg))
                     Text(name, color = HelloColors.DarkText, fontWeight = FontWeight.Bold)
                     Text(phaseLabel(mediaPhase), color = HelloColors.DarkAccent)
                 }
             }
         }
-        Box(
+        PinnedVideoPreview(
             modifier = Modifier
                 .align(Alignment.TopEnd)
-                .padding(HelloSpacing.Xl)
-                .size(width = 116.dp, height = 168.dp)
-                .clip(HelloShapes.Lg)
-                .background(HelloColors.DarkPanelStrong),
-            contentAlignment = Alignment.Center
+                .padding(top = 22.dp, end = 18.dp),
+            title = if (focusLocalVideo) name else "You",
+            isFocused = focusLocalVideo,
+            onClick = onToggleFocus
         ) {
-            if (cameraOff) {
-                Text("Camera off", color = HelloColors.DarkTextMuted, textAlign = TextAlign.Center)
+            if (focusLocalVideo) {
+                WebRtcRenderer(
+                    modifier = Modifier.fillMaxSize(),
+                    onRenderer = { onAttachRemoteRenderer?.invoke(it) }
+                )
+            } else if (cameraOff) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text("Camera off", color = HelloColors.DarkTextMuted, textAlign = TextAlign.Center)
+                }
             } else {
                 WebRtcRenderer(
                     modifier = Modifier.fillMaxSize(),
@@ -630,21 +733,241 @@ private fun VideoCallSurface(
 }
 
 @Composable
-private fun AudioCallSurface(name: String, durationSeconds: Long, mediaPhase: CallMediaPhase) {
-    Column(
+private fun AudioCallSurface(
+    name: String,
+    avatarUrl: String? = null,
+    durationSeconds: Long,
+    mediaPhase: CallMediaPhase
+) {
+    Box(
         modifier = Modifier
             .fillMaxSize()
             .padding(HelloSpacing.Xxl),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
+        contentAlignment = Alignment.Center
     ) {
-        HelloAvatar(name = name, size = 128.dp, online = true)
-        Spacer(modifier = Modifier.height(HelloSpacing.Lg))
-        Text(name, color = HelloColors.DarkText, fontWeight = FontWeight.Bold)
-        Text(
-            text = if (mediaPhase == CallMediaPhase.Connected) formatCallDuration(durationSeconds) else phaseLabel(mediaPhase),
-            color = HelloColors.DarkTextMuted
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(HelloSpacing.Lg)
+        ) {
+            CallAvatar(name = name, avatarUrl = avatarUrl, pulsing = mediaPhase != CallMediaPhase.Connected, size = 170.dp)
+            Text(name, color = HelloColors.DarkText, fontWeight = FontWeight.Bold)
+            Text(
+                text = if (mediaPhase == CallMediaPhase.Connected) formatCallDuration(durationSeconds) else phaseLabel(mediaPhase),
+                color = HelloColors.DarkTextMuted
+            )
+        }
+    }
+}
+
+@Composable
+private fun CallBottomDock(
+    title: String,
+    subtitle: String,
+    modifier: Modifier = Modifier,
+    videoSettingsOpen: Boolean = false,
+    settingsPanel: @Composable (() -> Unit)? = null,
+    controls: @Composable RowScope.() -> Unit,
+    endCall: @Composable () -> Unit
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(
+                Brush.verticalGradient(
+                    listOf(
+                        Color.Transparent,
+                        HelloColors.DarkBg.copy(alpha = 0.44f),
+                        HelloColors.DarkBg.copy(alpha = 0.92f)
+                    )
+                )
+            )
+            .padding(horizontal = HelloSpacing.Lg, vertical = HelloSpacing.Xl),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(HelloSpacing.Md)
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(title, color = HelloColors.DarkText, fontWeight = FontWeight.Bold)
+            Text(subtitle, color = HelloColors.DarkTextMuted, fontWeight = FontWeight.Medium)
+        }
+        if (videoSettingsOpen && settingsPanel != null) {
+            settingsPanel()
+        }
+        Row(
+            modifier = Modifier
+                .widthIn(max = 420.dp)
+                .fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterHorizontally),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            controls()
+        }
+        endCall()
+    }
+}
+
+@Composable
+private fun CallThemeBackdrop(
+    modifier: Modifier = Modifier,
+    content: @Composable BoxScope.() -> Unit
+) {
+    val palette = HelloThemeRuntime.activePalette.value
+    val selection = remember(palette.id) {
+        ChatThemeStore.selectionForAppTheme(palette.id)
+    }
+    ChatWallpaperBackground(
+        wallpaper = selection.wallpaper,
+        opacity = selection.wallpaperOpacity / 100f,
+        modifier = modifier,
+        darkOverride = palette.isDark
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.verticalGradient(
+                        listOf(
+                            Color.Transparent,
+                            palette.bgDeep.copy(alpha = if (palette.isDark) 0.18f else 0.08f),
+                            palette.bgDeep.copy(alpha = if (palette.isDark) 0.62f else 0.16f)
+                        )
+                    )
+                )
         )
+        content()
+    }
+}
+
+@Composable
+private fun CallLobbyScreen(
+    name: String,
+    avatarUrl: String?,
+    title: String,
+    subtitle: String,
+    status: String,
+    modifier: Modifier = Modifier,
+    pulsingAvatar: Boolean = false,
+    controlsPanel: @Composable () -> Unit,
+    overlay: @Composable BoxScope.() -> Unit = {}
+) {
+    CallThemeBackdrop(modifier = modifier) {
+        overlay()
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = HelloSpacing.Xl, vertical = HelloSpacing.Xxl),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Spacer(modifier = Modifier.height(18.dp))
+            Text(title, color = HelloColors.DarkText, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+            Text(subtitle, color = HelloColors.DarkTextMuted, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center)
+            Spacer(modifier = Modifier.weight(0.18f))
+            CallAvatar(
+                name = name,
+                avatarUrl = avatarUrl,
+                pulsing = pulsingAvatar,
+                size = 184.dp
+            )
+            Spacer(modifier = Modifier.height(26.dp))
+            Text(status, color = HelloColors.DarkTextMuted, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center)
+            Spacer(modifier = Modifier.weight(0.24f))
+            HelloPanel(
+                modifier = Modifier.fillMaxWidth(),
+                strong = true,
+                shape = HelloShapes.Xl
+            ) {
+                Column(
+                    modifier = Modifier.padding(horizontal = HelloSpacing.Lg, vertical = HelloSpacing.Lg),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(HelloSpacing.Md)
+                ) {
+                    controlsPanel()
+                }
+            }
+            Spacer(modifier = Modifier.height(20.dp))
+        }
+    }
+}
+
+@Composable
+private fun LobbyActionRow(content: @Composable RowScope.() -> Unit) {
+    Row(
+        modifier = Modifier
+            .widthIn(max = 340.dp)
+            .fillMaxWidth(),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
+        content = content
+    )
+}
+
+@Composable
+private fun RowScope.CallControlButton(
+    onClick: () -> Unit,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    active: Boolean = false
+) {
+    Column(
+        modifier = Modifier.weight(1f),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        RoundCallButton(onClick = onClick, active = active, size = 60.dp) {
+            Icon(icon, contentDescription = label, tint = HelloColors.AuthText)
+        }
+        Text(
+            text = label,
+            color = HelloColors.DarkTextMuted,
+            fontWeight = FontWeight.Medium,
+            textAlign = TextAlign.Center
+        )
+    }
+}
+
+@Composable
+private fun EndCallButton(onClick: () -> Unit) {
+    RoundCallButton(onClick = onClick, danger = true, size = 84.dp) {
+        Icon(Icons.Default.CallEnd, contentDescription = "Drop call", tint = HelloColors.AuthText)
+    }
+}
+
+@Composable
+private fun PinnedVideoPreview(
+    title: String,
+    isFocused: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    content: @Composable BoxScope.() -> Unit
+) {
+    Box(
+        modifier = modifier
+            .width(132.dp)
+            .aspectRatio(3f / 4f)
+            .clip(RoundedCornerShape(22.dp))
+            .border(1.dp, HelloColors.GlassBorder, RoundedCornerShape(22.dp))
+            .background(HelloColors.DarkPanelStrong.copy(alpha = 0.86f))
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        content()
+        Row(
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(10.dp)
+                .clip(CircleShape)
+                .background(HelloColors.DarkBg.copy(alpha = 0.65f))
+                .padding(horizontal = 10.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = if (isFocused) Icons.Default.CropFree else Icons.Default.Fullscreen,
+                contentDescription = null,
+                tint = HelloColors.AuthText,
+                modifier = Modifier.size(14.dp)
+            )
+            Text(title, color = HelloColors.AuthText, fontWeight = FontWeight.SemiBold)
+        }
     }
 }
 
@@ -797,9 +1120,9 @@ private fun CallStage(
                 .background(
                     Brush.verticalGradient(
                         listOf(
-                            Color(0xFF071110),
-                            Color(0xFF0A1E1A),
-                            Color(0xFF08100F)
+                            HelloColors.BgBase,
+                            HelloColors.BgDeep,
+                            HelloColors.BgBase
                         )
                     )
                 )
@@ -818,21 +1141,21 @@ private fun CallStage(
                     Spacer(modifier = Modifier.height(36.dp))
                     Text(
                         text = name,
-                        color = HelloColors.AuthText,
-                        fontWeight = FontWeight.Bold,
+                        color = HelloColors.AccentStrong,
+                        fontWeight = FontWeight.Black,
                         textAlign = TextAlign.Center
                     )
                     Text(
-                        text = "Hello - ${label.lowercase()}",
-                        color = HelloColors.DarkTextMuted,
-                        fontWeight = FontWeight.Medium,
+                        text = "Hello - ${label.lowercase()} ♡",
+                        color = HelloColors.TextSecondary,
+                        fontWeight = FontWeight.Bold,
                         textAlign = TextAlign.Center
                     )
                     Spacer(modifier = Modifier.height(64.dp))
                     CallAvatar(name = name, avatarUrl = avatarUrl, pulsing = true, size = 148.dp)
                     if (detail.isNotBlank()) {
                         Spacer(modifier = Modifier.height(18.dp))
-                        Text(detail, color = HelloColors.DarkAccent, fontWeight = FontWeight.SemiBold)
+                        Text(detail, color = HelloColors.AccentStrong, fontWeight = FontWeight.Black)
                     }
                     Spacer(modifier = Modifier.weight(1f))
                     controls()
@@ -878,8 +1201,8 @@ private fun CallStage(
 @Composable
 private fun CallWallpaperTexture(modifier: Modifier = Modifier) {
     Canvas(modifier = modifier) {
-        val dot = Color.White.copy(alpha = 0.045f)
-        val line = Color(0xFF00A884).copy(alpha = 0.05f)
+        val dot = Color.White.copy(alpha = 0.30f)
+        val line = HelloColors.Accent.copy(alpha = 0.08f)
         val step = 54.dp.toPx()
         var y = 18.dp.toPx()
         var row = 0
@@ -915,13 +1238,37 @@ private fun CallAvatar(name: String, avatarUrl: String? = null, pulsing: Boolean
         if (pulsing) {
             Box(
                 modifier = Modifier
-                    .size(size)
+                    .size(size + 12.dp)
                     .scale(pulseScale)
                     .clip(CircleShape)
                     .background(HelloColors.DarkAccent.copy(alpha = pulseAlpha))
             )
         }
-        HelloAvatar(name = name, size = size, online = true, imageUrl = avatarUrl)
+        Box(
+            modifier = Modifier
+                .size(size + 12.dp)
+                .clip(CircleShape)
+                .background(
+                    Brush.radialGradient(
+                        listOf(
+                            HelloColors.AccentStrong.copy(alpha = 0.94f),
+                            HelloColors.Accent.copy(alpha = 0.78f),
+                            HelloColors.WarmAccent.copy(alpha = 0.56f)
+                        )
+                    )
+                )
+                .padding(4.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clip(CircleShape)
+                    .background(HelloColors.DarkPanelStrong)
+                    .padding(3.dp)
+            ) {
+                HelloAvatar(name = name, size = size, online = true, imageUrl = avatarUrl)
+            }
+        }
     }
 }
 
@@ -949,7 +1296,7 @@ private fun SwipeCallControls(
     val actionColor = when {
         dragX > 0f -> HelloColors.DarkAccent
         dragX < 0f -> HelloColors.DarkDanger
-        else -> HelloColors.DarkPanelStrong
+        else -> HelloColors.PanelStrong
     }
 
     Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -958,7 +1305,7 @@ private fun SwipeCallControls(
                 .width(trackWidth)
                 .height(76.dp)
                 .clip(CircleShape)
-                .background(HelloColors.DarkBg.copy(alpha = 0.72f))
+                .background(HelloColors.Text.copy(alpha = 0.58f))
                 .pointerInput(Unit) {
                     detectDragGestures(
                         onDragStart = {
@@ -1021,12 +1368,12 @@ private fun SwipeCallControls(
                 )
             }
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(18.dp), verticalAlignment = Alignment.CenterVertically) {
-            RoundCallButton(onClick = onDecline, danger = true, size = 56.dp) {
+        Row(horizontalArrangement = Arrangement.spacedBy(32.dp), verticalAlignment = Alignment.CenterVertically) {
+            RoundCallButton(onClick = onDecline, danger = true, size = 72.dp) {
                 Icon(Icons.Default.PhoneDisabled, contentDescription = "Decline call", tint = HelloColors.AuthText)
             }
-            RoundCallButton(onClick = onAccept, active = true, size = 56.dp) {
-                Icon(if (video) Icons.Default.Videocam else Icons.Default.Call, contentDescription = "Accept call", tint = HelloColors.DarkBg)
+            RoundCallButton(onClick = onAccept, active = true, size = 72.dp) {
+                Icon(if (video) Icons.Default.Videocam else Icons.Default.Call, contentDescription = "Accept call", tint = Color.White)
             }
         }
     }
@@ -1048,8 +1395,8 @@ private fun RoundCallButton(
             .background(
                 when {
                     danger -> HelloColors.DarkDanger
-                    active -> HelloColors.DarkAccent
-                    else -> HelloColors.DarkPanelStrong
+                    active -> HelloColors.WarmAccent
+                    else -> HelloColors.PanelStrong
                 }
             )
     ) {

@@ -1,10 +1,22 @@
-import { CallHistoryItem, Chat, DriveDeleteResponse, DriveItem, DriveItemsResponse, DriveUploadResponse, Message, User } from "./types";
+import {
+  CallHistoryItem,
+  Chat,
+  DriveCircle,
+  DriveDeletePoll,
+  DriveDeleteResponse,
+  DriveEvent,
+  DriveItem,
+  DriveItemsResponse,
+  DriveUploadResponse,
+  Message,
+  User,
+} from "./types";
 
 const env = (import.meta as any).env || {};
 
 export const API_BASE = env.VITE_HELLO_API_BASE || "/hello/api";
 export const CHAT_CLOUD_BASE_URL = env.VITE_CHAT_CLOUD_BASE_URL || "https://chat.bookhelloctg.com";
-export const CHAT_CLOUD_FALLBACK_URL = env.VITE_CHAT_CLOUD_FALLBACK_URL || "https://hello-chat-worker.gilbert-jackob3.workers.dev";
+export const CHAT_CLOUD_FALLBACK_URL = env.VITE_CHAT_CLOUD_FALLBACK_URL || CHAT_CLOUD_BASE_URL;
 export const CHAT_API_BASE = env.VITE_CHAT_API_BASE || `${CHAT_CLOUD_BASE_URL}/api`;
 export const CALL_API_BASE = env.VITE_CALL_API_BASE || `${CHAT_CLOUD_BASE_URL}/api`;
 export const DRIVE_API_BASE = env.VITE_DRIVE_API_BASE || "https://home.bookhelloctg.com/hello/api";
@@ -371,7 +383,7 @@ export async function fetchUsers(query?: string): Promise<User[]> {
   const url = query
     ? `/api/users?q=${encodeURIComponent(query)}`
     : "/api/users";
-  const res = await fetchCloudChat(url);
+  const res = await fetchCloudChat(url, { headers: cloudAuthHeaders() });
   if (!res.ok) throw new Error("Failed to fetch users");
   return res.json();
 }
@@ -386,7 +398,7 @@ export async function createDirectChat(
 ): Promise<Chat> {
   const res = await fetchCloudChat("/api/chat/conversations/direct", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...cloudAuthHeaders() },
     body: JSON.stringify({
       type: "direct",
       createdBy: currentUserId,
@@ -449,26 +461,34 @@ export async function uploadFile(
 }
 
 export async function fetchDriveItems(
+  userId: string,
   limit = 60,
   before?: number | null,
   sync = false,
+  options: { circleId?: string | null; eventId?: string | null } = {},
 ): Promise<DriveItemsResponse> {
-  const params = new URLSearchParams({ limit: String(limit) });
+  const params = new URLSearchParams({ limit: String(limit), userId });
   if (before) params.set("before", String(before));
   if (sync) params.set("sync", "true");
+  if (options.circleId) params.set("circleId", options.circleId);
+  if (options.eventId) params.set("eventId", options.eventId);
   const res = await fetch(`${DRIVE_API_BASE}/drive/items?${params.toString()}`);
   if (!res.ok) throw new Error("Failed to fetch Drive items");
   return res.json();
 }
 
 export async function fetchDriveTrash(
+  userId: string,
   limit = 60,
   before?: number | null,
   sync = false,
+  options: { circleId?: string | null; eventId?: string | null } = {},
 ): Promise<DriveItemsResponse> {
-  const params = new URLSearchParams({ limit: String(limit) });
+  const params = new URLSearchParams({ limit: String(limit), userId });
   if (before) params.set("before", String(before));
   if (sync) params.set("sync", "true");
+  if (options.circleId) params.set("circleId", options.circleId);
+  if (options.eventId) params.set("eventId", options.eventId);
   const res = await fetch(`${DRIVE_API_BASE}/drive/trash?${params.toString()}`);
   if (!res.ok) throw new Error("Failed to fetch Drive trash");
   return res.json();
@@ -484,9 +504,19 @@ export async function fetchDriveDeleteLimit(userId: string): Promise<DriveDelete
 export async function uploadDriveFiles(
   files: File[],
   uploaderId: string,
+  plan: {
+    eventId?: string | null;
+    eventName?: string | null;
+    circleIds: string[];
+    batchId?: string | null;
+  },
 ): Promise<DriveUploadResponse> {
   const formData = new FormData();
   formData.append("uploaderId", uploaderId);
+  if (plan.eventId) formData.append("eventId", plan.eventId);
+  if (plan.eventName) formData.append("eventName", plan.eventName);
+  if (plan.batchId) formData.append("batchId", plan.batchId);
+  plan.circleIds.forEach((circleId) => formData.append("circleIds[]", circleId));
   files.forEach((file) => formData.append("files", file));
 
   const res = await fetch(`${DRIVE_API_BASE}/drive/upload`, {
@@ -503,11 +533,11 @@ export async function uploadDriveFiles(
   return res.json();
 }
 
-export async function deleteDriveItem(itemId: string, userId?: string): Promise<DriveDeleteResponse> {
+export async function deleteDriveItem(itemId: string, userId: string, securityAnswer: string): Promise<DriveDeleteResponse> {
   const res = await fetch(`${DRIVE_API_BASE}/drive/items/${encodeURIComponent(itemId)}`, {
     method: "DELETE",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ userId }),
+    body: JSON.stringify({ userId, securityAnswer }),
   });
   if (!res.ok) {
     const message = await res
@@ -519,20 +549,155 @@ export async function deleteDriveItem(itemId: string, userId?: string): Promise<
   return res.json();
 }
 
-export async function restoreDriveItem(itemId: string): Promise<DriveItem> {
+export async function restoreDriveItem(itemId: string, userId: string): Promise<DriveItem> {
   const res = await fetch(`${DRIVE_API_BASE}/drive/items/${encodeURIComponent(itemId)}/restore`, {
     method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ userId }),
   });
   if (!res.ok) throw new Error("Failed to restore Drive item");
   const body = await res.json();
   return body.item;
 }
 
-export async function permanentlyDeleteDriveItem(itemId: string): Promise<void> {
+export async function permanentlyDeleteDriveItem(itemId: string, userId: string): Promise<void> {
   const res = await fetch(`${DRIVE_API_BASE}/drive/items/${encodeURIComponent(itemId)}/permanent`, {
     method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ userId }),
   });
   if (!res.ok) throw new Error("Failed to permanently delete Drive item");
+}
+
+export async function fetchDriveCircles(userId: string): Promise<DriveCircle[]> {
+  const params = new URLSearchParams({ userId });
+  const res = await fetch(`${DRIVE_API_BASE}/drive/circles?${params.toString()}`);
+  if (!res.ok) throw new Error("Failed to fetch Drive circles");
+  const body = await res.json();
+  return body.circles || [];
+}
+
+export async function createDriveCircle(input: {
+  userId: string;
+  id?: string;
+  name: string;
+  members: Array<{ userId: string; role?: string; name?: string | null; username?: string | null; avatar?: string | null }>;
+}): Promise<DriveCircle> {
+  const res = await fetch(`${DRIVE_API_BASE}/drive/circles`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) return readJsonError(res, "Failed to save Drive circle");
+  return res.json();
+}
+
+export async function leaveDriveCircle(circleId: string, userId: string): Promise<void> {
+  const res = await fetch(`${DRIVE_API_BASE}/drive/circles/${encodeURIComponent(circleId)}/leave`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ userId }),
+  });
+  if (!res.ok) return readJsonError(res, "Failed to leave circle");
+}
+
+export async function deleteDriveCircle(circleId: string, userId: string): Promise<void> {
+  const res = await fetch(`${DRIVE_API_BASE}/drive/circles/${encodeURIComponent(circleId)}?userId=${encodeURIComponent(userId)}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) return readJsonError(res, "Failed to delete circle");
+}
+
+export async function fetchDriveEvents(userId: string, circleId?: string | null): Promise<DriveEvent[]> {
+  const params = new URLSearchParams({ userId });
+  if (circleId) params.set("circleId", circleId);
+  const res = await fetch(`${DRIVE_API_BASE}/drive/events?${params.toString()}`);
+  if (!res.ok) throw new Error("Failed to fetch Drive events");
+  const body = await res.json();
+  return body.events || [];
+}
+
+export async function createDriveEvent(input: { userId: string; circleId: string; id?: string; name: string }): Promise<DriveEvent> {
+  const res = await fetch(`${DRIVE_API_BASE}/drive/circles/${encodeURIComponent(input.circleId)}/events`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) return readJsonError(res, "Failed to create Drive event");
+  return res.json();
+}
+
+export async function renameDriveEvent(eventId: string, userId: string, name: string): Promise<DriveEvent> {
+  const res = await fetch(`${DRIVE_API_BASE}/drive/events/${encodeURIComponent(eventId)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ userId, name }),
+  });
+  if (!res.ok) return readJsonError(res, "Failed to rename Drive event");
+  return res.json();
+}
+
+export async function deleteDriveEvent(eventId: string, userId: string): Promise<void> {
+  const res = await fetch(`${DRIVE_API_BASE}/drive/events/${encodeURIComponent(eventId)}?userId=${encodeURIComponent(userId)}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) return readJsonError(res, "Failed to delete Drive event");
+}
+
+export async function fetchDriveDeletePolls(userId: string, circleId: string): Promise<DriveDeletePoll[]> {
+  const params = new URLSearchParams({ userId, circleId });
+  const res = await fetch(`${DRIVE_API_BASE}/drive/delete-polls?${params.toString()}`);
+  if (!res.ok) return readJsonError(res, "Failed to fetch Drive delete polls");
+  const body = await res.json();
+  return body.polls || [];
+}
+
+export async function createDriveDeletePoll(input: {
+  userId: string;
+  targetType: "circle" | "event";
+  targetId: string;
+  circleId?: string;
+}): Promise<DriveDeletePoll> {
+  const res = await fetch(`${DRIVE_API_BASE}/drive/delete-polls`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) return readJsonError(res, "Failed to start delete poll");
+  return res.json();
+}
+
+export async function voteDriveDeletePoll(pollId: string, userId: string, vote: "delete" | "keep"): Promise<DriveDeletePoll> {
+  const res = await fetch(`${DRIVE_API_BASE}/drive/delete-polls/${encodeURIComponent(pollId)}/votes`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ userId, vote }),
+  });
+  if (!res.ok) return readJsonError(res, "Failed to vote on delete poll");
+  return res.json();
+}
+
+export async function fetchDriveFavorites(userId: string): Promise<string[]> {
+  const params = new URLSearchParams({ userId });
+  const res = await fetch(`${DRIVE_API_BASE}/drive/favorites?${params.toString()}`);
+  if (!res.ok) return readJsonError(res, "Failed to fetch Drive favorites");
+  const body = await res.json();
+  return body.itemIds || [];
+}
+
+export async function setDriveFavorite(itemId: string, userId: string, favorite: boolean): Promise<void> {
+  const url = `${DRIVE_API_BASE}/drive/favorites/${encodeURIComponent(itemId)}?userId=${encodeURIComponent(userId)}`;
+  if (!favorite) {
+    const res = await fetch(url, { method: "DELETE" });
+    if (!res.ok) return readJsonError(res, "Failed to remove Drive favorite");
+    return;
+  }
+  const res = await fetch(`${DRIVE_API_BASE}/drive/favorites`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ userId, itemId }),
+  });
+  if (!res.ok) return readJsonError(res, "Failed to save Drive favorite");
 }
 
 export async function sendMessage(
@@ -561,7 +726,7 @@ export async function sendMessage(
   }
   const res = await fetchCloudChat(`/api/chat/conversations/${encodeURIComponent(chatId)}/messages`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...cloudAuthHeaders() },
     body: JSON.stringify({
       text,
       attachmentId,
@@ -597,7 +762,7 @@ export async function createChat(
 ): Promise<Chat> {
   const res = await fetchCloudChat("/api/chat/conversations", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...cloudAuthHeaders() },
     body: JSON.stringify({
       title: name,
       name,
@@ -618,10 +783,11 @@ export async function reactToMessage(
   emoji: string,
   userId: string,
 ): Promise<Message> {
+  void chatId;
   const res = await fetchCloudChat(`/api/chat/messages/${encodeURIComponent(messageId)}/react`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ chatId, emoji, userId }),
+    headers: { "Content-Type": "application/json", ...cloudAuthHeaders() },
+    body: JSON.stringify({ emoji, userId }),
   });
   if (!res.ok) throw new Error("Failed to react to message");
   return res.json();
@@ -632,25 +798,30 @@ export async function starMessage(
   messageId: string,
   userId: string,
 ): Promise<Message> {
-  const existing = (await fetchMessages(chatId)).find((message) => message.id === messageId);
-  if (!existing) throw new Error("Message not found");
-  const starredBy = existing.starredBy || [];
-  return {
-    ...existing,
-    starredBy: starredBy.includes(userId)
-      ? starredBy.filter((id) => id !== userId)
-      : [...starredBy, userId],
-  };
+  void chatId;
+  const res = await fetchCloudChat(`/api/chat/messages/${encodeURIComponent(messageId)}/star`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...cloudAuthHeaders() },
+    body: JSON.stringify({ userId }),
+  });
+  if (!res.ok) throw new Error("Failed to star message");
+  return res.json();
 }
 
 export async function pinMessage(
   chatId: string,
   messageId: string,
+  userId: string,
   durationDays: number,
 ): Promise<Message> {
-  const existing = (await fetchMessages(chatId)).find((message) => message.id === messageId);
-  if (!existing) throw new Error("Message not found");
-  return { ...existing, pinnedUntil: Date.now() + durationDays * 24 * 60 * 60 * 1000 };
+  void chatId;
+  const res = await fetchCloudChat(`/api/chat/messages/${encodeURIComponent(messageId)}/pin`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...cloudAuthHeaders() },
+    body: JSON.stringify({ userId, durationDays }),
+  });
+  if (!res.ok) throw new Error("Failed to pin message");
+  return res.json();
 }
 
 export async function deleteMessage(
@@ -659,32 +830,38 @@ export async function deleteMessage(
   userId: string,
   type: "for_me" | "for_everyone",
 ): Promise<Message> {
-  const existing = (await fetchMessages(chatId)).find((message) => message.id === messageId);
-  if (!existing) throw new Error("Message not found");
-  return {
-    ...existing,
-    text: "",
-    isDeleted: true,
-    deletedFor: type === "for_me" ? [...(existing.deletedFor || []), userId] : undefined,
-  };
+  void chatId;
+  const res = await fetchCloudChat(`/api/chat/messages/${encodeURIComponent(messageId)}`, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json", ...cloudAuthHeaders() },
+    body: JSON.stringify({ userId, type }),
+  });
+  if (!res.ok) throw new Error("Failed to delete message");
+  return res.json();
 }
 
 export async function deleteChat(
   chatId: string,
   userId: string,
 ): Promise<Chat> {
-  return {
-    id: chatId,
-    name: "Deleted chat",
-    deletedFor: [userId],
-  };
+  const res = await fetchCloudChat(`/api/chat/conversations/${encodeURIComponent(chatId)}`, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json", ...cloudAuthHeaders() },
+    body: JSON.stringify({ userId }),
+  });
+  if (!res.ok) throw new Error("Failed to delete chat");
+  return { id: chatId, name: "Deleted chat", deletedFor: [userId] };
 }
 
 export async function clearChat(
   chatId: string,
   userId: string,
 ): Promise<{ success: boolean }> {
-  void chatId;
-  void userId;
+  const res = await fetchCloudChat(`/api/chat/conversations/${encodeURIComponent(chatId)}/clear`, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json", ...cloudAuthHeaders() },
+    body: JSON.stringify({ userId }),
+  });
+  if (!res.ok) throw new Error("Failed to clear chat");
   return { success: true };
 }

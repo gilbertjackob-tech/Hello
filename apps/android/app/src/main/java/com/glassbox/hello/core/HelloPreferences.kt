@@ -9,9 +9,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 
 data class HelloSettingsState(
-    val themeMode: String = "midnight",
+    val themeMode: String = "cute",
     val enterSends: Boolean = true,
-    val wallpaper: String = "default",
+    val wallpaper: String = "theme cute",
     val wallpaperOpacity: Int = 100,
     val chatSounds: Boolean = true,
     val cloudChatEnabled: Boolean = true
@@ -25,20 +25,44 @@ object HelloPreferences {
     const val KEY_WALLPAPER_OPACITY = "wallpaper_opacity"
     const val KEY_CHAT_SOUNDS = "chat_sounds"
     const val KEY_CLOUD_CHAT_ENABLED = "cloud_chat_enabled"
+    private const val KEY_CUTE_THEME_MIGRATED = "cute_theme_migrated"
+    private const val KEY_CLOUD_CHAT_DEFAULT_MIGRATED = "cloud_chat_default_migrated"
 
     fun prefs(context: Context): SharedPreferences =
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     fun read(context: Context): HelloSettingsState {
         val prefs = prefs(context)
+        migrateCuteDefaults(prefs)
         return HelloSettingsState(
-            themeMode = prefs.getString(KEY_THEME, "midnight") ?: "midnight",
+            themeMode = prefs.getString(KEY_THEME, "cute") ?: "cute",
             enterSends = prefs.getBoolean(KEY_ENTER_SENDS, true),
-            wallpaper = prefs.getString(KEY_WALLPAPER, "default") ?: "default",
+            wallpaper = prefs.getString(KEY_WALLPAPER, "theme cute") ?: "theme cute",
             wallpaperOpacity = prefs.getInt(KEY_WALLPAPER_OPACITY, 100),
             chatSounds = prefs.getBoolean(KEY_CHAT_SOUNDS, true),
             cloudChatEnabled = prefs.getBoolean(KEY_CLOUD_CHAT_ENABLED, true)
         )
+    }
+
+    private fun migrateCuteDefaults(prefs: SharedPreferences) {
+        val migrateCuteTheme = !prefs.getBoolean(KEY_CUTE_THEME_MIGRATED, false)
+        val migrateCloudChat = !prefs.getBoolean(KEY_CLOUD_CHAT_DEFAULT_MIGRATED, false)
+        if (!migrateCuteTheme && !migrateCloudChat) return
+        val savedTheme = prefs.getString(KEY_THEME, null)
+        val savedWallpaper = prefs.getString(KEY_WALLPAPER, null)
+        prefs.edit().apply {
+            if (migrateCuteTheme && (savedTheme == null || savedTheme == "midnight" || savedTheme == "system")) {
+                putString(KEY_THEME, "cute")
+            }
+            if (migrateCuteTheme && (savedWallpaper == null || savedWallpaper == "default")) {
+                putString(KEY_WALLPAPER, "theme cute")
+            }
+            if (migrateCloudChat) {
+                putBoolean(KEY_CLOUD_CHAT_ENABLED, true)
+            }
+            if (migrateCuteTheme) putBoolean(KEY_CUTE_THEME_MIGRATED, true)
+            if (migrateCloudChat) putBoolean(KEY_CLOUD_CHAT_DEFAULT_MIGRATED, true)
+        }.apply()
     }
 
     fun setThemeMode(context: Context, mode: String) {

@@ -34,7 +34,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Send
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.AlertDialog
@@ -76,6 +76,7 @@ import coil.request.ImageRequest
 import com.glassbox.hello.core.ResultState
 import com.glassbox.hello.core.UrlResolver
 import com.glassbox.hello.network.HelloApiClient
+import com.glassbox.hello.ui.components.AppBackground
 import com.glassbox.hello.ui.components.ErrorView
 import com.glassbox.hello.ui.components.HelloAvatar
 import com.glassbox.hello.ui.components.HelloEmptyState
@@ -190,13 +191,13 @@ fun StatusScreen(
         )
     }
 
-    Box(
-        modifier = modifier
-            .fillMaxSize()
-            .safeDrawingPadding()
-            .background(HelloColors.DarkBg)
-            .padding(horizontal = HelloSpacing.Lg)
-    ) {
+    AppBackground(modifier = modifier) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .safeDrawingPadding()
+                .padding(horizontal = HelloSpacing.Lg)
+        ) {
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             verticalArrangement = Arrangement.spacedBy(HelloSpacing.Md)
@@ -321,6 +322,7 @@ fun StatusScreen(
                 }
             )
         }
+    }
     }
 }
 
@@ -607,7 +609,7 @@ private fun SimpleStoryComposer(
                         }
                     }
                 ) {
-                    Icon(Icons.Default.Send, contentDescription = null, tint = HelloColors.StoryPrimaryButton)
+                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = null, tint = HelloColors.StoryPrimaryButton)
                     Text(if (posting) "Posting..." else "Post", color = HelloColors.StoryPrimaryButton, fontWeight = FontWeight.Bold)
                 }
             }

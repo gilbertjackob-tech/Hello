@@ -65,6 +65,7 @@ import com.glassbox.hello.ui.theme.HelloDimens
 import com.glassbox.hello.ui.theme.HelloMotion
 import com.glassbox.hello.ui.theme.HelloShapes
 import com.glassbox.hello.ui.theme.HelloSpacing
+import com.glassbox.hello.ui.theme.HelloThemeRuntime
 
 @Composable
 fun HelloScreenBackground(
@@ -73,6 +74,22 @@ fun HelloScreenBackground(
     auth: Boolean = false,
     content: @Composable () -> Unit
 ) {
+    val cute = HelloThemeRuntime.activePalette.value.id == "cute"
+    if (cute && !auth) {
+        AppBackground(modifier = modifier) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .windowInsetsPadding(WindowInsets.safeDrawing)
+                    .padding(HelloSpacing.ScreenPadding),
+                contentAlignment = Alignment.Center
+            ) {
+                content()
+            }
+        }
+        return
+    }
+
     val background = when {
         auth -> Brush.verticalGradient(listOf(HelloColors.AuthBg, HelloColors.AuthBg))
         dark -> Brush.verticalGradient(listOf(HelloColors.DarkBgStrong, HelloColors.DarkBg))
@@ -139,8 +156,11 @@ fun HelloPanel(
     shape: Shape = HelloShapes.Lg,
     content: @Composable () -> Unit
 ) {
+    val cute = HelloThemeRuntime.activePalette.value.id == "cute"
     val color = when {
         auth -> HelloColors.AuthPanel
+        cute && strong -> HelloColors.PanelStrong
+        cute -> HelloColors.Panel
         dark && strong -> HelloColors.DarkPanelStrong
         dark -> HelloColors.DarkPanel
         strong -> HelloColors.PanelStrong
@@ -148,6 +168,8 @@ fun HelloPanel(
     }
     val border = when {
         auth -> HelloColors.AuthBorder
+        cute && strong -> HelloColors.BorderStrong
+        cute -> HelloColors.Border
         dark && strong -> HelloColors.DarkBorderStrong
         dark -> HelloColors.DarkBorder
         strong -> HelloColors.BorderStrong
@@ -157,8 +179,10 @@ fun HelloPanel(
         modifier = modifier,
         shape = shape,
         color = color,
-        border = BorderStroke(1.dp, border),
-        shadowElevation = if (strong) 10.dp else 4.dp,
+        border = BorderStroke(if (cute) 1.4.dp else 1.dp, border),
+        shadowElevation = if (cute) {
+            if (strong) 14.dp else 8.dp
+        } else if (strong) 10.dp else 4.dp,
         tonalElevation = 0.dp,
         content = content
     )
@@ -190,8 +214,11 @@ fun HelloIconButton(
     dark: Boolean = true,
     content: @Composable () -> Unit
 ) {
+    val cute = HelloThemeRuntime.activePalette.value.id == "cute"
     val bg = if (active) {
         if (dark) HelloColors.DarkAccentSoft else HelloColors.AccentSoft
+    } else if (cute) {
+        HelloColors.PanelStrong
     } else {
         Color.Transparent
     }
@@ -200,7 +227,8 @@ fun HelloIconButton(
         modifier = modifier
             .size(HelloSpacing.IconButton)
             .clip(CircleShape)
-            .background(bg),
+            .background(bg)
+            .border(if (cute) 1.dp else 0.dp, if (cute) HelloColors.Border else Color.Transparent, CircleShape),
         content = { content() }
     )
 }
@@ -217,13 +245,14 @@ fun HelloSearchBar(
     leading: @Composable (() -> Unit)? = null,
     trailing: @Composable (() -> Unit)? = null
 ) {
+    val cute = HelloThemeRuntime.activePalette.value.id == "cute"
     Row(
         modifier = modifier
             .fillMaxWidth()
             .clip(HelloShapes.Pill)
-            .background(if (dark) HelloColors.GlassBgMedium else HelloColors.PanelStrong)
-            .border(1.dp, if (dark) HelloColors.GlassBorderStrong else HelloColors.Border, HelloShapes.Pill)
-            .padding(horizontal = HelloSpacing.InputHorizontal, vertical = HelloSpacing.InputVertical),
+            .background(if (cute) HelloColors.PanelStrong else if (dark) HelloColors.GlassBgMedium else HelloColors.PanelStrong)
+            .border(if (cute) 1.4.dp else 1.dp, if (cute) HelloColors.BorderStrong else if (dark) HelloColors.GlassBorderStrong else HelloColors.Border, HelloShapes.Pill)
+            .padding(horizontal = HelloSpacing.InputHorizontal, vertical = if (cute) 14.dp else HelloSpacing.InputVertical),
         verticalAlignment = Alignment.CenterVertically
     ) {
         leading?.invoke()
@@ -232,7 +261,7 @@ fun HelloSearchBar(
             value = value,
             onValueChange = onValueChange,
             textStyle = MaterialTheme.typography.bodyMedium.copy(
-                color = if (dark) HelloColors.DarkText else HelloColors.Text
+                color = if (cute) HelloColors.Text else if (dark) HelloColors.DarkText else HelloColors.Text
             ),
             singleLine = true,
             modifier = Modifier.weight(1f),
@@ -243,7 +272,7 @@ fun HelloSearchBar(
                     Text(
                         text = placeholder,
                         style = MaterialTheme.typography.bodyMedium,
-                        color = if (dark) HelloColors.DarkTextMuted else HelloColors.TextMuted,
+                        color = if (cute) HelloColors.TextMuted else if (dark) HelloColors.DarkTextMuted else HelloColors.TextMuted,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
@@ -265,15 +294,16 @@ fun HelloFilterChip(
     count: Int? = null,
     dark: Boolean = true
 ) {
+    val cute = HelloThemeRuntime.activePalette.value.id == "cute"
     val scale by animateFloatAsState(
         targetValue = if (active) 1f else 0.97f,
         animationSpec = HelloMotion.SpringSnappy,
         label = "helloFilterChipScale"
     )
     val bg = if (active) {
-        if (dark) HelloColors.TealDeep else HelloColors.Accent
+        if (cute) HelloColors.Accent else if (dark) HelloColors.TealDeep else HelloColors.Accent
     } else {
-        if (dark) HelloColors.GlassBg else HelloColors.PanelMuted
+        if (cute) HelloColors.PanelStrong else if (dark) HelloColors.GlassBg else HelloColors.PanelMuted
     }
     val fg = if (active) HelloColors.TextOnTeal else if (dark) HelloColors.TextSecondary else HelloColors.TextMuted
     Surface(
@@ -281,7 +311,7 @@ fun HelloFilterChip(
         modifier = modifier.scale(scale),
         shape = HelloShapes.Pill,
         color = bg,
-        border = BorderStroke(1.dp, if (active) HelloColors.TealPrimary else if (dark) HelloColors.GlassBorder else HelloColors.Border)
+        border = BorderStroke(if (cute) 1.2.dp else 1.dp, if (active) HelloColors.AccentStrong else if (cute) HelloColors.Border else if (dark) HelloColors.GlassBorder else HelloColors.Border)
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
@@ -313,14 +343,15 @@ fun HelloAvatar(
     dark: Boolean = true,
     imageUrl: String? = null
 ) {
+    val cute = HelloThemeRuntime.activePalette.value.id == "cute"
     val dotSize = (size.value * 0.28f).dp
     Box(modifier = modifier.size(size + dotSize / 4)) {
         Box(
             modifier = Modifier
                 .size(size)
                 .clip(CircleShape)
-                .background(HelloColors.BgElevated)
-                .border(1.dp, HelloColors.GlassBorder, CircleShape),
+                .background(if (cute) Brush.radialGradient(listOf(Color.White, HelloColors.BgElevated)) else Brush.radialGradient(listOf(HelloColors.BgElevated, HelloColors.BgElevated)))
+                .border(if (cute) 3.dp else 1.dp, if (cute) HelloColors.BorderStrong else HelloColors.GlassBorder, CircleShape),
             contentAlignment = Alignment.Center
         ) {
             val resolved = UrlResolver.resolve(imageUrl)
@@ -383,6 +414,7 @@ fun HelloChatCard(
     avatarUrl: String? = null,
     online: Boolean = false
 ) {
+    val cute = HelloThemeRuntime.activePalette.value.id == "cute"
     val pressScale by animateFloatAsState(
         targetValue = if (active) 1f else 0.985f,
         animationSpec = HelloMotion.SpringSnappy,
@@ -393,11 +425,11 @@ fun HelloChatCard(
             .fillMaxWidth()
             .scale(pressScale),
         cornerRadius = HelloDimens.CornerL,
-        bgAlpha = if (dark) HelloColors.GlassBg else HelloColors.PanelStrong,
-        borderColor = if (active) HelloColors.TealPrimary else HelloColors.GlassBorder
+        bgAlpha = if (cute) HelloColors.PanelStrong else if (dark) HelloColors.GlassBg else HelloColors.PanelStrong,
+        borderColor = if (active) HelloColors.AccentStrong else if (cute) HelloColors.BorderStrong else HelloColors.GlassBorder
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = HelloDimens.SpaceL, vertical = HelloDimens.SpaceM),
+            modifier = Modifier.padding(horizontal = HelloDimens.SpaceL, vertical = if (cute) HelloDimens.SpaceL else HelloDimens.SpaceM),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(HelloDimens.SpaceM)
         ) {
@@ -408,7 +440,7 @@ fun HelloChatCard(
                         title,
                         modifier = Modifier.weight(1f),
                         style = MaterialTheme.typography.titleSmall,
-                        color = if (dark) HelloColors.DarkText else HelloColors.Text,
+                        color = if (cute) HelloColors.Text else if (dark) HelloColors.DarkText else HelloColors.Text,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         fontWeight = FontWeight.Bold
@@ -417,7 +449,7 @@ fun HelloChatCard(
                         time,
                         style = MaterialTheme.typography.labelSmall,
                         color = if (unreadCount > 0 || active) {
-                            HelloColors.TealPrimary
+                            HelloColors.AccentStrong
                         } else if (dark) HelloColors.DarkTextMuted else HelloColors.TextMuted
                     )
                 }
@@ -426,7 +458,7 @@ fun HelloChatCard(
                     subtitle,
                     style = MaterialTheme.typography.bodyMedium,
                     color = if (active) {
-                        HelloColors.TealLight
+                        HelloColors.Accent
                     } else if (dark) HelloColors.DarkTextMuted else HelloColors.TextMuted,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
@@ -526,11 +558,12 @@ fun HelloPrimaryButton(
     enabled: Boolean = true,
     auth: Boolean = false
 ) {
+    val cute = HelloThemeRuntime.activePalette.value.id == "cute"
     Button(
         onClick = onClick,
         modifier = modifier.fillMaxWidth(),
         enabled = enabled,
-        shape = if (auth) HelloShapes.AuthInput else HelloShapes.Sm,
+        shape = if (auth || cute) HelloShapes.Pill else HelloShapes.Sm,
         colors = ButtonDefaults.buttonColors(
             containerColor = if (auth) HelloColors.AuthAccent else HelloColors.Accent,
             contentColor = Color.White,
@@ -542,8 +575,8 @@ fun HelloPrimaryButton(
         Text(
             text = text,
             style = MaterialTheme.typography.labelLarge,
-            fontWeight = FontWeight.Medium,
-            modifier = Modifier.padding(vertical = HelloSpacing.Xs)
+            fontWeight = if (cute) FontWeight.Bold else FontWeight.Medium,
+            modifier = Modifier.padding(vertical = if (cute) HelloSpacing.Sm else HelloSpacing.Xs)
         )
     }
 }
@@ -606,6 +639,7 @@ fun HelloTopBar(
     modifier: Modifier = Modifier,
     trailing: @Composable RowScope.() -> Unit = {}
 ) {
+    val cute = HelloThemeRuntime.activePalette.value.id == "cute"
     HelloPanel(modifier = modifier.fillMaxWidth(), strong = false, shape = HelloShapes.HeaderPanel) {
         Row(
             modifier = Modifier.padding(HelloSpacing.Lg),
@@ -623,7 +657,7 @@ fun HelloTopBar(
                 Text(
                     text = title,
                     style = MaterialTheme.typography.headlineSmall,
-                    color = HelloColors.DarkText,
+                    color = if (cute) HelloColors.AccentStrong else HelloColors.DarkText,
                     fontWeight = FontWeight.Bold
                 )
             }
@@ -638,6 +672,7 @@ fun HelloBottomNav(
     dark: Boolean = true,
     content: @Composable RowScope.() -> Unit
 ) {
+    val cute = HelloThemeRuntime.activePalette.value.id == "cute"
     Box(
         modifier = modifier
             .fillMaxWidth()
@@ -645,7 +680,7 @@ fun HelloBottomNav(
                 Brush.verticalGradient(
                     listOf(
                         Color.Transparent,
-                        if (dark) HelloColors.BgBase.copy(alpha = 0.95f) else HelloColors.Bg.copy(alpha = 0.95f)
+                        if (cute) HelloColors.BgBase.copy(alpha = 0.96f) else if (dark) HelloColors.BgBase.copy(alpha = 0.95f) else HelloColors.Bg.copy(alpha = 0.95f)
                     )
                 )
             )
@@ -661,8 +696,8 @@ fun HelloBottomNav(
                 .height(HelloDimens.BottomNavHeight)
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(HelloDimens.CornerXL))
-                .background(HelloColors.GlassBgMedium)
-                .border(0.5.dp, HelloColors.GlassBorder, RoundedCornerShape(HelloDimens.CornerXL))
+                .background(if (cute) HelloColors.PanelStrong else HelloColors.GlassBgMedium)
+                .border(if (cute) 1.4.dp else 0.5.dp, if (cute) HelloColors.BorderStrong else HelloColors.GlassBorder, RoundedCornerShape(HelloDimens.CornerXL))
                 .padding(horizontal = HelloDimens.SpaceM),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceAround,
@@ -695,14 +730,15 @@ fun HelloPill(
     active: Boolean = false,
     danger: Boolean = false
 ) {
+    val cute = HelloThemeRuntime.activePalette.value.id == "cute"
     val color = when {
         danger -> HelloColors.DarkDanger.copy(alpha = 0.18f)
-        active -> HelloColors.DarkAccentSoft
-        else -> HelloColors.DarkPanelMuted
+        active -> if (cute) HelloColors.Accent else HelloColors.DarkAccentSoft
+        else -> if (cute) HelloColors.PanelStrong else HelloColors.DarkPanelMuted
     }
     val textColor = when {
         danger -> HelloColors.DarkDanger
-        active -> HelloColors.DarkAccentStrong
+        active -> if (cute) Color.White else HelloColors.DarkAccentStrong
         else -> HelloColors.DarkTextMuted
     }
     Text(
@@ -712,7 +748,7 @@ fun HelloPill(
         modifier = modifier
             .clip(HelloShapes.Pill)
             .background(color)
-            .border(1.dp, if (active) HelloColors.DarkAccent else HelloColors.DarkBorder, HelloShapes.Pill)
+            .border(1.dp, if (active) HelloColors.DarkAccent else if (cute) HelloColors.Border else HelloColors.DarkBorder, HelloShapes.Pill)
             .padding(horizontal = 10.dp, vertical = 5.dp)
     )
 }
@@ -774,6 +810,7 @@ fun HelloEmptyState(
     modifier: Modifier = Modifier,
     action: @Composable (() -> Unit)? = null
 ) {
+    val cute = HelloThemeRuntime.activePalette.value.id == "cute"
     Column(
         modifier = modifier
             .fillMaxWidth()
@@ -781,7 +818,17 @@ fun HelloEmptyState(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Text(title, style = MaterialTheme.typography.titleLarge, color = HelloColors.DarkText, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+        if (cute) {
+            Text("♡", style = MaterialTheme.typography.displayMedium, color = HelloColors.Accent)
+            Spacer(modifier = Modifier.height(HelloSpacing.Sm))
+        }
+        Text(
+            title,
+            style = if (cute) MaterialTheme.typography.headlineMedium else MaterialTheme.typography.titleLarge,
+            color = if (cute) HelloColors.AccentStrong else HelloColors.DarkText,
+            fontWeight = FontWeight.Black,
+            textAlign = TextAlign.Center
+        )
         Spacer(modifier = Modifier.height(HelloSpacing.Sm))
         Text(message, style = MaterialTheme.typography.bodyMedium, color = HelloColors.DarkTextMuted, textAlign = TextAlign.Center)
         if (action != null) {

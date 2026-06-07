@@ -1,0 +1,21 @@
+Backup: important ignored/local-only files
+Date: 2026-06-05
+
+Included
+- .env
+- apps/hello/.env
+- crash.log
+- crash2.log
+- data/browser/glassbox.sqlite
+- data/hello/hello.db
+- data/hello/family-drive/
+- external/thesis/plan.md
+
+Intentionally skipped
+- node_modules/, dist/, build/, coverage/, .vite/, .next/: rebuildable
+- .idea/, apps/.idea/, apps/android/.idea/, *.iml: IDE state only
+- data/**/cache/*: disposable cache
+- data/**/logs/* and *.log under app folders: mostly reproducible runtime logs
+- data/**/uploads/* and apps/hello/uploads/: empty except placeholders in this workspace
+- apps/hello/data/, apps/hello/data_backup/, apps/hello/family-drive/, apps/browser/debug/: not present in this workspace
+- hello-family-drive-*.zip, hello-family-drive-*.patch, figma images of drive sub-tabs.png, error webapp.png: not present in this workspace

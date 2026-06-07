@@ -2,6 +2,10 @@ name = "hello-chat-worker"
 main = "src/index.ts"
 compatibility_date = "2026-06-01"
 
+routes = [
+  { pattern = "chat.bookhelloctg.com", custom_domain = true }
+]
+
 [vars]
 ENABLE_DEBUG_BINDINGS = "false"
 

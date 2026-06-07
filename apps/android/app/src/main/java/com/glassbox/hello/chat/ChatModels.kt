@@ -21,6 +21,8 @@ object ChatModels {
         @SerializedName("id") val id: String,
         @SerializedName("name") val name: String,
         @SerializedName("avatar") val avatar: String? = null,
+        @SerializedName("about") val about: String? = null,
+        @SerializedName("username") val username: String? = null,
         @SerializedName("phone") val phone: String? = null,
         @SerializedName("email") val email: String? = null,
         @SerializedName("online") val online: Boolean? = null,
@@ -48,6 +50,21 @@ object ChatModels {
         @SerializedName("senderId") val senderId: String? = null
     )
 
+    data class CallInfo(
+        @SerializedName("callId") val callId: String,
+        @SerializedName("chatId") val chatId: String? = null,
+        @SerializedName("callerId") val callerId: String? = null,
+        @SerializedName("calleeId") val calleeId: String? = null,
+        @SerializedName("callType") val callType: String? = null,
+        @SerializedName("status") val status: String? = null,
+        @SerializedName("startedAt") val startedAt: Long? = null,
+        @SerializedName("answeredAt") val answeredAt: Long? = null,
+        @SerializedName("endedAt") val endedAt: Long? = null,
+        @SerializedName("durationSeconds") val durationSeconds: Long? = null,
+        @SerializedName("endReason") val endReason: String? = null,
+        @SerializedName("mode") val mode: String? = null
+    )
+
     data class Message(
         @SerializedName("id") val id: String,
         @SerializedName("chatId") val chatId: String,
@@ -55,6 +72,7 @@ object ChatModels {
         @SerializedName("senderName") val senderName: String,
         @SerializedName("senderAvatar") val senderAvatar: String? = null,
         @SerializedName("text") val text: String,
+        @SerializedName("messageType") val messageType: String? = null,
         @SerializedName("timestamp") val timestamp: Long,
         @SerializedName("attachmentUrl") val attachmentUrl: String? = null,
         @SerializedName("attachmentType") val attachmentType: String? = null,
@@ -67,7 +85,8 @@ object ChatModels {
         @SerializedName("starredBy") val starredBy: List<String>? = null,
         @SerializedName("pinnedUntil") val pinnedUntil: Long? = null,
         @SerializedName("location") val location: LocationData? = null,
-        @SerializedName("replyTo") val replyTo: ReplyTo? = null
+        @SerializedName("replyTo") val replyTo: ReplyTo? = null,
+        @SerializedName("callInfo") val callInfo: CallInfo? = null
     )
 
     data class UploadedFile(
@@ -112,17 +131,4 @@ object ChatModels {
         @SerializedName("otherUser") val otherUser: User
     )
 
-    data class StatusItem(
-        @SerializedName("id") val id: String,
-        @SerializedName("userId") val userId: String,
-        @SerializedName("text") val text: String? = null,
-        @SerializedName("attachmentUrl") val attachmentUrl: String? = null,
-        @SerializedName("attachmentType") val attachmentType: String? = null,
-        @SerializedName("backgroundColor") val backgroundColor: String? = null,
-        @SerializedName("duration") val duration: Long? = null,
-        @SerializedName("timestamp") val timestamp: Long,
-        @SerializedName("userName") val userName: String? = null,
-        @SerializedName("userAvatar") val userAvatar: String? = null,
-        @SerializedName("views") val views: List<Map<String, Any>>? = null
-    )
 }

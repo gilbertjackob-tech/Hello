@@ -24,6 +24,8 @@ const ATTACHMENT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const ONLINE_TTL_MS = 60 * 1000;
 const PENDING_ATTACHMENT_USER_ID = "system_attachment_upload";
 const PENDING_ATTACHMENT_CONVERSATION_ID = "system_attachment_uploads";
+const BOT_USER_ID = "usr_bot";
+const BOT_USER_NAME = "bot";
 let cloudSchemaReady: Promise<void> | null = null;
 let fcmAccessTokenCache: { token: string; expiresAt: number } | null = null;
 
@@ -146,6 +148,10 @@ function publicUser(row: any): JsonObject {
   };
 }
 
+function userAvatar(user: any): string {
+  return asString(user?.avatar || user?.avatarUrl || user?.avatar_url, "");
+}
+
 async function userProfileFor(env: Env, userId: string): Promise<any> {
   return env.DB.prepare(
     `
@@ -193,6 +199,29 @@ async function ensureUserProfile(env: Env, userId: string, displayName: string, 
         updated_at = excluded.updated_at
     `,
   ).bind(userId, displayName || null, avatarUrl || null, now).run();
+}
+
+async function ensureBotUser(env: Env): Promise<void> {
+  const now = Date.now();
+  await env.DB.prepare(
+    `
+      INSERT INTO users (id, display_name, avatar_url, created_at, updated_at)
+      VALUES (?, ?, NULL, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        display_name = excluded.display_name,
+        updated_at = excluded.updated_at
+    `,
+  ).bind(BOT_USER_ID, BOT_USER_NAME, now, now).run();
+  await ensureUserProfile(env, BOT_USER_ID, BOT_USER_NAME, null);
+  await env.DB.prepare(
+    `
+      INSERT INTO user_chat_preferences (user_id, read_receipts_enabled, notifications_enabled, updated_at)
+      VALUES (?, 1, 0, ?)
+      ON CONFLICT(user_id) DO UPDATE SET
+        notifications_enabled = 0,
+        updated_at = excluded.updated_at
+    `,
+  ).bind(BOT_USER_ID, now).run().catch(() => undefined);
 }
 
 async function createSession(env: Env, userId: string, body: JsonObject = {}): Promise<{ token: string; session: JsonObject }> {
@@ -356,6 +385,44 @@ async function ensureCloudAccountSchema(env: Env): Promise<void> {
           ON message_reactions (message_id, created_at)
         `,
       ).run();
+      await ensureColumn(env, "messages", "pinned_until", "INTEGER").catch(() => undefined);
+      await ensureColumn(env, "messages", "metadata_json", "TEXT").catch(() => undefined);
+      await env.DB.prepare(
+        `
+          CREATE TABLE IF NOT EXISTS message_starred_by (
+            message_id TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            created_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
+            PRIMARY KEY (message_id, user_id),
+            FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+          )
+        `,
+      ).run();
+      await env.DB.prepare(
+        `
+          CREATE TABLE IF NOT EXISTS message_deleted_for (
+            message_id TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            created_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
+            PRIMARY KEY (message_id, user_id),
+            FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+          )
+        `,
+      ).run();
+      await env.DB.prepare(
+        `
+          CREATE TABLE IF NOT EXISTS chat_deleted_for (
+            conversation_id TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            created_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
+            PRIMARY KEY (conversation_id, user_id),
+            FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+          )
+        `,
+      ).run();
       await env.DB.prepare(
         `
           CREATE TABLE IF NOT EXISTS conversation_preferences (
@@ -422,12 +489,16 @@ async function ensureCloudAccountSchema(env: Env): Promise<void> {
             token TEXT NOT NULL,
             platform TEXT,
             device_name TEXT,
+            session_id TEXT,
+            session_device_id TEXT,
             created_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
             updated_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
             UNIQUE (user_id, token)
           )
         `,
       ).run();
+      await ensureColumn(env, "device_push_tokens", "session_id", "TEXT").catch(() => undefined);
+      await ensureColumn(env, "device_push_tokens", "session_device_id", "TEXT").catch(() => undefined);
       await env.DB.prepare(
         `
           CREATE TABLE IF NOT EXISTS notification_events (
@@ -449,6 +520,7 @@ async function ensureCloudAccountSchema(env: Env): Promise<void> {
           ON notification_events (user_id, created_at DESC)
         `,
       ).run();
+      await ensureBotUser(env);
     })();
   }
   return cloudSchemaReady;
@@ -457,6 +529,15 @@ async function ensureCloudAccountSchema(env: Env): Promise<void> {
 async function userFor(env: Env, userId: string): Promise<any> {
   const row = await userProfileFor(env, userId);
   return row ? publicUser(row) : null;
+}
+
+async function requiredAuthUser(env: Env, userId: string, displayName: string, avatarUrl?: string | null): Promise<JsonObject> {
+  await ensureUserProfile(env, userId, displayName || userId, avatarUrl || null);
+  const user = await userFor(env, userId);
+  if (!user || !asString(user.id).trim() || !asString(user.name).trim()) {
+    throw new Error("Authenticated user profile is not available");
+  }
+  return user;
 }
 
 async function touchPresence(env: Env, auth: AuthContext, at = Date.now()): Promise<void> {
@@ -619,7 +700,19 @@ async function conversationFor(env: Env, conversationId: string, viewerId?: stri
           WHERE conversation_id = c.id AND deleted_at IS NULL
           ORDER BY created_at DESC
           LIMIT 1
-        ) AS lastMessageTime
+        ) AS lastMessageTime,
+        (
+          SELECT message_type FROM messages
+          WHERE conversation_id = c.id AND deleted_at IS NULL
+          ORDER BY created_at DESC
+          LIMIT 1
+        ) AS lastMessageType,
+        (
+          SELECT metadata_json FROM messages
+          WHERE conversation_id = c.id AND deleted_at IS NULL
+          ORDER BY created_at DESC
+          LIMIT 1
+        ) AS lastMessageMetadata
       FROM conversations c
       WHERE c.id = ?
     `,
@@ -683,7 +776,11 @@ async function conversationFor(env: Env, conversationId: string, viewerId?: stri
     directKey,
     name: row.title || directOther?.name || participants.map((member: any) => member.name).join(", ") || "Cloud chat",
     avatar: directOther?.avatar || null,
-    lastMessage: row.lastMessage || "",
+    lastMessage: lastMessagePreview(
+      asString(row.lastMessage, ""),
+      asString(row.lastMessageType, "text"),
+      asString(row.lastMessageMetadata, ""),
+    ),
     lastMessageTime: row.lastMessageTime || row.updatedAt,
     unreadCount: unread?.total || 0,
     isGroup: row.type === "group",
@@ -713,6 +810,28 @@ async function reactionsForMessages(env: Env, messageIds: string[]): Promise<Rec
       userId: String(row.userId || ""),
       timestamp: Number(row.timestamp || 0),
     });
+  }
+  return grouped;
+}
+
+async function userIdsByMessage(env: Env, table: string, messageIds: string[]): Promise<Record<string, string[]>> {
+  if (messageIds.length === 0) return {};
+  const placeholders = messageIds.map(() => "?").join(",");
+  const rows = await env.DB.prepare(
+    `
+      SELECT message_id AS messageId, user_id AS userId
+      FROM ${table}
+      WHERE message_id IN (${placeholders})
+      ORDER BY created_at ASC
+    `,
+  ).bind(...messageIds).all<any>();
+  const grouped: Record<string, string[]> = {};
+  for (const row of rows.results || []) {
+    const messageId = String(row.messageId || "");
+    const userId = String(row.userId || "");
+    if (!messageId || !userId) continue;
+    if (!grouped[messageId]) grouped[messageId] = [];
+    grouped[messageId].push(userId);
   }
   return grouped;
 }
@@ -751,9 +870,11 @@ async function receiptStatusForMessages(env: Env, messageIds: string[]): Promise
 
 async function mapMessageRows(env: Env, rows: any[]): Promise<JsonObject[]> {
   const messageIds = rows.map((row) => String(row.id));
-  const [reactionsByMessage, statusesByMessage] = await Promise.all([
+  const [reactionsByMessage, statusesByMessage, starredByMessage, deletedForMessage] = await Promise.all([
     reactionsForMessages(env, messageIds),
     receiptStatusForMessages(env, messageIds),
+    userIdsByMessage(env, "message_starred_by", messageIds),
+    userIdsByMessage(env, "message_deleted_for", messageIds),
   ]);
   return rows.map((row: any) => ({
     id: row.id,
@@ -762,6 +883,7 @@ async function mapMessageRows(env: Env, rows: any[]): Promise<JsonObject[]> {
     senderName: row.senderName,
     senderAvatar: row.senderAvatar || null,
     text: row.deletedAt ? "" : row.text,
+    messageType: row.messageType || "text",
     timestamp: row.timestamp,
     attachmentUrl: row.attachmentId ? `/api/chat/attachments/${encodeURIComponent(row.attachmentId)}` : null,
     attachmentType: row.attachmentMimeType?.startsWith("image/") ? "image" : row.attachmentId ? "file" : null,
@@ -769,7 +891,11 @@ async function mapMessageRows(env: Env, rows: any[]): Promise<JsonObject[]> {
     attachmentSize: row.attachmentSize || null,
     status: statusesByMessage[String(row.id)] || "sent",
     isDeleted: !!row.deletedAt,
+    deletedFor: deletedForMessage[String(row.id)] || [],
     reactions: reactionsByMessage[String(row.id)] || [],
+    starredBy: starredByMessage[String(row.id)] || [],
+    pinnedUntil: row.pinnedUntil || null,
+    callInfo: row.metadataJson ? parseCallInfo(row.metadataJson) : null,
   }));
 }
 
@@ -781,8 +907,10 @@ async function messagesFor(env: Env, conversationId: string, limit = 50, offset 
         u.avatar_url AS senderAvatar,
         COALESCE(m.body, '') AS text,
         m.message_type AS messageType,
+        m.metadata_json AS metadataJson,
         m.created_at AS timestamp,
         m.deleted_at AS deletedAt,
+        m.pinned_until AS pinnedUntil,
         a.id AS attachmentId,
         a.file_name AS attachmentName,
         a.mime_type AS attachmentMimeType,
@@ -807,8 +935,10 @@ async function messageFor(env: Env, messageId: string): Promise<JsonObject | nul
         u.avatar_url AS senderAvatar,
         COALESCE(m.body, '') AS text,
         m.message_type AS messageType,
+        m.metadata_json AS metadataJson,
         m.created_at AS timestamp,
         m.deleted_at AS deletedAt,
+        m.pinned_until AS pinnedUntil,
         a.id AS attachmentId,
         a.file_name AS attachmentName,
         a.mime_type AS attachmentMimeType,
@@ -888,11 +1018,9 @@ async function registerUser(env: Env, body: JsonObject, request?: Request): Prom
       `,
     ).bind(id, name, avatar, securityQuestion, answerHash.hash, answerHash.salt, now, now).run();
   }
-  await ensureUserProfile(env, id, name, avatar);
-
-  const user = await userFor(env, id);
+  const user = await requiredAuthUser(env, id, name, avatar);
   const session = await createSession(env, id, body);
-  return json({ user, token: session.token, session: session.session, ...(user || {}) }, { status: 201 });
+  return json({ user, token: session.token, session: session.session, ...user }, { status: 201 });
 }
 
 async function getUserQuestion(env: Env, url: URL): Promise<Response> {
@@ -943,9 +1071,9 @@ async function loginUser(env: Env, body: JsonObject): Promise<Response> {
   }
   if (!verified) return json({ ok: false, error: "Incorrect answer" }, { status: 401 });
 
-  const publicProfile = await userFor(env, user.id);
+  const publicProfile = await requiredAuthUser(env, asString(user.id), asString(user.name), asString(user.avatar));
   const session = await createSession(env, user.id, body);
-  return json({ user: publicProfile, token: session.token, session: session.session, ...(publicProfile || {}) });
+  return json({ user: publicProfile, token: session.token, session: session.session, ...publicProfile });
 }
 
 async function listUsers(env: Env, url: URL): Promise<Response> {
@@ -976,10 +1104,11 @@ async function listUsers(env: Env, url: URL): Promise<Response> {
           LEFT JOIN user_profiles p ON p.user_id = u.id
           WHERE LOWER(COALESCE(p.display_name, u.display_name)) LIKE LOWER(?)
              OR LOWER(COALESCE(p.username, '')) LIKE LOWER(?)
-          ORDER BY COALESCE(p.display_name, u.display_name) ASC
+             OR LOWER(u.id) LIKE LOWER(?)
+          ORDER BY online DESC, COALESCE(p.display_name, u.display_name) ASC
           LIMIT 50
         `,
-      ).bind(Date.now() - ONLINE_TTL_MS, `%${query}%`, `%${query}%`)
+      ).bind(Date.now() - ONLINE_TTL_MS, `%${query}%`, `%${query}%`, `%${query}%`)
     : env.DB.prepare(
         `
           SELECT u.id, COALESCE(p.display_name, u.display_name) AS displayName,
@@ -1003,7 +1132,7 @@ async function listUsers(env: Env, url: URL): Promise<Response> {
             ) > ? THEN 1 ELSE 0 END AS online
           FROM users u
           LEFT JOIN user_profiles p ON p.user_id = u.id
-          ORDER BY COALESCE(p.display_name, u.display_name) ASC
+          ORDER BY online DESC, COALESCE(p.display_name, u.display_name) ASC
           LIMIT 50
         `,
       ).bind(Date.now() - ONLINE_TTL_MS);
@@ -1014,7 +1143,17 @@ async function listUsers(env: Env, url: URL): Promise<Response> {
 async function logoutUser(env: Env, request: Request): Promise<Response> {
   const auth = await requireAuth(env, request);
   if (auth instanceof Response) return auth;
-  await env.DB.prepare("UPDATE sessions SET revoked_at = ? WHERE id = ?").bind(Date.now(), auth.sessionId).run();
+  const now = Date.now();
+  await env.DB.prepare("UPDATE sessions SET revoked_at = ? WHERE id = ?").bind(now, auth.sessionId).run();
+  await env.DB.prepare(
+    "DELETE FROM device_push_tokens WHERE user_id = ? AND (session_id = ? OR session_device_id = ?)",
+  ).bind(auth.userId, auth.sessionId, auth.deviceId || "").run().catch(() => undefined);
+  await broadcastToDurableUser(env, auth.userId, "session_revoked", {
+    userId: auth.userId,
+    sessionId: auth.sessionId,
+    deviceId: auth.deviceId,
+    at: now,
+  });
   await broadcastUserPresence(env, auth.userId, false);
   return json({ ok: true });
 }
@@ -1136,6 +1275,37 @@ async function addContact(env: Env, request: Request): Promise<Response> {
     `,
   ).bind(auth.userId, contact.id, asString(body.alias, "") || null, now, now).run();
   return json(publicUser(contact), { status: 201 });
+}
+
+async function resolveUserIdentifier(env: Env, rawValue: string): Promise<string> {
+  const value = rawValue.trim();
+  if (!value) return "";
+  const direct = await env.DB.prepare(
+    `
+      SELECT id
+      FROM users
+      WHERE id = ?
+         OR LOWER(display_name) = LOWER(?)
+      LIMIT 1
+    `,
+  ).bind(value, value).first<any>();
+  if (direct?.id) return asString(direct.id, value);
+  const profiled = await env.DB.prepare(
+    `
+      SELECT u.id
+      FROM users u
+      LEFT JOIN user_profiles p ON p.user_id = u.id
+      WHERE LOWER(COALESCE(p.username, '')) = LOWER(?)
+         OR LOWER(COALESCE(p.display_name, u.display_name)) = LOWER(?)
+      LIMIT 1
+    `,
+  ).bind(value, value).first<any>();
+  return asString(profiled?.id, value);
+}
+
+async function resolveUserIdentifiers(env: Env, values: string[]): Promise<string[]> {
+  const resolved = await Promise.all(values.map((value) => resolveUserIdentifier(env, value)));
+  return [...new Set(resolved.map((value) => value.trim()).filter(Boolean))];
 }
 
 async function getChatPreferences(env: Env, request: Request): Promise<Response> {
@@ -1447,6 +1617,104 @@ async function updateCallStateForEvent(env: Env, callId: string, event: string, 
   }
 }
 
+function parseJsonObject(raw: string): JsonObject | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as JsonObject : null;
+  } catch {
+    return null;
+  }
+}
+
+function parseCallInfo(raw: string): JsonObject | null {
+  const parsed = parseJsonObject(raw);
+  return parsed && parsed.kind === "call_log" ? parsed : null;
+}
+
+function formatDurationLabel(totalSeconds: number): string {
+  const safe = Math.max(0, Math.floor(totalSeconds));
+  const minutes = Math.floor(safe / 60);
+  const seconds = safe % 60;
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
+function callSummaryText(callInfo: JsonObject | null, fallbackType = "audio"): string {
+  const type = asString(callInfo?.callType || callInfo?.type, fallbackType) === "video" ? "Video" : "Audio";
+  const status = asString(callInfo?.status, "ended");
+  const durationSeconds = Number(callInfo?.durationSeconds || 0);
+  if (status === "missed") return `Missed ${type.toLowerCase()} call`;
+  if (status === "declined") return `${type} call declined`;
+  if (status === "busy") return `${type} call busy`;
+  if (status === "unavailable") return `${type} call unavailable`;
+  if (status === "failed") return `${type} call failed`;
+  if (status === "cancelled") return `${type} call cancelled`;
+  if (durationSeconds > 0) return `${type} call â€¢ ${formatDurationLabel(durationSeconds)}`;
+  return `${type} call`;
+}
+
+function lastMessagePreview(body: string, messageType: string, metadataJson: string): string {
+  if (messageType === "call_log") {
+    return callSummaryText(parseCallInfo(metadataJson));
+  }
+  return body || "";
+}
+
+function callTimelineStatus(row: any): string | null {
+  const endReason = asString(row.endReason, "").toLowerCase();
+  if (row.status === "missed") return "missed";
+  if (endReason === "declined" || endReason === "reject") return "declined";
+  if (endReason === "busy") return "busy";
+  if (endReason === "unavailable") return "unavailable";
+  if (row.status === "ended" && row.answeredAt && row.endedAt) return "ended";
+  if (endReason === "failed" || row.status === "failed") return "failed";
+  if (endReason === "cancelled" || endReason === "no_answer" || endReason === "caller_cancelled") return "cancelled";
+  return null;
+}
+
+async function upsertCallTimelineMessage(env: Env, callId: string): Promise<string | null> {
+  const row = await callRowFor(env, callId);
+  if (!row?.chatId) return null;
+  const status = callTimelineStatus(row);
+  if (!status) return null;
+  const durationSeconds = row.endedAt && row.answeredAt
+    ? Math.max(0, Math.floor((row.endedAt - row.answeredAt) / 1000))
+    : 0;
+  const callInfo: JsonObject = {
+    kind: "call_log",
+    callId,
+    chatId: row.chatId,
+    callerId: row.callerId,
+    calleeId: row.calleeId,
+    callType: row.type || "audio",
+    status,
+    startedAt: row.startedAt,
+    answeredAt: row.answeredAt || null,
+    endedAt: row.endedAt || null,
+    durationSeconds,
+    endReason: row.endReason || null,
+    mode: row.mode || "direct",
+  };
+  const messageId = `callmsg_${callId}`;
+  const createdAt = Number(row.endedAt || row.startedAt || Date.now());
+  const senderId = asString(row.callerId, "system");
+  const summaryText = callSummaryText(callInfo, asString(row.type, "audio"));
+  await env.DB.prepare(
+    `
+      INSERT INTO messages (id, conversation_id, sender_id, body, message_type, metadata_json, created_at)
+      VALUES (?, ?, ?, ?, 'call_log', ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        body = excluded.body,
+        message_type = excluded.message_type,
+        metadata_json = excluded.metadata_json,
+        created_at = excluded.created_at
+    `,
+  ).bind(messageId, row.chatId, senderId, summaryText, JSON.stringify(callInfo), createdAt).run();
+  await env.DB.prepare("UPDATE conversations SET updated_at = ? WHERE id = ?")
+    .bind(createdAt, row.chatId).run();
+  return messageId;
+}
+
 type NotificationChannel =
   | "calls"
   | "missed_calls"
@@ -1554,8 +1822,15 @@ async function sendAndroidFcm(env: Env, userId: string, payload: JsonObject): Pr
   }
 
   const rows = await env.DB.prepare(
-    "SELECT id, token, platform FROM device_push_tokens WHERE user_id = ?",
-  ).bind(userId).all<any>();
+    `
+      SELECT dpt.id, dpt.token, dpt.platform
+      FROM device_push_tokens dpt
+      JOIN sessions s ON s.id = dpt.session_id AND s.user_id = dpt.user_id
+      WHERE dpt.user_id = ?
+        AND s.revoked_at IS NULL
+        AND (s.expires_at IS NULL OR s.expires_at > ?)
+    `,
+  ).bind(userId, Date.now()).all<any>();
   const tokens = (rows.results || [])
     .map((row: any) => ({
       id: String(row.id || ""),
@@ -1616,6 +1891,9 @@ async function emitUserNotification(env: Env, userId: string, payload: JsonObjec
   if (!userId || payload.senderId === userId) return;
   if (!(await notificationAllowed(env, userId))) return;
   const now = Date.now();
+  await env.DB.prepare(
+    "DELETE FROM device_push_tokens WHERE user_id = ? AND session_id IS NULL",
+  ).bind(userId).run().catch(() => undefined);
   const outgoing = {
     senderId: "",
     senderName: "Hello",
@@ -1625,6 +1903,7 @@ async function emitUserNotification(env: Env, userId: string, payload: JsonObjec
     groupName: null,
     previewText: "",
     emoji: null,
+    recipientId: userId,
     deepLink: "hello://notifications",
     sentAt: new Date(now).toISOString(),
     ...payload,
@@ -1676,6 +1955,7 @@ async function relayCallEvent(env: Env, event: string, payload: JsonObject): Pro
   const outgoing: JsonObject = { ...payload, callId, roomId: asString(payload.roomId, callId), eventId, timestamp: Date.now(), event };
   await recordCallEvent(env, callId, event, outgoing);
   await updateCallStateForEvent(env, callId, event, asString(outgoing.reason, ""));
+  const timelineMessageId = await upsertCallTimelineMessage(env, callId);
   const toUserId = asString(outgoing.toUserId, "");
   if (toUserId) {
     await broadcastToDurableUser(env, toUserId, event, outgoing);
@@ -1687,6 +1967,19 @@ async function relayCallEvent(env: Env, event: string, payload: JsonObject): Pro
       .map((userId) => broadcastToDurableUser(env, userId, event, { ...outgoing, toUserId: userId })));
   }
   await broadcastToDurableCall(env, callId, event, outgoing);
+  const participantIds = await callParticipantIds(env, callId);
+  await Promise.all(participantIds.map((userId) => broadcastToDurableUser(env, userId, "call:history-updated", {
+    callId,
+    chatId: asString(outgoing.chatId, ""),
+    event,
+    timestamp: Number(outgoing.timestamp || Date.now()),
+  })));
+  if (timelineMessageId) {
+    const row = await callRowFor(env, callId);
+    if (row?.chatId) {
+      await broadcastMessageAndChatUpdates(env, row.chatId, [timelineMessageId]);
+    }
+  }
 }
 
 async function broadcastToCallParticipants(env: Env, callId: string, event: string, payload: JsonObject, excludeUserId = ""): Promise<void> {
@@ -1727,16 +2020,15 @@ async function startCall(env: Env, request: Request): Promise<Response> {
     fromUserId: callerId,
     toUserId: receiverId,
     callerName: asString(caller?.name, callerId),
-    callerAvatar: asString(caller?.avatar, ""),
+    callerAvatar: userAvatar(caller),
     calleeName: asString(receiver?.name, receiverId),
-    calleeAvatar: asString(receiver?.avatar, ""),
+    calleeAvatar: userAvatar(receiver),
   });
-  await relayCallEvent(env, "call:start", payload);
   await emitUserNotification(env, receiverId, {
     type: "call_incoming",
     senderId: callerId,
     senderName: asString(caller?.name, callerId),
-    senderAvatar: asString(caller?.avatar, ""),
+    senderAvatar: userAvatar(caller),
     callId,
     chatId,
     callerId,
@@ -1872,6 +2164,59 @@ async function updateCallFromRest(env: Env, request: Request, callId: string, ac
   return json({ ok: true, ...(updated ? callPayload(updated) : { callId }) });
 }
 
+async function relayCallSignalFromRest(env: Env, request: Request, callId: string): Promise<Response> {
+  const auth = await requireAuth(env, request);
+  if (auth instanceof Response) return auth;
+  const row = await callRowFor(env, callId);
+  if (!row) return notFound(`/api/calls/${callId}/signal`);
+  if (!(await isCallParticipant(env, callId, auth.userId))) {
+    return json({ ok: false, error: "Forbidden" }, { status: 403 });
+  }
+
+  const body = await readJson(request);
+  const input = body.payload && typeof body.payload === "object" && !Array.isArray(body.payload)
+    ? body.payload as JsonObject
+    : body;
+  const event = callEventName(asString(body.event || input.event || body.type || input.type, ""));
+  const allowedEvents = new Set([
+    "call:ringing",
+    "call:accepted",
+    "call:answer",
+    "call:ice-candidate",
+    "call:connected",
+    "call:reconnecting",
+    "call:media-state",
+    "call:failed",
+    "call:ended",
+  ]);
+  if (!allowedEvents.has(event)) return badRequest("unsupported call signal");
+
+  const defaultTargetId = auth.userId === row.callerId ? row.calleeId : row.callerId;
+  const requestedTargetId = asString(input.toUserId, "");
+  const targetId = requestedTargetId || defaultTargetId;
+  if (!targetId || !(await isCallParticipant(env, callId, targetId)) || targetId === auth.userId) {
+    return badRequest("invalid signal target");
+  }
+
+  const outgoing: JsonObject = {
+    ...input,
+    callId,
+    roomId: asString(input.roomId, callId),
+    chatId: asString(input.chatId, row.chatId),
+    callerId: asString(input.callerId, row.callerId),
+    calleeId: asString(input.calleeId, row.calleeId),
+    fromUserId: auth.userId,
+    toUserId: targetId,
+    type: asString(input.type, row.type || "audio"),
+    isVideo: input.isVideo === true || row.type === "video",
+    eventId: asString(input.eventId, "") || randomId("evt"),
+    timestamp: Date.now(),
+    event,
+  };
+  await relayCallEvent(env, event, outgoing);
+  return json({ ok: true, callId, event, eventId: outgoing.eventId });
+}
+
 async function getCall(env: Env, request: Request, callId: string): Promise<Response> {
   const auth = await requireAuth(env, request);
   if (auth instanceof Response) return auth;
@@ -1942,15 +2287,22 @@ async function registerDevicePushToken(env: Env, request: Request): Promise<Resp
   const id = asString(body.deviceId || body.id, "") || randomId("pushdev");
   const now = Date.now();
   await env.DB.prepare(
+    "DELETE FROM device_push_tokens WHERE token = ? OR id = ?",
+  ).bind(token, id).run();
+  await env.DB.prepare(
     `
-      INSERT INTO device_push_tokens (id, user_id, token, platform, device_name, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(user_id, token) DO UPDATE SET
+      INSERT INTO device_push_tokens (id, user_id, token, platform, device_name, session_id, session_device_id, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        user_id = excluded.user_id,
+        token = excluded.token,
         platform = excluded.platform,
         device_name = excluded.device_name,
+        session_id = excluded.session_id,
+        session_device_id = excluded.session_device_id,
         updated_at = excluded.updated_at
     `,
-  ).bind(id, auth.userId, token, platform || null, deviceName || null, now, now).run();
+  ).bind(id, auth.userId, token, platform || null, deviceName || null, auth.sessionId, auth.deviceId || null, now, now).run();
   return json({
     ok: true,
     id,
@@ -1991,15 +2343,18 @@ function iceConfig(env: Env): Response {
   });
 }
 
-async function listConversations(env: Env, url: URL): Promise<Response> {
-  const userId = url.searchParams.get("userId") || "";
+async function listConversations(env: Env, url: URL, request?: Request): Promise<Response> {
+  const auth = request ? await authenticatedUser(env, request) : null;
+  const userId = auth?.userId || url.searchParams.get("userId") || "";
   if (!userId) return badRequest("userId is required");
   const rows = await env.DB.prepare(
     `
       SELECT c.id
       FROM conversations c
       JOIN conversation_members cm ON cm.conversation_id = c.id
+      LEFT JOIN chat_deleted_for cdf ON cdf.conversation_id = c.id AND cdf.user_id = cm.user_id
       WHERE cm.user_id = ?
+        AND cdf.conversation_id IS NULL
       ORDER BY c.updated_at DESC
     `,
   ).bind(userId).all<any>();
@@ -2049,17 +2404,19 @@ async function findDirectConversationByPair(env: Env, userIds: string[]): Promis
   return id;
 }
 
-async function createConversation(env: Env, body: JsonObject): Promise<Response> {
+async function createConversation(env: Env, body: JsonObject, request?: Request): Promise<Response> {
   const isGroup = body.isGroup === true || body.type === "group";
   const type = isGroup ? "group" : "direct";
   const title = asString(body.title || body.name, "");
-  const createdBy = asString(body.createdBy || body.currentUserId || body.userId, "");
-  const targetUserId = asString(body.targetUserId || body.participantId || body.contactUserId, "");
-  const memberIds = asStringList(body.memberIds || body.members)
-    .concat(createdBy ? [createdBy] : [])
-    .concat(targetUserId ? [targetUserId] : [])
+  const auth = request ? await authenticatedUser(env, request) : null;
+  const rawCreatedBy = auth?.userId || asString(body.createdBy || body.currentUserId || body.userId, "");
+  const rawTargetUserId = asString(body.targetUserId || body.participantId || body.contactUserId, "");
+  const requestedMembers = asStringList(body.memberIds || body.members)
+    .concat(rawCreatedBy ? [rawCreatedBy] : [])
+    .concat(rawTargetUserId ? [rawTargetUserId] : [])
     .filter(Boolean);
-  const uniqueMemberIds = [...new Set(memberIds)];
+  const uniqueMemberIds = await resolveUserIdentifiers(env, requestedMembers);
+  const createdBy = rawCreatedBy ? await resolveUserIdentifier(env, rawCreatedBy) : "";
   if (uniqueMemberIds.length === 0) return badRequest("at least one member is required");
   if (type === "direct" && uniqueMemberIds.length !== 2) {
     return badRequest("direct conversations require exactly two distinct members");
@@ -2117,8 +2474,9 @@ async function createConversation(env: Env, body: JsonObject): Promise<Response>
   return json(conversation || { id }, { status: 201 });
 }
 
-async function createMessage(env: Env, conversationId: string, body: JsonObject): Promise<Response> {
-  const senderId = asString(body.senderId || body.userId);
+async function createMessage(env: Env, conversationId: string, body: JsonObject, request?: Request): Promise<Response> {
+  const auth = request ? await authenticatedUser(env, request) : null;
+  const senderId = auth?.userId || asString(body.senderId || body.userId);
   const senderName = asString(body.senderName || body.displayName || body.name, senderId);
   const senderAvatar = asString(body.senderAvatar || body.avatar, "");
   const text = asString(body.text || body.body, "");
@@ -2145,10 +2503,18 @@ async function createMessage(env: Env, conversationId: string, body: JsonObject)
   const messageId = asString(body.id) || randomId("msg");
   await env.DB.prepare(
     `
-      INSERT INTO messages (id, conversation_id, sender_id, body, message_type, created_at)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO messages (id, conversation_id, sender_id, body, message_type, metadata_json, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
     `,
-  ).bind(messageId, conversationId, senderId, text, asString(body.messageType, "text"), now).run();
+  ).bind(
+    messageId,
+    conversationId,
+    senderId,
+    text,
+    asString(body.messageType, "text"),
+    body.callInfo ? JSON.stringify(body.callInfo) : null,
+    now,
+  ).run();
   await env.DB.prepare("UPDATE conversations SET updated_at = ? WHERE id = ?").bind(now, conversationId).run();
 
   const attachmentId = asString(body.attachmentId);
@@ -2167,9 +2533,14 @@ async function createMessage(env: Env, conversationId: string, body: JsonObject)
     timestamp: now,
     status: "sent",
   };
+  const shouldBotReply = senderId !== BOT_USER_ID && memberIds.includes(BOT_USER_ID);
+  if (shouldBotReply) {
+    await markMessageDelivered(env, messageId, BOT_USER_ID, now);
+  }
   const deliveredRecipientIds: string[] = [];
   await Promise.all(memberIds.map(async (userId) => {
     if (userId === senderId) return;
+    if (userId === BOT_USER_ID) return;
     const socketCount = await broadcastToDurableUser(env, userId, "receive_message", message);
     if (socketCount > 0) deliveredRecipientIds.push(userId);
   }));
@@ -2204,7 +2575,59 @@ async function createMessage(env: Env, conversationId: string, body: JsonObject)
       collapseKey: `chat_${conversationId}`,
     });
   }));
-  return json(message, { status: 201 });
+  if (shouldBotReply) {
+    await createBotReply(env, conversationId, senderId, text);
+  }
+  return json((await messageFor(env, messageId)) || message, { status: 201 });
+}
+
+async function createBotReply(env: Env, conversationId: string, recipientId: string, incomingText: string): Promise<void> {
+  await ensureBotUser(env);
+  const now = Date.now() + 1;
+  const replyText = botReplyText(incomingText);
+  const messageId = randomId("msg_bot");
+  await env.DB.prepare(
+    `
+      INSERT INTO messages (id, conversation_id, sender_id, body, message_type, metadata_json, created_at)
+      VALUES (?, ?, ?, ?, 'text', NULL, ?)
+    `,
+  ).bind(messageId, conversationId, BOT_USER_ID, replyText, now).run();
+  await env.DB.prepare("UPDATE conversations SET updated_at = ? WHERE id = ?").bind(now, conversationId).run();
+
+  const reply = await messageFor(env, messageId);
+  const socketCount = reply ? await broadcastToDurableUser(env, recipientId, "receive_message", reply) : 0;
+  if (socketCount > 0) {
+    await markMessageDelivered(env, messageId, recipientId, now);
+  }
+  const senderMessage = await messageFor(env, messageId);
+  if (senderMessage) {
+    await broadcastToDurableUser(env, BOT_USER_ID, "message_updated", senderMessage);
+  }
+  const memberIds = await conversationMemberIds(env, conversationId);
+  await Promise.all(memberIds.map(async (userId) => {
+    const payload = await conversationFor(env, conversationId, userId);
+    if (payload) await broadcastToDurableUser(env, userId, "chat_updated", payload);
+  }));
+  const conversation = await conversationFor(env, conversationId, recipientId);
+  const isGroup = conversation?.isGroup === true;
+  await emitUserNotification(env, recipientId, {
+    type: "message",
+    senderId: BOT_USER_ID,
+    senderName: BOT_USER_NAME,
+    senderAvatar: null,
+    targetId: conversationId,
+    targetType: isGroup ? "group" : "chat",
+    groupName: isGroup ? asString(conversation?.name, "Group") : null,
+    previewText: isGroup ? `${BOT_USER_NAME}: ${replyText}` : replyText,
+    deepLink: `hello://chat/${conversationId}`,
+    channel: "messages",
+    priority: "high",
+    collapseKey: `chat_${conversationId}`,
+  });
+}
+
+function botReplyText(_incomingText: string): string {
+  return "hi";
 }
 
 async function markMessageRead(env: Env, messageId: string, body: JsonObject): Promise<Response> {
@@ -2294,6 +2717,107 @@ async function reactToMessage(env: Env, messageId: string, body: JsonObject): Pr
   return json(message);
 }
 
+async function requireMessageMember(env: Env, messageId: string, userId: string): Promise<any | Response> {
+  if (!userId) return badRequest("userId is required");
+  const messageRow = await env.DB.prepare(
+    "SELECT id, conversation_id AS conversationId, sender_id AS senderId FROM messages WHERE id = ?",
+  ).bind(messageId).first<any>();
+  if (!messageRow) return json({ ok: false, error: "Message not found" }, { status: 404 });
+  const member = await env.DB.prepare(
+    "SELECT 1 FROM conversation_members WHERE conversation_id = ? AND user_id = ?",
+  ).bind(messageRow.conversationId, userId).first<any>();
+  if (!member) return json({ ok: false, error: "User is not a conversation member" }, { status: 403 });
+  return messageRow;
+}
+
+async function starMessage(env: Env, messageId: string, body: JsonObject): Promise<Response> {
+  const userId = asString(body.userId || body.senderId);
+  const messageRow = await requireMessageMember(env, messageId, userId);
+  if (messageRow instanceof Response) return messageRow;
+  const now = Date.now();
+  const existing = await env.DB.prepare(
+    "SELECT 1 FROM message_starred_by WHERE message_id = ? AND user_id = ?",
+  ).bind(messageId, userId).first<any>();
+  if (existing) {
+    await env.DB.prepare("DELETE FROM message_starred_by WHERE message_id = ? AND user_id = ?")
+      .bind(messageId, userId).run();
+  } else {
+    await env.DB.prepare(
+      "INSERT INTO message_starred_by (message_id, user_id, created_at) VALUES (?, ?, ?)",
+    ).bind(messageId, userId, now).run();
+  }
+  const message = await messageFor(env, messageId);
+  if (!message) return json({ ok: false, error: "Message not found" }, { status: 404 });
+  await broadcastMessageAndChatUpdates(env, String(messageRow.conversationId), [messageId]);
+  return json(message);
+}
+
+async function pinMessage(env: Env, messageId: string, body: JsonObject): Promise<Response> {
+  const userId = asString(body.userId || body.senderId);
+  const messageRow = await requireMessageMember(env, messageId, userId);
+  if (messageRow instanceof Response) return messageRow;
+  const durationDays = Number(body.durationDays || 0);
+  const pinnedUntil = durationDays <= 0 ? null : Date.now() + durationDays * 24 * 60 * 60 * 1000;
+  await env.DB.prepare("UPDATE messages SET pinned_until = ? WHERE id = ?")
+    .bind(pinnedUntil, messageId).run();
+  const message = await messageFor(env, messageId);
+  if (!message) return json({ ok: false, error: "Message not found" }, { status: 404 });
+  await broadcastMessageAndChatUpdates(env, String(messageRow.conversationId), [messageId]);
+  return json(message);
+}
+
+async function deleteMessage(env: Env, messageId: string, body: JsonObject): Promise<Response> {
+  const userId = asString(body.userId || body.senderId);
+  const deleteType = asString(body.type || body.deleteType || "message");
+  const messageRow = await requireMessageMember(env, messageId, userId);
+  if (messageRow instanceof Response) return messageRow;
+  if (deleteType === "for_everyone") {
+    if (String(messageRow.senderId || "") !== userId) {
+      return json({ ok: false, error: "Forbidden" }, { status: 403 });
+    }
+    await env.DB.prepare("UPDATE messages SET deleted_at = ?, body = '' WHERE id = ?")
+      .bind(Date.now(), messageId).run();
+  } else {
+    await env.DB.prepare(
+      "INSERT OR IGNORE INTO message_deleted_for (message_id, user_id, created_at) VALUES (?, ?, ?)",
+    ).bind(messageId, userId, Date.now()).run();
+  }
+  const message = await messageFor(env, messageId);
+  if (!message) return json({ ok: false, error: "Message not found" }, { status: 404 });
+  await broadcastMessageAndChatUpdates(env, String(messageRow.conversationId), [messageId]);
+  return json(message);
+}
+
+async function clearConversationForUser(env: Env, conversationId: string, body: JsonObject): Promise<Response> {
+  const userId = asString(body.userId);
+  if (!userId) return badRequest("userId is required");
+  const member = await env.DB.prepare(
+    "SELECT 1 FROM conversation_members WHERE conversation_id = ? AND user_id = ?",
+  ).bind(conversationId, userId).first<any>();
+  if (!member) return json({ ok: false, error: "User is not a conversation member" }, { status: 403 });
+  const rows = await env.DB.prepare("SELECT id FROM messages WHERE conversation_id = ?")
+    .bind(conversationId).all<any>();
+  const now = Date.now();
+  await Promise.all((rows.results || []).map((row: any) =>
+    env.DB.prepare(
+      "INSERT OR IGNORE INTO message_deleted_for (message_id, user_id, created_at) VALUES (?, ?, ?)",
+    ).bind(String(row.id), userId, now).run()));
+  return json({ ok: true, chatId: conversationId });
+}
+
+async function deleteConversationForUser(env: Env, conversationId: string, body: JsonObject): Promise<Response> {
+  const userId = asString(body.userId);
+  if (!userId) return badRequest("userId is required");
+  const member = await env.DB.prepare(
+    "SELECT 1 FROM conversation_members WHERE conversation_id = ? AND user_id = ?",
+  ).bind(conversationId, userId).first<any>();
+  if (!member) return json({ ok: false, error: "User is not a conversation member" }, { status: 403 });
+  await env.DB.prepare(
+    "INSERT OR IGNORE INTO chat_deleted_for (conversation_id, user_id, created_at) VALUES (?, ?, ?)",
+  ).bind(conversationId, userId, Date.now()).run();
+  return json({ ok: true, chatId: conversationId });
+}
+
 async function uploadAttachment(env: Env, request: Request): Promise<Response> {
   const form = await request.formData();
   const fileEntry = form.get("file");
@@ -2322,8 +2846,8 @@ async function uploadAttachment(env: Env, request: Request): Promise<Response> {
     ).bind(PENDING_ATTACHMENT_CONVERSATION_ID, PENDING_ATTACHMENT_USER_ID, now).run();
     await env.DB.prepare(
       `
-        INSERT OR IGNORE INTO messages (id, conversation_id, sender_id, body, message_type, created_at)
-        VALUES (?, ?, ?, '', 'attachment_pending', ?)
+        INSERT OR IGNORE INTO messages (id, conversation_id, sender_id, body, message_type, metadata_json, created_at)
+        VALUES (?, ?, ?, '', 'attachment_pending', NULL, ?)
       `,
     ).bind(messageId, PENDING_ATTACHMENT_CONVERSATION_ID, PENDING_ATTACHMENT_USER_ID, now).run();
   }
@@ -2365,6 +2889,51 @@ async function fetchAttachment(env: Env, attachmentId: string): Promise<Response
   headers.set("content-disposition", `inline; filename="${String(row.fileName).replace(/"/g, "")}"`);
   headers.set("access-control-allow-origin", "*");
   return new Response(object.body, { headers });
+}
+
+async function attachmentsFor(env: Env, conversationId: string): Promise<Response> {
+  const rows = await env.DB.prepare(
+    `
+      SELECT
+        a.id,
+        a.file_name AS fileName,
+        a.mime_type AS mimeType,
+        a.size_bytes AS size,
+        a.created_at AS createdAt,
+        m.id AS messageId,
+        m.body AS text,
+        m.sender_id AS senderId,
+        COALESCE(u.display_name, m.sender_id) AS senderName
+      FROM attachments a
+      LEFT JOIN messages m ON m.id = a.message_id
+      LEFT JOIN users u ON u.id = m.sender_id
+      WHERE m.conversation_id = ?
+      ORDER BY a.created_at DESC
+    `,
+  ).bind(conversationId).all<any>();
+  const items = (rows.results || []).map((row: any) => ({
+    id: row.id,
+    messageId: row.messageId,
+    fileName: row.fileName || null,
+    mimeType: row.mimeType || null,
+    size: row.size || 0,
+    url: `/api/chat/attachments/${encodeURIComponent(String(row.id || ""))}`,
+    text: row.text || "",
+    senderId: row.senderId || "",
+    senderName: row.senderName || row.senderId || "",
+    createdAt: row.createdAt || Date.now(),
+  }));
+  return json({
+    media: items.filter((item) => {
+      const mime = String(item.mimeType || "");
+      return mime.startsWith("image/") || mime.startsWith("video/");
+    }),
+    files: items.filter((item) => {
+      const mime = String(item.mimeType || "");
+      return !mime.startsWith("image/") && !mime.startsWith("video/");
+    }),
+    links: [],
+  });
 }
 
 async function deleteR2Prefix(bucket: R2Bucket, prefix: string): Promise<number> {
@@ -2598,6 +3167,218 @@ async function repairDirectConversations(env: Env, request: Request): Promise<Re
   });
 }
 
+async function requireAdminResetAccess(env: Env, request: Request): Promise<Response | null> {
+  const enabled = env.ENABLE_DEV_RESET === "true";
+  const expectedSecret = env.DEV_RESET_SECRET || "";
+  const providedSecret = request.headers.get("x-dev-reset-secret") || "";
+  if (!enabled || !expectedSecret || providedSecret !== expectedSecret) {
+    return json({ ok: false, error: "Forbidden" }, { status: 403 });
+  }
+  await ensureCloudAccountSchema(env);
+  return null;
+}
+
+async function adminListUsers(env: Env, request: Request): Promise<Response> {
+  const denied = await requireAdminResetAccess(env, request);
+  if (denied) return denied;
+  const rows = await env.DB.prepare(
+    `
+      SELECT u.id,
+        COALESCE(p.display_name, u.display_name) AS displayName,
+        p.username,
+        p.phone,
+        p.email,
+        COALESCE(p.avatar_url, u.avatar_url) AS avatarUrl,
+        (
+          SELECT COUNT(*)
+          FROM conversation_members cm
+          WHERE cm.user_id = u.id
+        ) AS conversationCount,
+        (
+          SELECT COUNT(*)
+          FROM messages m
+          WHERE m.sender_id = u.id
+        ) AS sentMessageCount,
+        (
+          SELECT COUNT(*)
+          FROM statuses s
+          WHERE s.owner_id = u.id
+        ) AS statusCount
+      FROM users u
+      LEFT JOIN user_profiles p ON p.user_id = u.id
+      ORDER BY COALESCE(p.display_name, u.display_name) ASC
+    `,
+  ).all<any>().catch(() => ({ results: [] as any[] }));
+  return json({
+    ok: true,
+    users: (rows.results || []).map((row: any) => ({
+      id: row.id,
+      name: row.displayName || row.id,
+      username: row.username || null,
+      phone: row.phone || null,
+      email: row.email || null,
+      avatarUrl: row.avatarUrl || null,
+      conversationCount: Number(row.conversationCount || 0),
+      sentMessageCount: Number(row.sentMessageCount || 0),
+      statusCount: Number(row.statusCount || 0),
+    })),
+  });
+}
+
+async function adminDeleteChats(env: Env, request: Request): Promise<Response> {
+  const denied = await requireAdminResetAccess(env, request);
+  if (denied) return denied;
+  const body = await readJson(request);
+  const deleteAll = asBoolean(body.all, false);
+  const requestedUserIds = await resolveUserIdentifiers(env, asStringList(body.userIds));
+  if (!deleteAll && requestedUserIds.length === 0) {
+    return badRequest("userIds are required unless all=true");
+  }
+
+  const conversationRows = deleteAll
+    ? await env.DB.prepare("SELECT id FROM conversations").all<any>()
+    : await env.DB.prepare(
+        `
+          SELECT DISTINCT c.id
+          FROM conversations c
+          JOIN conversation_members cm ON cm.conversation_id = c.id
+          WHERE cm.user_id IN (${requestedUserIds.map(() => "?").join(",")})
+        `,
+      ).bind(...requestedUserIds).all<any>();
+  const conversationIds: string[] = Array.from(
+    new Set((conversationRows.results || []).map((row: any) => String(row?.id || "")).filter(Boolean)),
+  );
+  if (conversationIds.length === 0) {
+    return json({
+      ok: true,
+      deletedConversationCount: 0,
+      deletedMessageCount: 0,
+      deletedAttachmentCount: 0,
+    });
+  }
+
+  const placeholders = conversationIds.map(() => "?").join(",");
+  const attachmentRows = await env.DB.prepare(
+    `SELECT id FROM attachments WHERE conversation_id IN (${placeholders})`,
+  ).bind(...conversationIds).all<any>();
+  const attachmentIds = (attachmentRows.results || []).map((row: any) => String(row?.id || "")).filter(Boolean);
+  const messageRows = await env.DB.prepare(
+    `SELECT id FROM messages WHERE conversation_id IN (${placeholders})`,
+  ).bind(...conversationIds).all<any>();
+  const messageIds = (messageRows.results || []).map((row: any) => String(row?.id || "")).filter(Boolean);
+  const callRows = await env.DB.prepare(
+    `SELECT id FROM call_sessions WHERE chat_id IN (${placeholders})`,
+  ).bind(...conversationIds).all<any>().catch(() => ({ results: [] as any[] }));
+  const callIds = (callRows.results || []).map((row: any) => String(row?.id || "")).filter(Boolean);
+
+  if (messageIds.length > 0) {
+    const messagePlaceholders = messageIds.map(() => "?").join(",");
+    await env.DB.prepare(`DELETE FROM message_reactions WHERE message_id IN (${messagePlaceholders})`).bind(...messageIds).run();
+    await env.DB.prepare(`DELETE FROM message_starred_by WHERE message_id IN (${messagePlaceholders})`).bind(...messageIds).run();
+    await env.DB.prepare(`DELETE FROM message_deleted_for WHERE message_id IN (${messagePlaceholders})`).bind(...messageIds).run();
+    await env.DB.prepare(`DELETE FROM message_receipts WHERE message_id IN (${messagePlaceholders})`).bind(...messageIds).run();
+  }
+  if (callIds.length > 0) {
+    const callPlaceholders = callIds.map(() => "?").join(",");
+    await env.DB.prepare(`DELETE FROM call_events WHERE call_id IN (${callPlaceholders})`).bind(...callIds).run().catch(() => undefined);
+    await env.DB.prepare(`DELETE FROM call_participants WHERE call_id IN (${callPlaceholders})`).bind(...callIds).run().catch(() => undefined);
+  }
+  await env.DB.prepare(`DELETE FROM call_sessions WHERE chat_id IN (${placeholders})`).bind(...conversationIds).run().catch(() => undefined);
+  await env.DB.prepare(`DELETE FROM attachments WHERE conversation_id IN (${placeholders})`).bind(...conversationIds).run();
+  await env.DB.prepare(`DELETE FROM messages WHERE conversation_id IN (${placeholders})`).bind(...conversationIds).run();
+  await env.DB.prepare(`DELETE FROM conversation_preferences WHERE conversation_id IN (${placeholders})`).bind(...conversationIds).run();
+  await env.DB.prepare(`DELETE FROM chat_deleted_for WHERE conversation_id IN (${placeholders})`).bind(...conversationIds).run();
+  await env.DB.prepare(`DELETE FROM conversation_members WHERE conversation_id IN (${placeholders})`).bind(...conversationIds).run();
+  await env.DB.prepare(`DELETE FROM conversations WHERE id IN (${placeholders})`).bind(...conversationIds).run();
+
+  return json({
+    ok: true,
+    scope: deleteAll ? "all" : "selected_users",
+    userIds: requestedUserIds,
+    deletedConversationCount: conversationIds.length,
+    deletedMessageCount: messageIds.length,
+    deletedAttachmentCount: attachmentIds.length,
+  });
+}
+
+async function adminDeleteUsers(env: Env, request: Request): Promise<Response> {
+  const denied = await requireAdminResetAccess(env, request);
+  if (denied) return denied;
+  const body = await readJson(request);
+  const deleteAll = asBoolean(body.all, false);
+  const requestedUserIds = await resolveUserIdentifiers(env, asStringList(body.userIds));
+  if (!deleteAll && requestedUserIds.length === 0) {
+    return badRequest("userIds are required unless all=true");
+  }
+
+  const userRows = deleteAll
+    ? await env.DB.prepare("SELECT id FROM users").all<any>()
+    : await env.DB.prepare(
+        `SELECT id FROM users WHERE id IN (${requestedUserIds.map(() => "?").join(",")})`,
+      ).bind(...requestedUserIds).all<any>();
+  const userIds: string[] = Array.from(
+    new Set((userRows.results || []).map((row: any) => String(row?.id || "")).filter(Boolean)),
+  );
+  if (userIds.length === 0) {
+    return json({ ok: true, deletedUserCount: 0, deletedConversationCount: 0 });
+  }
+
+  const conversationRows = await env.DB.prepare(
+    `
+      SELECT DISTINCT c.id
+      FROM conversations c
+      JOIN conversation_members cm ON cm.conversation_id = c.id
+      WHERE cm.user_id IN (${userIds.map(() => "?").join(",")})
+    `,
+  ).bind(...userIds).all<any>();
+  const conversationIds: string[] = Array.from(
+    new Set((conversationRows.results || []).map((row: any) => String(row?.id || "")).filter(Boolean)),
+  );
+  if (conversationIds.length > 0) {
+    const chatRequest = new Request("https://admin.local/api/admin/delete-chats", {
+      method: "POST",
+      headers: request.headers,
+      body: JSON.stringify({ all: false, userIds }),
+    });
+    await adminDeleteChats(env, chatRequest);
+  }
+
+  const userPlaceholders = userIds.map(() => "?").join(",");
+  await env.DB.prepare(`DELETE FROM contacts WHERE owner_user_id IN (${userPlaceholders}) OR contact_user_id IN (${userPlaceholders})`)
+    .bind(...userIds, ...userIds).run();
+  await env.DB.prepare(`DELETE FROM status_views WHERE viewer_id IN (${userPlaceholders})`).bind(...userIds).run().catch(() => undefined);
+  await env.DB.prepare(`DELETE FROM status_reactions WHERE reactor_id IN (${userPlaceholders})`).bind(...userIds).run().catch(() => undefined);
+  await env.DB.prepare(`DELETE FROM status_replies WHERE sender_id IN (${userPlaceholders})`).bind(...userIds).run().catch(() => undefined);
+  const ownedStatusRows = await env.DB.prepare(`SELECT id FROM statuses WHERE owner_id IN (${userPlaceholders})`).bind(...userIds).all<any>().catch(() => ({ results: [] as any[] }));
+  const ownedStatusIds = (ownedStatusRows.results || []).map((row: any) => String(row?.id || "")).filter(Boolean);
+  if (ownedStatusIds.length > 0) {
+    const statusPlaceholders = ownedStatusIds.map(() => "?").join(",");
+    await env.DB.prepare(`DELETE FROM status_views WHERE status_id IN (${statusPlaceholders})`).bind(...ownedStatusIds).run().catch(() => undefined);
+    await env.DB.prepare(`DELETE FROM status_reactions WHERE status_id IN (${statusPlaceholders})`).bind(...ownedStatusIds).run().catch(() => undefined);
+    await env.DB.prepare(`DELETE FROM status_replies WHERE status_id IN (${statusPlaceholders})`).bind(...ownedStatusIds).run().catch(() => undefined);
+    await env.DB.prepare(`DELETE FROM status_media WHERE status_id IN (${statusPlaceholders})`).bind(...ownedStatusIds).run().catch(() => undefined);
+    await env.DB.prepare(`DELETE FROM status_archive_jobs WHERE status_id IN (${statusPlaceholders})`).bind(...ownedStatusIds).run().catch(() => undefined);
+  }
+  await env.DB.prepare(`DELETE FROM user_chat_preferences WHERE user_id IN (${userPlaceholders})`).bind(...userIds).run();
+  await env.DB.prepare(`DELETE FROM user_profiles WHERE user_id IN (${userPlaceholders})`).bind(...userIds).run();
+  await env.DB.prepare(`DELETE FROM call_events WHERE sender_user_id IN (${userPlaceholders}) OR receiver_user_id IN (${userPlaceholders})`).bind(...userIds, ...userIds).run().catch(() => undefined);
+  await env.DB.prepare(`DELETE FROM call_participants WHERE user_id IN (${userPlaceholders})`).bind(...userIds).run().catch(() => undefined);
+  await env.DB.prepare(`DELETE FROM call_sessions WHERE caller_user_id IN (${userPlaceholders}) OR receiver_user_id IN (${userPlaceholders})`).bind(...userIds, ...userIds).run().catch(() => undefined);
+  await env.DB.prepare(`DELETE FROM sessions WHERE user_id IN (${userPlaceholders})`).bind(...userIds).run();
+  await env.DB.prepare(`DELETE FROM devices WHERE user_id IN (${userPlaceholders})`).bind(...userIds).run();
+  await env.DB.prepare(`DELETE FROM device_push_tokens WHERE user_id IN (${userPlaceholders})`).bind(...userIds).run();
+  await env.DB.prepare(`DELETE FROM notification_events WHERE user_id IN (${userPlaceholders})`).bind(...userIds).run();
+  await env.DB.prepare(`DELETE FROM statuses WHERE owner_id IN (${userPlaceholders})`).bind(...userIds).run().catch(() => undefined);
+  await env.DB.prepare(`DELETE FROM users WHERE id IN (${userPlaceholders})`).bind(...userIds).run();
+
+  return json({
+    ok: true,
+    scope: deleteAll ? "all" : "selected_users",
+    userIds,
+    deletedUserCount: userIds.length,
+    deletedConversationCount: conversationIds.length,
+  });
+}
 async function getBindingDebug(env: Env): Promise<Response> {
   const d1 = {
     binding: "DB",
@@ -2667,7 +3448,12 @@ export class RealtimeRoom {
 
     if (url.pathname === "/relay" && request.method === "POST") {
       const body = await readJson(request);
-      this.broadcast(asString(body.event, "call:event"), (body.payload && typeof body.payload === "object" ? body.payload : {}) as JsonObject);
+      const event = asString(body.event, "call:event");
+      const payload = (body.payload && typeof body.payload === "object" ? body.payload : {}) as JsonObject;
+      this.broadcast(event, payload);
+      if (event === "session_revoked") {
+        this.closeAllSockets("session_revoked");
+      }
       return json({ ok: true, sockets: this.sockets.size });
     }
 
@@ -2805,6 +3591,17 @@ export class RealtimeRoom {
     await relayCallEvent(this.env, event, outgoing);
   }
 
+  private closeAllSockets(reason: string): void {
+    for (const socket of [...this.sockets]) {
+      try {
+        socket.close(1000, reason);
+      } catch {
+        // ignore close errors for already-closing sockets
+      }
+      this.sockets.delete(socket);
+    }
+  }
+
   private async sendPresenceSnapshot(socket: WebSocket): Promise<void> {
     const userIds = await recentOnlineUserIds(this.env);
     for (const userId of userIds) {
@@ -2862,6 +3659,18 @@ export default {
 
     if (url.pathname === "/api/dev/repair-direct-conversations" && request.method === "POST") {
       return repairDirectConversations(env, request);
+    }
+
+    if (url.pathname === "/api/admin/users" && request.method === "GET") {
+      return adminListUsers(env, request);
+    }
+
+    if (url.pathname === "/api/admin/delete-chats" && request.method === "POST") {
+      return adminDeleteChats(env, request);
+    }
+
+    if (url.pathname === "/api/admin/delete-users" && request.method === "POST") {
+      return adminDeleteUsers(env, request);
     }
 
     if (url.pathname.startsWith("/rooms/")) {
@@ -3148,6 +3957,11 @@ export default {
       return updateCallFromRest(env, request, decodeURIComponent(callActionMatch[1]), callActionMatch[2]);
     }
 
+    const callSignalMatch = url.pathname.match(/^\/api\/calls\/([^/]+)\/signal$/);
+    if (callSignalMatch && request.method === "POST") {
+      return relayCallSignalFromRest(env, request, decodeURIComponent(callSignalMatch[1]));
+    }
+
     const callGetMatch = url.pathname.match(/^\/api\/calls\/([^/]+)$/);
     if (callGetMatch && request.method === "GET") {
       return getCall(env, request, decodeURIComponent(callGetMatch[1]));
@@ -3172,15 +3986,39 @@ export default {
     }
 
     if (url.pathname === "/api/chat/conversations" && request.method === "GET") {
-      return listConversations(env, url);
+      return listConversations(env, url, request);
+    }
+
+    if (url.pathname === "/api/chats" && request.method === "GET") {
+      return listConversations(env, url, request);
+    }
+
+    if (url.pathname === "/api/chat/chats" && request.method === "GET") {
+      return listConversations(env, url, request);
     }
 
     if (url.pathname === "/api/chat/conversations" && request.method === "POST") {
-      return createConversation(env, await readJson(request));
+      return createConversation(env, await readJson(request), request);
+    }
+
+    if (url.pathname === "/api/chats" && request.method === "POST") {
+      return createConversation(env, await readJson(request), request);
+    }
+
+    if (url.pathname === "/api/chat/chats" && request.method === "POST") {
+      return createConversation(env, await readJson(request), request);
     }
 
     if (url.pathname === "/api/chat/conversations/direct" && request.method === "POST") {
-      return createConversation(env, { ...(await readJson(request)), type: "direct" });
+      return createConversation(env, { ...(await readJson(request)), type: "direct" }, request);
+    }
+
+    if (url.pathname === "/api/chats/direct" && request.method === "POST") {
+      return createConversation(env, { ...(await readJson(request)), type: "direct" }, request);
+    }
+
+    if (url.pathname === "/api/chat/chats/direct" && request.method === "POST") {
+      return createConversation(env, { ...(await readJson(request)), type: "direct" }, request);
     }
 
     const conversationMessagesMatch = url.pathname.match(/^\/api\/chat\/conversations\/([^/]+)\/messages$/);
@@ -3191,9 +4029,35 @@ export default {
       return json(await messagesFor(env, conversationId, limit, offset));
     }
 
+    const legacyChatMessagesMatch = url.pathname.match(/^\/api\/chat\/chats\/([^/]+)\/messages$/);
+    if (legacyChatMessagesMatch && request.method === "GET") {
+      const conversationId = decodeURIComponent(legacyChatMessagesMatch[1]);
+      const limit = Math.min(Math.max(Number(url.searchParams.get("limit") || 50), 1), 100);
+      const offset = Math.max(Number(url.searchParams.get("offset") || 0), 0);
+      return json(await messagesFor(env, conversationId, limit, offset));
+    }
+
+    const plainChatMessagesMatch = url.pathname.match(/^\/api\/chats\/([^/]+)\/messages$/);
+    if (plainChatMessagesMatch && request.method === "GET") {
+      const conversationId = decodeURIComponent(plainChatMessagesMatch[1]);
+      const limit = Math.min(Math.max(Number(url.searchParams.get("limit") || 50), 1), 100);
+      const offset = Math.max(Number(url.searchParams.get("offset") || 0), 0);
+      return json(await messagesFor(env, conversationId, limit, offset));
+    }
+
     if (conversationMessagesMatch && request.method === "POST") {
       const conversationId = decodeURIComponent(conversationMessagesMatch[1]);
-      return createMessage(env, conversationId, await readJson(request));
+      return createMessage(env, conversationId, await readJson(request), request);
+    }
+
+    if (plainChatMessagesMatch && request.method === "POST") {
+      const conversationId = decodeURIComponent(plainChatMessagesMatch[1]);
+      return createMessage(env, conversationId, await readJson(request), request);
+    }
+
+    if (legacyChatMessagesMatch && request.method === "POST") {
+      const conversationId = decodeURIComponent(legacyChatMessagesMatch[1]);
+      return createMessage(env, conversationId, await readJson(request), request);
     }
 
     const readMatch = url.pathname.match(/^\/api\/chat\/messages\/([^/]+)\/read$/);
@@ -3209,6 +4073,71 @@ export default {
     const conversationReactMatch = url.pathname.match(/^\/api\/chat\/conversations\/([^/]+)\/messages\/([^/]+)\/react$/);
     if (conversationReactMatch && request.method === "POST") {
       return reactToMessage(env, decodeURIComponent(conversationReactMatch[2]), await readJson(request));
+    }
+
+    const plainChatReactMatch = url.pathname.match(/^\/api\/chats\/([^/]+)\/messages\/([^/]+)\/react$/);
+    if (plainChatReactMatch && request.method === "POST") {
+      return reactToMessage(env, decodeURIComponent(plainChatReactMatch[2]), await readJson(request));
+    }
+
+    const starMatch = url.pathname.match(/^\/api\/chat\/messages\/([^/]+)\/star$/);
+    if (starMatch && request.method === "POST") {
+      return starMessage(env, decodeURIComponent(starMatch[1]), await readJson(request));
+    }
+
+    const plainChatStarMatch = url.pathname.match(/^\/api\/chats\/([^/]+)\/messages\/([^/]+)\/star$/);
+    if (plainChatStarMatch && request.method === "POST") {
+      return starMessage(env, decodeURIComponent(plainChatStarMatch[2]), await readJson(request));
+    }
+
+    const pinMatch = url.pathname.match(/^\/api\/chat\/messages\/([^/]+)\/pin$/);
+    if (pinMatch && request.method === "POST") {
+      return pinMessage(env, decodeURIComponent(pinMatch[1]), await readJson(request));
+    }
+
+    const plainChatPinMatch = url.pathname.match(/^\/api\/chats\/([^/]+)\/messages\/([^/]+)\/pin$/);
+    if (plainChatPinMatch && request.method === "POST") {
+      return pinMessage(env, decodeURIComponent(plainChatPinMatch[2]), await readJson(request));
+    }
+
+    const deleteMessageMatch = url.pathname.match(/^\/api\/chat\/messages\/([^/]+)$/);
+    if (deleteMessageMatch && request.method === "DELETE") {
+      return deleteMessage(env, decodeURIComponent(deleteMessageMatch[1]), await readJson(request));
+    }
+
+    const conversationDeleteMessageMatch = url.pathname.match(/^\/api\/chat\/conversations\/([^/]+)\/messages\/([^/]+)$/);
+    if (conversationDeleteMessageMatch && request.method === "DELETE") {
+      return deleteMessage(env, decodeURIComponent(conversationDeleteMessageMatch[2]), await readJson(request));
+    }
+
+    const plainChatDeleteMessageMatch = url.pathname.match(/^\/api\/chats\/([^/]+)\/messages\/([^/]+)$/);
+    if (plainChatDeleteMessageMatch && request.method === "DELETE") {
+      return deleteMessage(env, decodeURIComponent(plainChatDeleteMessageMatch[2]), await readJson(request));
+    }
+
+    const clearConversationMatch = url.pathname.match(/^\/api\/chat\/conversations\/([^/]+)\/clear$/);
+    if (clearConversationMatch && request.method === "DELETE") {
+      return clearConversationForUser(env, decodeURIComponent(clearConversationMatch[1]), await readJson(request));
+    }
+
+    const plainChatClearMatch = url.pathname.match(/^\/api\/chats\/([^/]+)\/clear$/);
+    if (plainChatClearMatch && request.method === "DELETE") {
+      return clearConversationForUser(env, decodeURIComponent(plainChatClearMatch[1]), await readJson(request));
+    }
+
+    const deleteConversationMatch = url.pathname.match(/^\/api\/chat\/conversations\/([^/]+)$/);
+    if (deleteConversationMatch && request.method === "DELETE") {
+      return deleteConversationForUser(env, decodeURIComponent(deleteConversationMatch[1]), await readJson(request));
+    }
+
+    const plainChatDeleteMatch = url.pathname.match(/^\/api\/chats\/([^/]+)$/);
+    if (plainChatDeleteMatch && request.method === "DELETE") {
+      return deleteConversationForUser(env, decodeURIComponent(plainChatDeleteMatch[1]), await readJson(request));
+    }
+
+    const plainChatAttachmentsMatch = url.pathname.match(/^\/api\/chats\/([^/]+)\/attachments$/);
+    if (plainChatAttachmentsMatch && request.method === "GET") {
+      return attachmentsFor(env, decodeURIComponent(plainChatAttachmentsMatch[1]));
     }
 
     if (url.pathname === "/api/chat/attachments/upload" && request.method === "POST") {

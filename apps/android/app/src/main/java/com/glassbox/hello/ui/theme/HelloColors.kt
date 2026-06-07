@@ -44,7 +44,42 @@ data class HelloAppPalette(
 )
 
 object HelloAppThemes {
-    const val DefaultId = "midnight"
+    const val DefaultId = "cute"
+
+    val Cute = HelloAppPalette(
+        id = "cute",
+        label = "Cute theme",
+        subtitle = "Candy pink - stitched kawaii glass",
+        isDark = false,
+        bgDeep = Color(0xFFFFC3DD),
+        bgBase = Color(0xFFFFEAF4),
+        surface = Color(0xFFFFF7FB),
+        elevated = Color(0xFFFFD8EA),
+        panel = Color(0xDFFFF6FA),
+        panelStrong = Color(0xF9FFF8FC),
+        panelMuted = Color(0xCFFFF0F7),
+        border = Color(0x66FF9BC2),
+        borderStrong = Color(0x99F05A9B),
+        text = Color(0xFF8B1E50),
+        textSecondary = Color(0xFFD14C86),
+        textMuted = Color(0xFFC46A93),
+        accent = Color(0xFFFF6FAE),
+        accentStrong = Color(0xFFE83F86),
+        accentSoft = Color(0x33FF6FAE),
+        accentDeep = Color(0xFFC51E62),
+        outgoing = Color(0xFFFF9FCA),
+        outgoingBorder = Color(0xD9FF6FAE),
+        outgoingText = Color(0xFF7D1746),
+        incoming = Color(0xF9FFF8FC),
+        incomingBorder = Color(0x88FF9BC2),
+        incomingText = Color(0xFF84234B),
+        warm = Color(0xFFFFB23F),
+        danger = Color(0xFFFF4D72),
+        orbA = Color(0x66FFFFFF),
+        orbB = Color(0x44FF80B5),
+        orbC = Color(0x33FFE08A),
+        previewPalette = listOf(Color(0xFFFFC3DD), Color(0xFFFFF8FC), Color(0xFFFF6FAE), Color(0xFFFF9FCA), Color(0xFFFFB23F))
+    )
 
     val Midnight = HelloAppPalette(
         id = "midnight",
@@ -256,12 +291,14 @@ object HelloAppThemes {
         previewPalette = listOf(Color(0xFF06101A), Color(0xFF111D2C), Color(0xFF3B82F6), Color(0xFF0B274A), Color(0xFF06B6D4))
     )
 
-    val All = listOf(Midnight, Amoled, Twilight, Ember, Arctic, Dusk)
+    val All = listOf(Cute, Midnight, Amoled, Twilight, Ember, Arctic, Dusk)
 
     fun normalizeId(id: String?): String {
         return when (id?.lowercase()) {
+            "cute", "cute theme", "kawaii", "pink" -> Cute.id
             "light", "white", "arctic" -> Arctic.id
-            "dark", "system", null, "", "midnight" -> Midnight.id
+            "dark", "system", "midnight" -> Midnight.id
+            null, "" -> DefaultId
             else -> All.firstOrNull { it.id == id.lowercase() }?.id ?: DefaultId
         }
     }
@@ -306,18 +343,18 @@ object HelloColors {
     val DarkAccentSoft: Color get() = p.accentSoft
     val DarkDanger: Color get() = p.danger
 
-    val AuthBg: Color get() = HelloAppThemes.Midnight.bgDeep
-    val AuthPanel: Color get() = Color(0xFF1C2A34)
-    val AuthInput: Color get() = Color(0xFF22313B)
-    val AuthBorder: Color get() = Color(0xFF344551)
-    val AuthText: Color get() = Color(0xFFEEF5F2)
-    val AuthMuted: Color get() = Color(0xFFA4B2BE)
-    val AuthAccent: Color get() = Color(0xFF00D4AA)
-    val AuthAccentStrong: Color get() = Color(0xFF33FFCE)
-    val AuthErrorPanel: Color get() = Color(0x4D7F1D1D)
-    val AuthErrorText: Color get() = Color(0xFFFF6B6B)
+    val AuthBg: Color get() = p.bgDeep
+    val AuthPanel: Color get() = p.panelStrong
+    val AuthInput: Color get() = p.elevated
+    val AuthBorder: Color get() = p.borderStrong
+    val AuthText: Color get() = p.text
+    val AuthMuted: Color get() = p.textSecondary
+    val AuthAccent: Color get() = p.accent
+    val AuthAccentStrong: Color get() = p.accentStrong
+    val AuthErrorPanel: Color get() = p.danger.copy(alpha = 0.12f)
+    val AuthErrorText: Color get() = p.danger
 
-    val MessageMine: Color get() = if (p.isDark) p.outgoing else Color(0xFFCFEFEB)
+    val MessageMine: Color get() = p.outgoing
     val MessageMineDark: Color get() = p.outgoing
     val MessageOther: Color get() = p.incoming
     val MessageOtherDark: Color get() = p.incoming
@@ -364,13 +401,13 @@ object HelloColors {
     val OrbPurple: Color get() = p.orbB
     val OrbWarm: Color get() = p.orbC
 
-    val StoryAccent: Color get() = if (p.isDark) p.accent else Color(0xFFFFD600)
-    val StoryAccentStrong: Color get() = if (p.isDark) p.accentStrong else Color(0xFFFFC400)
+    val StoryAccent: Color get() = if (p.id == "cute") p.accent else if (p.isDark) p.accent else Color(0xFFFFD600)
+    val StoryAccentStrong: Color get() = if (p.id == "cute") p.accentStrong else if (p.isDark) p.accentStrong else Color(0xFFFFC400)
     val StoryPrimaryButton: Color get() = StoryAccent
     val StoryPrimaryButtonText: Color get() = if (p.isDark) TextOnTeal else Color(0xFF101418)
     val StoryRingUnseen: Color get() = StoryAccent
     val StoryRingSeen: Color get() = if (p.isDark) Color.White.copy(alpha = 0.28f) else Color(0xFFCCD2DA)
-    val StoryCanvasBackground: Color get() = if (p.isDark) p.accentDeep else Color(0xFFFFD600)
+    val StoryCanvasBackground: Color get() = if (p.id == "cute") Color(0xFFFFBCD7) else if (p.isDark) p.accentDeep else Color(0xFFFFD600)
     val StoryViewerOverlay: Color get() = Color.Black.copy(alpha = if (p.isDark) 0.64f else 0.48f)
     val StoryToolRailBackground: Color get() = if (p.isDark) Color.Black.copy(alpha = 0.36f) else Color.White.copy(alpha = 0.86f)
     val StoryPopupBackground: Color get() = if (p.isDark) p.panelStrong else Color.White

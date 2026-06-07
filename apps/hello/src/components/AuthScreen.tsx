@@ -90,14 +90,14 @@ export function AuthScreen({ onAuthSuccess }: AuthScreenProps) {
   };
 
   return (
-    <div className="flex bg-slate-100 dark:bg-[#0b141a] w-full min-h-screen items-center justify-center p-4">
-      <div className="bg-white dark:bg-[#111b21] rounded-2xl shadow-lg border border-slate-200 dark:border-[#2f3b43] max-w-sm w-full overflow-hidden p-8">
-        <h2 className="text-2xl font-bold text-center text-slate-800 dark:text-[#e9edef] mb-6">
+    <div className="hello-app-ambient flex w-full min-h-screen items-center justify-center bg-[var(--hello-bg)] p-4 text-[var(--hello-text)]">
+      <div className="hello-panel-strong max-w-sm w-full overflow-hidden rounded-[var(--hello-radius-xl)] p-8">
+        <h2 className="text-2xl font-bold text-center text-[var(--hello-text)] mb-6">
           {mode === "login" ? "Welcome Back" : "Create Account"}
         </h2>
 
         {error && (
-          <div className="p-3 mb-4 text-sm text-red-500 bg-red-100 dark:bg-red-900/30 rounded">
+          <div className="p-3 mb-4 text-sm text-[var(--hello-danger)] bg-red-500/10 rounded-[var(--hello-radius-sm)]">
             {error}
           </div>
         )}
@@ -111,7 +111,7 @@ export function AuthScreen({ onAuthSuccess }: AuthScreenProps) {
               <input
                 type="text"
                 placeholder="Username"
-                className="w-full bg-slate-50 dark:bg-[#202c33] border border-slate-200 dark:border-[#2f3b43] rounded-lg px-4 py-3 text-slate-800 dark:text-[#e9edef] placeholder:text-[#8696a0] focus:outline-none focus:border-[#00a884]"
+                className="hello-input w-full px-4 py-3 placeholder:text-[var(--hello-text-muted)]"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 required
@@ -119,23 +119,23 @@ export function AuthScreen({ onAuthSuccess }: AuthScreenProps) {
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full bg-[#00a884] hover:bg-[#008f6f] text-white font-medium py-3 rounded-lg transition-colors mt-2"
+                className="w-full bg-[var(--hello-accent)] hover:bg-[var(--hello-accent-strong)] text-white font-medium py-3 rounded-[var(--hello-radius-md)] transition-colors mt-2"
               >
                 {loading ? "Checking..." : "Continue"}
               </button>
             </form>
           ) : (
             <form onSubmit={handleLogin} className="flex flex-col gap-4">
-              <div className="text-sm font-medium text-slate-600 dark:text-slate-400 mb-2">
+              <div className="text-sm font-medium text-[var(--hello-text-muted)] mb-2">
                 Security Question: <br />
-                <span className="text-lg text-slate-800 dark:text-slate-200">
+                <span className="text-lg text-[var(--hello-text)]">
                   {fetchedQuestion}
                 </span>
               </div>
               <input
                 type="text"
                 placeholder="Your Answer"
-                className="w-full bg-slate-50 dark:bg-[#202c33] border border-slate-200 dark:border-[#2f3b43] rounded-lg px-4 py-3 text-slate-800 dark:text-[#e9edef] placeholder:text-[#8696a0] focus:outline-none focus:border-[#00a884]"
+                className="hello-input w-full px-4 py-3 placeholder:text-[var(--hello-text-muted)]"
                 value={securityAnswer}
                 onChange={(e) => setSecurityAnswer(e.target.value)}
                 required
@@ -143,7 +143,7 @@ export function AuthScreen({ onAuthSuccess }: AuthScreenProps) {
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full bg-[#00a884] hover:bg-[#008f6f] text-white font-medium py-3 rounded-lg transition-colors mt-2"
+                className="w-full bg-[var(--hello-accent)] hover:bg-[var(--hello-accent-strong)] text-white font-medium py-3 rounded-[var(--hello-radius-md)] transition-colors mt-2"
               >
                 {loading ? "Signing in..." : "Sign In"}
               </button>
@@ -154,7 +154,7 @@ export function AuthScreen({ onAuthSuccess }: AuthScreenProps) {
                   setSecurityAnswer("");
                   setError("");
                 }}
-                className="w-full text-slate-500 hover:text-slate-700 dark:hover:text-[#e9edef] text-sm py-2"
+                className="w-full text-[var(--hello-text-muted)] hover:text-[var(--hello-text)] text-sm py-2"
               >
                 Back
               </button>
@@ -165,20 +165,20 @@ export function AuthScreen({ onAuthSuccess }: AuthScreenProps) {
             <input
               type="text"
               placeholder="Choose a Username"
-              className="w-full bg-slate-50 dark:bg-[#202c33] border border-slate-200 dark:border-[#2f3b43] rounded-lg px-4 py-3 text-slate-800 dark:text-[#e9edef] placeholder:text-[#8696a0] focus:outline-none focus:border-[#00a884]"
+              className="hello-input w-full px-4 py-3 placeholder:text-[var(--hello-text-muted)]"
               value={name}
               onChange={(e) => setName(e.target.value)}
               required
             />
 
             <div className="flex flex-col gap-1">
-              <label className="text-sm text-slate-600 dark:text-slate-400 font-medium">
+              <label className="text-sm text-[var(--hello-text-muted)] font-medium">
                 Security Question
               </label>
               <select
                 value={securityQuestion}
                 onChange={(e) => setSecurityQuestion(e.target.value)}
-                className="w-full bg-slate-50 dark:bg-[#202c33] border border-slate-200 dark:border-[#2f3b43] rounded-lg px-4 py-3 text-slate-800 dark:text-[#e9edef] focus:outline-none focus:border-[#00a884]"
+                className="hello-input w-full px-4 py-3"
               >
                 {commonQuestions.map((q) => (
                   <option key={q} value={q}>
@@ -191,7 +191,7 @@ export function AuthScreen({ onAuthSuccess }: AuthScreenProps) {
             <input
               type="text"
               placeholder="Your Answer (This will be your password)"
-              className="w-full bg-slate-50 dark:bg-[#202c33] border border-slate-200 dark:border-[#2f3b43] rounded-lg px-4 py-3 text-slate-800 dark:text-[#e9edef] placeholder:text-[#8696a0] focus:outline-none focus:border-[#00a884]"
+              className="hello-input w-full px-4 py-3 placeholder:text-[var(--hello-text-muted)]"
               value={securityAnswer}
               onChange={(e) => setSecurityAnswer(e.target.value)}
               required
@@ -200,14 +200,14 @@ export function AuthScreen({ onAuthSuccess }: AuthScreenProps) {
             <button
               type="submit"
               disabled={loading}
-              className="w-full bg-[#00a884] hover:bg-[#008f6f] text-white font-medium py-3 rounded-lg transition-colors mt-2"
+              className="w-full bg-[var(--hello-accent)] hover:bg-[var(--hello-accent-strong)] text-white font-medium py-3 rounded-[var(--hello-radius-md)] transition-colors mt-2"
             >
               {loading ? "Creating..." : "Sign Up"}
             </button>
           </form>
         )}
 
-        <div className="mt-6 text-center text-sm text-slate-500 dark:text-[#8696a0] flex flex-col gap-2">
+        <div className="mt-6 text-center text-sm text-[var(--hello-text-muted)] flex flex-col gap-2">
           {mode === "login" ? (
             <div>
               Don't have an account?{" "}
@@ -217,7 +217,7 @@ export function AuthScreen({ onAuthSuccess }: AuthScreenProps) {
                   setMode("register");
                   setError("");
                 }}
-                className="text-[#00a884] hover:underline"
+                className="text-[var(--hello-accent)] hover:underline"
               >
                 Sign up
               </button>
@@ -232,7 +232,7 @@ export function AuthScreen({ onAuthSuccess }: AuthScreenProps) {
                   setStep("username");
                   setError("");
                 }}
-                className="text-[#00a884] hover:underline"
+                className="text-[var(--hello-accent)] hover:underline"
               >
                 Sign in
               </button>

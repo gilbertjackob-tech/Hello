@@ -14,6 +14,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
+import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 
 object FcmPushRegistrar {
@@ -87,6 +88,42 @@ object FcmPushRegistrar {
         }
     }
 
+    fun unregisterCurrentDevice(context: Context, sessionToken: String?, reason: String = "logout") {
+        val appContext = context.applicationContext
+        CoroutineScope(Dispatchers.IO).launch {
+            unregisterRegisteredDevice(appContext, sessionToken, reason)
+        }
+    }
+
+    suspend fun unregisterRegisteredDevice(context: Context, sessionToken: String?, reason: String = "logout") {
+        if (sessionToken.isNullOrBlank()) return
+        val appContext = context.applicationContext
+        val prefs = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val token = prefs.getString(KEY_REGISTERED_TOKEN, null)
+            ?: prefs.getString(KEY_PENDING_TOKEN, null)
+        val deviceId = prefs.getString(KEY_DEVICE_ID, null)
+            ?: token?.takeIf { it.isNotBlank() }?.let { "android_${Integer.toHexString(it.hashCode())}" }
+            ?: return
+        runCatching {
+            requestWithFallback { base ->
+                Request.Builder()
+                    .url("$base/api/devices/${encode(deviceId)}")
+                    .header("Authorization", "Bearer $sessionToken")
+                    .delete()
+                    .build()
+            }
+        }.onSuccess {
+            prefs.edit()
+                .remove(KEY_PENDING_TOKEN)
+                .remove(KEY_REGISTERED_TOKEN)
+                .remove(KEY_DEVICE_ID)
+                .apply()
+            Log.d(TAG, "FCM device unregistered ($reason)")
+        }.onFailure { error ->
+            Log.w(TAG, "FCM device unregister failed ($reason)", error)
+        }
+    }
+
     private suspend fun requestWithFallback(build: (String) -> Request): String {
         val primary = runCatching { request(build(AppConfig.CHAT_CLOUD_BASE_URL)) }
         return primary.getOrElse { request(build(AppConfig.CHAT_CLOUD_FALLBACK_URL)) }
@@ -101,4 +138,7 @@ object FcmPushRegistrar {
             responseBody.orEmpty()
         }
     }
+
+    private fun encode(value: String): String =
+        URLEncoder.encode(value, "UTF-8").replace("+", "%20")
 }

@@ -7,11 +7,11 @@
 import { useState, useCallback, useRef } from 'react';
 import { Message } from '../types';
 
-interface OptimisticMessage extends Message {
+type OptimisticMessage = Omit<Message, 'status'> & {
   optimistic?: boolean;
   tempId?: string;
-  status?: 'sending' | 'sent' | 'failed';
-}
+  status?: Message['status'] | 'sending' | 'failed';
+};
 
 interface UseOptimisticMessageReturn {
   messages: OptimisticMessage[];
@@ -71,7 +71,7 @@ export function useOptimisticMessage(
           ? {
               ...realMessage,
               optimistic: false,
-              status: 'sent',
+              status: realMessage.status || 'sent',
               tempId,
             }
           : msg

@@ -54,6 +54,7 @@ import androidx.compose.ui.unit.sp
 import com.glassbox.hello.ui.theme.HelloColors
 import com.glassbox.hello.ui.theme.HelloDimens
 import com.glassbox.hello.ui.theme.HelloMotion
+import com.glassbox.hello.ui.theme.HelloThemeRuntime
 
 @Composable
 fun GlassCard(
@@ -63,11 +64,12 @@ fun GlassCard(
     borderColor: Color = HelloColors.GlassBorder,
     content: @Composable () -> Unit
 ) {
+    val cute = HelloThemeRuntime.activePalette.value.id == "cute"
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(cornerRadius))
-            .background(bgAlpha)
-            .border(0.5.dp, borderColor, RoundedCornerShape(cornerRadius))
+            .background(if (cute) HelloColors.PanelStrong else bgAlpha)
+            .border(if (cute) 1.4.dp else 0.5.dp, if (cute) HelloColors.BorderStrong else borderColor, RoundedCornerShape(cornerRadius))
     ) {
         content()
     }
@@ -80,10 +82,11 @@ fun GlassSearchBar(
     placeholder: String = "Search",
     modifier: Modifier = Modifier
 ) {
+    val cute = HelloThemeRuntime.activePalette.value.id == "cute"
     GlassCard(
         modifier = modifier
             .fillMaxWidth()
-            .height(48.dp),
+            .height(if (cute) 58.dp else 48.dp),
         cornerRadius = HelloDimens.CornerFull,
         bgAlpha = HelloColors.GlassBgMedium,
         borderColor = HelloColors.GlassBorderStrong
@@ -98,8 +101,8 @@ fun GlassSearchBar(
             Icon(
                 Icons.Default.Search,
                 contentDescription = null,
-                tint = HelloColors.TextSecondary,
-                modifier = Modifier.size(19.dp)
+                tint = HelloColors.Accent,
+                modifier = Modifier.size(if (cute) 26.dp else 19.dp)
             )
             BasicTextField(
                 value = value,
@@ -107,7 +110,7 @@ fun GlassSearchBar(
                 singleLine = true,
                 textStyle = TextStyle(
                     color = HelloColors.TextPrimary,
-                    fontSize = 15.sp
+                    fontSize = if (cute) 18.sp else 15.sp
                 ),
                 modifier = Modifier.weight(1f),
                 decorationBox = { innerTextField ->
@@ -116,7 +119,7 @@ fun GlassSearchBar(
                             Text(
                                 text = placeholder,
                                 color = HelloColors.TextMuted,
-                                fontSize = 14.sp,
+                                fontSize = if (cute) 17.sp else 14.sp,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
@@ -135,6 +138,7 @@ fun StatusPill(
     isOnline: Boolean,
     modifier: Modifier = Modifier
 ) {
+    val cute = HelloThemeRuntime.activePalette.value.id == "cute"
     val dotScale by rememberInfiniteTransition(label = "statusPulse").animateFloat(
         initialValue = 0.85f,
         targetValue = 1.15f,
@@ -150,9 +154,9 @@ fun StatusPill(
     Row(
         modifier = modifier
             .clip(RoundedCornerShape(HelloDimens.CornerFull))
-            .background(HelloColors.GlassBg)
-            .border(0.5.dp, borderColor, RoundedCornerShape(HelloDimens.CornerFull))
-            .padding(horizontal = 8.dp, vertical = 4.dp),
+            .background(if (cute) HelloColors.PanelStrong else HelloColors.GlassBg)
+            .border(if (cute) 1.dp else 0.5.dp, if (cute) HelloColors.Border else borderColor, RoundedCornerShape(HelloDimens.CornerFull))
+            .padding(horizontal = if (cute) 12.dp else 8.dp, vertical = if (cute) 7.dp else 4.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(5.dp)
     ) {
@@ -165,8 +169,8 @@ fun StatusPill(
         )
         Text(
             text = label,
-            fontSize = 11.sp,
-            color = if (isOnline) HelloColors.TealPrimary else HelloColors.TextMuted,
+            fontSize = if (cute) 13.sp else 11.sp,
+            color = if (isOnline) HelloColors.AccentStrong else HelloColors.TextMuted,
             maxLines = 1
         )
     }
@@ -179,25 +183,26 @@ fun FilterChip(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val cute = HelloThemeRuntime.activePalette.value.id == "cute"
     val scale by animateFloatAsState(
         targetValue = if (selected) 1f else 0.96f,
         animationSpec = HelloMotion.SpringSnappy,
         label = "filterChipScale"
     )
-    val bgColor = if (selected) HelloColors.TealDeep else HelloColors.GlassBg
+    val bgColor = if (selected) HelloColors.Accent else if (cute) HelloColors.PanelStrong else HelloColors.GlassBg
     val textColor = if (selected) HelloColors.TextOnTeal else HelloColors.TextSecondary
-    val borderColor = if (selected) HelloColors.TealPrimary else HelloColors.GlassBorder
+    val borderColor = if (selected) HelloColors.AccentStrong else HelloColors.Border
 
     Box(
         modifier = modifier
             .scale(scale)
             .clip(RoundedCornerShape(HelloDimens.CornerFull))
             .background(bgColor)
-            .border(0.5.dp, borderColor, RoundedCornerShape(HelloDimens.CornerFull))
+            .border(if (cute) 1.2.dp else 0.5.dp, borderColor, RoundedCornerShape(HelloDimens.CornerFull))
             .clickable { onClick() }
-            .padding(horizontal = 14.dp, vertical = 7.dp)
+            .padding(horizontal = if (cute) 18.dp else 14.dp, vertical = if (cute) 10.dp else 7.dp)
     ) {
-        Text(text = label, fontSize = 13.sp, color = textColor, maxLines = 1)
+        Text(text = label, fontSize = if (cute) 15.sp else 13.sp, color = textColor, maxLines = 1, fontWeight = if (cute) FontWeight.Bold else FontWeight.Normal)
     }
 }
 
@@ -341,17 +346,17 @@ fun EmptyInboxState(modifier: Modifier = Modifier) {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Text("Chat", fontSize = 42.sp, modifier = Modifier.offset(y = offsetY.dp))
+        Text("♡", fontSize = 48.sp, color = HelloColors.Accent, modifier = Modifier.offset(y = offsetY.dp))
         Spacer(Modifier.height(HelloDimens.SpaceL))
         Text(
-            "No conversations yet",
+            "No messages yet",
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.SemiBold,
             color = HelloColors.TextPrimary
         )
         Spacer(Modifier.height(HelloDimens.SpaceS))
         Text(
-            "Start a direct chat with another Hello user.",
+            "Say hi to your Hello people from the + button.",
             fontSize = 13.sp,
             color = HelloColors.TextSecondary,
             textAlign = TextAlign.Center,

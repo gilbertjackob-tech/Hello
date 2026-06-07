@@ -1,23 +1,27 @@
 package com.glassbox.hello.chat
 
 import android.content.Context
+import android.util.Log
 import com.glassbox.hello.auth.CloudSessionManager
+import com.glassbox.hello.chat.components.callSummaryLabel
 import com.google.gson.Gson
-import com.google.gson.reflect.TypeToken
+import com.google.gson.JsonParser
 
 class CloudChatRepository(
     context: Context,
-    private val api: CloudChatApi = CloudChatApi()
+    private val api: CloudChatApi = CloudChatApi(context.applicationContext)
 ) {
+    companion object {
+        private const val TAG = "HelloInbox"
+    }
+
     private val sessionManager = CloudSessionManager(context.applicationContext)
     private val prefs = context.applicationContext.getSharedPreferences("hello_cloud_chat_cache", Context.MODE_PRIVATE)
     private val gson = Gson()
 
     suspend fun ensureConversation(chat: ChatModels.Chat, currentUserId: String, currentUserName: String, currentUserAvatar: String?) {
         api.upsertUser(currentUserId, currentUserName, currentUserAvatar)
-        val members = chat.members
-            ?: chat.participants?.map { it.id }
-            ?: listOf(currentUserId)
+        val members = chat.memberIds().ifEmpty { listOf(currentUserId) }
         api.ensureConversation(
             conversationId = chat.id,
             title = chat.name,
@@ -38,29 +42,67 @@ class CloudChatRepository(
     }
 
     suspend fun fetchChats(userId: String): Result<List<ChatModels.Chat>> {
-        val result = api.fetchConversations(userId)
-        val deduped = result.getOrNull()?.let { dedupeChats(it, userId) }
-        deduped?.let { saveChats(userId, it) }
+        val effectiveUserId = currentCloudUserId() ?: resolveCloudUserId(userId)
+        Log.d(
+            TAG,
+            "repo_fetch_chats_start requestedUserId=$userId effectiveUserId=$effectiveUserId tokenPresent=${!sessionManager.token().isNullOrBlank()} cachedUserId=${sessionManager.cachedUser()?.id.orEmpty()}"
+        )
+        val result = api.fetchConversations(effectiveUserId)
+        val deduped = result.getOrNull()?.map(::normalizeChat)?.let { dedupeChats(it, effectiveUserId) }
+        deduped?.let {
+            saveChats(userId, it)
+            if (effectiveUserId != userId) saveChats(effectiveUserId, it)
+        }
+        if (deduped != null) {
+            Log.d(
+                TAG,
+                "repo_fetch_chats_success requestedUserId=$userId effectiveUserId=$effectiveUserId count=${deduped.size} ids=${deduped.take(8).joinToString(",") { chat -> chat.id }}"
+            )
+        } else {
+            Log.w(
+                TAG,
+                "repo_fetch_chats_error requestedUserId=$userId effectiveUserId=$effectiveUserId error=${result.exceptionOrNull()?.message ?: "unknown"}"
+            )
+        }
         return if (deduped != null) Result.success(deduped) else {
-            val cached = cachedChats(userId)
+            val cached = (cachedChats(userId) + cachedChats(effectiveUserId))
+                .let { dedupeChats(it, effectiveUserId) }
+            Log.d(
+                TAG,
+                "repo_fetch_chats_fallback_cache requestedUserId=$userId effectiveUserId=$effectiveUserId cachedCount=${cached.size}"
+            )
             if (cached.isNotEmpty()) Result.success(cached) else result
         }
     }
 
     suspend fun fetchUsers(query: String? = null): Result<List<ChatModels.User>> {
+        Log.d(
+            TAG,
+            "repo_fetch_users_start query=${query.orEmpty()} tokenPresent=${!sessionManager.token().isNullOrBlank()} cachedUserId=${sessionManager.cachedUser()?.id.orEmpty()}"
+        )
         val usersResult = api.fetchUsers(query)
         val contacts = sessionManager.token()
             ?.let { token -> api.fetchContacts(token).getOrNull() }
             .orEmpty()
             .filter { contact ->
                 query.isNullOrBlank() ||
-                    contact.name.contains(query, ignoreCase = true) ||
-                    contact.id.contains(query, ignoreCase = true) ||
+                    contact.safeName().contains(query, ignoreCase = true) ||
+                    contact.safeId().contains(query, ignoreCase = true) ||
                     contact.phone?.contains(query, ignoreCase = true) == true ||
                     contact.email?.contains(query, ignoreCase = true) == true
             }
         val users = usersResult.getOrNull().orEmpty()
         val merged = dedupeUsers(contacts + users)
+        Log.d(
+            TAG,
+            "repo_fetch_users_result query=${query.orEmpty()} usersCount=${users.size} contactsCount=${contacts.size} mergedCount=${merged.size} ids=${merged.take(8).joinToString(",") { user -> user.id }}"
+        )
+        if (usersResult.isFailure) {
+            Log.w(
+                TAG,
+                "repo_fetch_users_users_error query=${query.orEmpty()} error=${usersResult.exceptionOrNull()?.message ?: "unknown"}"
+            )
+        }
         return when {
             merged.isNotEmpty() -> Result.success(merged)
             usersResult.isFailure -> usersResult
@@ -74,28 +116,33 @@ class CloudChatRepository(
         currentUserName: String,
         targetUserName: String? = null
     ): Result<ChatModels.Chat> {
+        val effectiveCurrentUserId = resolveCloudUserId(currentUserId, currentUserName)
+        val effectiveTargetUserId = resolveCloudUserId(targetUserId, targetUserName)
         val result = api.ensureDirectConversation(
-            currentUserId = currentUserId,
-            targetUserId = targetUserId,
+            currentUserId = effectiveCurrentUserId,
+            targetUserId = effectiveTargetUserId,
             currentUserName = currentUserName,
             targetUserName = targetUserName
         )
         result.getOrNull()?.let {
-            cacheDirectConversationId(currentUserId, targetUserId, it.id)
+            cacheDirectConversationId(effectiveCurrentUserId, effectiveTargetUserId, it.id)
             upsertCachedChat(currentUserId, it)
+            if (effectiveCurrentUserId != currentUserId) upsertCachedChat(effectiveCurrentUserId, it)
         }
         return result
     }
 
     suspend fun createGroupChat(currentUserId: String, currentUserName: String, name: String, members: List<String>): Result<ChatModels.Chat> {
+        val effectiveCurrentUserId = resolveCloudUserId(currentUserId, currentUserName)
+        val effectiveMembers = members.map { memberId -> resolveCloudUserId(memberId) }.distinct()
         val conversationId = "group_${System.currentTimeMillis()}_${name.hashCode()}"
         val result = api.ensureConversation(
             conversationId = conversationId,
             title = name,
             isGroup = true,
-            createdBy = currentUserId,
+            createdBy = effectiveCurrentUserId,
             createdByName = currentUserName,
-            memberIds = members
+            memberIds = effectiveMembers
         )
         result.getOrNull()?.let { upsertCachedChat(currentUserId, it) }
         return result
@@ -109,35 +156,40 @@ class CloudChatRepository(
         senderAvatar: String?,
         attachmentId: String? = null
     ): Result<ChatModels.Message> {
+        val effectiveSenderId = resolveCloudUserId(senderId, senderName)
         val preparedChat = if (!chat.isGroup) {
-            val targetUserId = chat.participants?.firstOrNull { it.id != senderId }?.id
-                ?: chat.members?.firstOrNull { it != senderId }
+            val targetUserId = chat.otherParticipant(effectiveSenderId)?.id
+                ?: chat.memberIds().firstOrNull { it != effectiveSenderId }
             if (targetUserId != null) {
-                createDirectChat(senderId, targetUserId, senderName, chat.otherParticipant(senderId)?.name).getOrElse { error ->
+                createDirectChat(
+                    effectiveSenderId,
+                    targetUserId,
+                    senderName,
+                    chat.otherParticipant(effectiveSenderId)?.name
+                ).getOrElse { error ->
                     return Result.failure(error)
                 }
             } else {
-                val ensure = runCatching { ensureConversation(chat, senderId, senderName, senderAvatar) }
+                val ensure = runCatching { ensureConversation(chat, effectiveSenderId, senderName, senderAvatar) }
                 if (ensure.isFailure) return Result.failure(ensure.exceptionOrNull() ?: Exception("Failed to prepare cloud conversation"))
                 chat
             }
         } else {
-            val ensure = runCatching { ensureConversation(chat, senderId, senderName, senderAvatar) }
+            val ensure = runCatching { ensureConversation(chat, effectiveSenderId, senderName, senderAvatar) }
             if (ensure.isFailure) return Result.failure(ensure.exceptionOrNull() ?: Exception("Failed to prepare cloud conversation"))
             chat
         }
-        val result = api.sendMessage(preparedChat.id, text, senderId, senderName, senderAvatar, attachmentId)
+        val result = api.sendMessage(preparedChat.id, text, effectiveSenderId, senderName, senderAvatar, attachmentId)
         result.getOrNull()?.let { message ->
             upsertCachedMessage(message.chatId, message)
-            upsertCachedChat(
-                senderId,
-                preparedChat.copy(
-                    id = message.chatId,
-                    lastMessage = messagePreview(message),
-                    lastMessageTime = message.timestamp,
-                    unreadCount = 0
-                )
+            val updatedChat = preparedChat.copy(
+                id = message.chatId,
+                lastMessage = messagePreview(message),
+                lastMessageTime = message.timestamp,
+                unreadCount = 0
             )
+            upsertCachedChat(effectiveSenderId, updatedChat)
+            if (effectiveSenderId != senderId) upsertCachedChat(senderId, updatedChat)
         }
         return result
     }
@@ -148,29 +200,64 @@ class CloudChatRepository(
     suspend fun reactToMessage(messageId: String, emoji: String, userId: String): Result<ChatModels.Message> =
         api.reactToMessage(messageId, emoji, userId)
 
+    suspend fun starMessage(messageId: String, userId: String): Result<ChatModels.Message> =
+        api.starMessage(messageId, userId)
+
+    suspend fun pinMessage(messageId: String, userId: String, durationDays: Int): Result<ChatModels.Message> =
+        api.pinMessage(messageId, userId, durationDays)
+
+    suspend fun deleteMessage(messageId: String, userId: String, type: String): Result<ChatModels.Message> =
+        api.deleteMessage(messageId, userId, type)
+
+    suspend fun clearChat(chatId: String, userId: String): Result<Unit> =
+        api.clearConversation(chatId, userId)
+
+    suspend fun deleteChat(chatId: String, userId: String): Result<Unit> =
+        api.deleteConversation(chatId, userId)
+
     fun cachedChats(userId: String): List<ChatModels.Chat> {
         val raw = prefs.getString(chatsCacheKey(userId), null) ?: return emptyList()
         return runCatching {
-            val type = object : TypeToken<List<ChatModels.Chat>>() {}.type
-            gson.fromJson<List<ChatModels.Chat>>(raw, type)
+            JsonParser.parseString(raw)
+                .takeIf { it.isJsonArray }
+                ?.asJsonArray
+                ?.mapNotNull { element ->
+                    element.takeIf { it.isJsonObject }?.let { jsonElement ->
+                        CloudChatPayloadParser.parseChat(jsonElement.toString())
+                    }
+                }
+                ?: emptyList()
         }.getOrDefault(emptyList())
     }
 
     fun cachedMessages(chatId: String): List<ChatModels.Message> {
         val raw = prefs.getString(cacheKey(chatId), null) ?: return emptyList()
         return runCatching {
-            val type = object : TypeToken<List<ChatModels.Message>>() {}.type
-            gson.fromJson<List<ChatModels.Message>>(raw, type)
+            JsonParser.parseString(raw)
+                .takeIf { it.isJsonArray }
+                ?.asJsonArray
+                ?.mapNotNull { element ->
+                    element.takeIf { it.isJsonObject }?.let { jsonElement ->
+                        CloudChatPayloadParser.parseMessage(jsonElement.toString())
+                    }
+                }
+                ?: emptyList()
         }.getOrDefault(emptyList())
     }
 
     private fun saveMessages(chatId: String, messages: List<ChatModels.Message>) {
-        val recent = messages.distinctBy { it.id }.sortedBy { it.timestamp }.takeLast(100)
+        val recent = messages
+            .map(::normalizeMessage)
+            .distinctBy { it.id }
+            .sortedBy { it.timestamp }
+            .takeLast(100)
         prefs.edit().putString(cacheKey(chatId), gson.toJson(recent)).apply()
     }
 
     private fun saveChats(userId: String, chats: List<ChatModels.Chat>) {
-        val recent = dedupeChats(chats, userId).sortedByDescending { it.lastMessageTime ?: 0L }.take(100)
+        val recent = dedupeChats(chats.map(::normalizeChat), userId)
+            .sortedByDescending { it.lastMessageTime ?: 0L }
+            .take(100)
         prefs.edit().putString(chatsCacheKey(userId), gson.toJson(recent)).apply()
     }
 
@@ -207,11 +294,9 @@ class CloudChatRepository(
     private fun directKeyForChat(chat: ChatModels.Chat, currentUserId: String): String? {
         if (chat.isGroup) return null
         chat.directKey?.takeIf { it.isNotBlank() }?.let { return it }
-        val members = chat.members?.takeIf { it.size >= 2 }
-            ?: chat.participants?.map { it.id }
-        val unique = members.orEmpty().filter { it.isNotBlank() }.distinct().sorted()
+        val unique = chat.memberIds().distinct().sorted()
         if (unique.size == 2) return unique.joinToString(":")
-        val other = chat.participants?.firstOrNull { it.id != currentUserId }?.id
+        val other = chat.otherParticipant(currentUserId)?.id
         return other?.let { directKey(currentUserId, it) }
     }
 
@@ -233,15 +318,22 @@ class CloudChatRepository(
         prefs.edit().putString("direct_${directKey(firstUserId, secondUserId)}", conversationId).apply()
     }
 
+    private fun normalizeChat(chat: ChatModels.Chat): ChatModels.Chat =
+        CloudChatPayloadParser.parseChat(gson.toJson(chat)) ?: chat
+
+    private fun normalizeMessage(message: ChatModels.Message): ChatModels.Message =
+        CloudChatPayloadParser.parseMessage(gson.toJson(message)) ?: message
+
     private fun dedupeUsers(users: List<ChatModels.User>): List<ChatModels.User> =
         users
-            .filter { it.id.isNotBlank() }
+            .filter { it.safeId().isNotBlank() }
             .fold(linkedMapOf<String, ChatModels.User>()) { acc, user ->
-                val existing = acc[user.id]
-                acc[user.id] = when {
+                val userId = user.safeId()
+                val existing = acc[userId]
+                acc[userId] = when {
                     existing == null -> user
                     existing.online != true && user.online == true -> user
-                    existing.name.isGeneratedIdentityName() && !user.name.isGeneratedIdentityName() -> user
+                    existing.safeName().isGeneratedIdentityName() && !user.safeName().isGeneratedIdentityName() -> user
                     else -> existing
                 }
                 acc
@@ -249,8 +341,42 @@ class CloudChatRepository(
             .values
             .toList()
 
+    private suspend fun resolveCloudUserId(rawUserId: String, displayName: String? = null): String {
+        val raw = rawString(rawUserId)
+        if (raw.startsWith("usr_")) return raw
+        val searchTerms = listOf(raw, rawString(displayName)).filter { it.isNotBlank() }.distinct()
+        for (term in searchTerms) {
+            val users = api.fetchUsers(term).getOrNull().orEmpty()
+            val match = users.firstOrNull { user ->
+                user.safeId().equals(term, ignoreCase = true) ||
+                    user.safeName().equals(term, ignoreCase = true) ||
+                    rawString(user.username).equals(term, ignoreCase = true)
+            } ?: users.firstOrNull()
+            val id = match?.safeId().orEmpty()
+            if (id.isNotBlank()) {
+                Log.d(
+                    TAG,
+                    "resolve_cloud_user_id_match rawUserId=$rawUserId displayName=${displayName.orEmpty()} term=$term resolvedId=$id candidateCount=${users.size}"
+                )
+                return id
+            }
+        }
+        Log.w(
+            TAG,
+            "resolve_cloud_user_id_fallback rawUserId=$rawUserId displayName=${displayName.orEmpty()} searchTerms=${searchTerms.joinToString(",")}"
+        )
+        return raw
+    }
+
+    private fun currentCloudUserId(): String? {
+        if (sessionManager.token().isNullOrBlank()) return null
+        return rawString(sessionManager.cachedUser()?.id)
+            .takeIf { it.startsWith("usr_") }
+    }
+
     private fun messagePreview(message: ChatModels.Message): String =
-        message.text.takeIf { it.isNotBlank() }
+        message.callInfo?.let(::callSummaryLabel)
+            ?: message.text.takeIf { it.isNotBlank() }
             ?: message.attachmentName?.takeIf { it.isNotBlank() }
             ?: if (message.attachmentUrl != null) "Attachment" else ""
 
@@ -258,4 +384,10 @@ class CloudChatRepository(
         val lower = trim().lowercase()
         return lower.startsWith("usr_") || lower.startsWith("user_") || lower.startsWith("direct_")
     }
+
+    private fun ChatModels.User.safeId(): String = rawString(id)
+
+    private fun ChatModels.User.safeName(): String = rawString(name).ifBlank { safeId() }
+
+    private fun rawString(value: String?): String = value?.trim().orEmpty()
 }

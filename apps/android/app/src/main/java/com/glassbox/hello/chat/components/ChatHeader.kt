@@ -49,16 +49,17 @@ fun ChatHeader(
                 Brush.verticalGradient(
                     listOf(
                         HelloColors.BgDeep.copy(alpha = 0.92f),
-                        HelloColors.BgBase.copy(alpha = 0.82f),
-                        Color.Transparent
+                        HelloColors.PanelStrong.copy(alpha = 0.96f),
+                        HelloColors.BgBase.copy(alpha = 0.72f)
                     )
                 )
             )
+            .border(1.dp, HelloColors.Border, androidx.compose.foundation.shape.RoundedCornerShape(bottomStart = 26.dp, bottomEnd = 26.dp))
             .padding(top = 8.dp, bottom = 12.dp, start = HelloSpacing.Sm, end = HelloSpacing.Sm),
         verticalAlignment = Alignment.CenterVertically
     ) {
         HelloIconButton(onClick = onBack) {
-            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = HelloColors.DarkText)
+            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = HelloColors.AccentStrong)
         }
         Row(
             modifier = Modifier.weight(1f).clickable(onClick = onOpenContactInfo),
@@ -69,14 +70,14 @@ fun ChatHeader(
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = title,
-                    color = HelloColors.DarkText,
-                    fontWeight = FontWeight.Bold,
+                    color = HelloColors.AccentStrong,
+                    fontWeight = FontWeight.Black,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
                     text = subtitle,
-                    color = if (subtitleIsTyping) HelloColors.DarkAccentStrong else HelloColors.DarkTextMuted,
+                    color = if (subtitleIsTyping) HelloColors.DarkAccentStrong else HelloColors.TextSecondary,
                     fontWeight = if (subtitleIsTyping) FontWeight.Bold else FontWeight.Normal,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
@@ -85,14 +86,14 @@ fun ChatHeader(
         }
         if (videoCallEnabled) {
             HelloIconButton(onClick = onVideoCall) {
-                Icon(Icons.Default.Videocam, contentDescription = "Video call", tint = HelloColors.DarkTextMuted)
+                Icon(Icons.Default.Videocam, contentDescription = "Video call", tint = HelloColors.Accent)
             }
         }
         HelloIconButton(onClick = onAudioCall) {
-            Icon(Icons.Default.Call, contentDescription = "Audio call", tint = HelloColors.DarkTextMuted)
+            Icon(Icons.Default.Call, contentDescription = "Audio call", tint = HelloColors.Accent)
         }
         HelloIconButton(onClick = onMore) {
-            Icon(Icons.Default.MoreVert, contentDescription = "More", tint = HelloColors.DarkTextMuted)
+            Icon(Icons.Default.MoreVert, contentDescription = "More", tint = HelloColors.Accent)
         }
     }
 }

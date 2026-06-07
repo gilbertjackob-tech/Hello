@@ -22,6 +22,7 @@ cd apps\android
 
 .\gradlew.bat :app:assembleRelease --console=plain
 adb install -r app\build\outputs\apk\release\app-release.apk
+
 ```
 
 for daily testing:
@@ -103,7 +104,7 @@ Chat and account flows are Cloudflare-first:
 
 ```text
 Cloud chat domain:     https://chat.bookhelloctg.com
-Worker fallback:       https://hello-chat-worker.gilbert-jackob3.workers.dev
+Worker fallback:       https://chat.bookhelloctg.com
 Cloud health:          https://chat.bookhelloctg.com/health
 Cloud auth:            /api/auth/register, /api/auth/login, /api/auth/logout, /api/auth/me
 Cloud chat API:        /api/chat/...
@@ -419,7 +420,7 @@ Current Web constants:
 ```text
 API_BASE                 VITE_HELLO_API_BASE || "/hello/api"
 CHAT_CLOUD_BASE_URL     VITE_CHAT_CLOUD_BASE_URL || "https://chat.bookhelloctg.com"
-CHAT_CLOUD_FALLBACK_URL VITE_CHAT_CLOUD_FALLBACK_URL || "https://hello-chat-worker.gilbert-jackob3.workers.dev"
+CHAT_CLOUD_FALLBACK_URL VITE_CHAT_CLOUD_FALLBACK_URL || CHAT_CLOUD_BASE_URL
 CALL_API_BASE           VITE_CALL_API_BASE || "https://chat.bookhelloctg.com/api"
 DRIVE_API_BASE          VITE_DRIVE_API_BASE || "https://home.bookhelloctg.com/hello/api"
 VITE_ENABLE_PC_SOCKET   false by default; true enables /hello/socket.io
@@ -636,7 +637,7 @@ Current Android network targets:
 ```text
 SERVER_ORIGIN                 https://home.bookhelloctg.com
 CHAT_CLOUD_BASE_URL           https://chat.bookhelloctg.com
-CHAT_CLOUD_FALLBACK_URL       https://hello-chat-worker.gilbert-jackob3.workers.dev
+CHAT_CLOUD_FALLBACK_URL       https://chat.bookhelloctg.com
 CHAT_API_BASE                 https://chat.bookhelloctg.com/api
 CALL_API_BASE                 https://chat.bookhelloctg.com/api
 DRIVE_API_BASE                https://home.bookhelloctg.com/hello/api

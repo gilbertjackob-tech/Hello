@@ -12,16 +12,19 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.Cloud
-import androidx.compose.material.icons.filled.Circle
+import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
@@ -33,6 +36,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -42,10 +46,13 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.core.content.ContextCompat
 import com.glassbox.hello.activities.BrowserActivity
 import com.glassbox.hello.auth.AuthScreen
+import com.glassbox.hello.auth.CloudAuthApi
 import com.glassbox.hello.auth.CloudSessionManager
+import com.glassbox.hello.auth.CloudUserRepository
 import com.glassbox.hello.ui.components.AppBackground
 import com.glassbox.hello.calls.CallViewModel
 import com.glassbox.hello.calls.CallUiStatus
+import com.glassbox.hello.debug.HelloDebugLog
 import com.glassbox.hello.familydrive.FamilyDriveScreen
 import com.glassbox.hello.calls.GlobalCallOverlay
 import com.glassbox.hello.chat.ChatScreen
@@ -53,21 +60,25 @@ import com.glassbox.hello.core.SessionManager
 import com.glassbox.hello.core.User
 import com.glassbox.hello.notifications.HelloNotificationCenter
 import com.glassbox.hello.notifications.FcmPushRegistrar
+import com.glassbox.hello.network.SocketManager
 import com.glassbox.hello.settings.SettingsScreen
-import com.glassbox.hello.status.StatusScreen
 import com.glassbox.hello.ui.components.HelloBottomNav
 import com.glassbox.hello.ui.components.HelloScreenBackground
+import com.glassbox.hello.ui.components.LoadingView
 import com.glassbox.hello.ui.theme.HelloColors
 import com.glassbox.hello.ui.theme.HelloSpacing
+import com.glassbox.hello.ui.theme.HelloThemeRuntime
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 private enum class MainTab(val label: String, val icon: ImageVector) {
     Chats("Chats", Icons.AutoMirrored.Filled.Chat),
     Drive("Drive", Icons.Default.Cloud),
-    Status("Status", Icons.Default.Circle),
     Browser("Browser", Icons.Default.Public),
     Settings("Settings", Icons.Default.Settings)
 }
@@ -76,9 +87,17 @@ private enum class MainTab(val label: String, val icon: ImageVector) {
 fun HelloApp(darkTheme: Boolean = true) {
     val context = LocalContext.current
     val activity = context.findActivity()
+    val appScope = rememberCoroutineScope()
     val sessionManager = remember { SessionManager(context) }
     val cloudSessionManager = remember { CloudSessionManager(context) }
-    val currentUser = remember { mutableStateOf<User?>(sessionManager.getCurrentUser() ?: cloudSessionManager.cachedUser()) }
+    val cloudUserRepository = remember { CloudUserRepository(context) }
+    val currentUser = remember {
+        mutableStateOf<User?>(
+            cloudSessionManager.cachedUser()
+                ?.takeIf { !cloudSessionManager.token().isNullOrBlank() }
+        )
+    }
+    val resolvingCloudIdentity = remember { mutableStateOf(!cloudSessionManager.token().isNullOrBlank()) }
     val selectedTab = remember { mutableIntStateOf(0) }
     val tabBackStack = remember { mutableStateListOf<Int>() }
     val lastExitBackAt = remember { mutableStateOf(0L) }
@@ -103,9 +122,57 @@ fun HelloApp(darkTheme: Boolean = true) {
         }
     }
 
+    fun clearLocalAccountState() {
+        HelloDebugLog.d("App", "clearLocalAccountState currentUser=${currentUser.value?.id} selectedTab=${selectedTab.intValue}")
+        SocketManager.getInstance().disconnect()
+        HelloNotificationCenter.resetForLogout(context)
+        sessionManager.clearSession()
+        cloudSessionManager.clear()
+        currentUser.value = null
+        resolvingCloudIdentity.value = false
+        selectedTab.intValue = MainTab.Chats.ordinal
+        tabBackStack.clear()
+        isChatRoomVisible.value = false
+        isSettingsDetailVisible.value = false
+    }
+
+    LaunchedEffect(logoutToken.intValue) {
+        val token = cloudSessionManager.token()
+        HelloDebugLog.d("App", "resolveCloudIdentity tokenPresent=${!token.isNullOrBlank()} logoutToken=${logoutToken.intValue}")
+        if (token.isNullOrBlank()) {
+            sessionManager.clearSession()
+            currentUser.value = null
+            resolvingCloudIdentity.value = false
+            HelloDebugLog.d("App", "resolveCloudIdentity skipped reason=no_token")
+            return@LaunchedEffect
+        }
+        resolvingCloudIdentity.value = true
+        val cloudUser = withTimeoutOrNull(8_000L) { cloudUserRepository.currentUser().getOrNull() }
+        if (cloudUser == null) {
+            HelloDebugLog.w("App", "resolveCloudIdentity failed reason=currentUser_null")
+            clearLocalAccountState()
+            return@LaunchedEffect
+        }
+        cloudSessionManager.save(cloudUser)
+        sessionManager.saveCurrentUser(cloudUser)
+        if (currentUser.value?.id != cloudUser.id || currentUser.value?.name != cloudUser.name) {
+            currentUser.value = cloudUser
+        }
+        resolvingCloudIdentity.value = false
+        HelloDebugLog.d("App", "resolveCloudIdentity success userId=${cloudUser.id} name=${cloudUser.name}")
+    }
+
+    if (resolvingCloudIdentity.value && !cloudSessionManager.token().isNullOrBlank()) {
+        AppBackground(modifier = Modifier.fillMaxSize()) {
+            LoadingView(modifier = Modifier.fillMaxSize())
+        }
+        return
+    }
+
     if (currentUser.value == null) {
         AuthScreen(
             onAuthSuccess = { user ->
+                HelloDebugLog.d("App", "authSuccess userId=${user.id} name=${user.name}")
                 sessionManager.saveCurrentUser(user)
                 cloudSessionManager.save(user)
                 currentUser.value = user
@@ -142,6 +209,15 @@ fun HelloApp(darkTheme: Boolean = true) {
     }
 
     val callViewModel: CallViewModel = viewModel(key = "hello-global-call")
+    fun handleSessionRevoked() {
+        appScope.launch {
+            HelloDebugLog.w("App", "sessionRevoked activeUser=${currentUser.value?.id}")
+            clearLocalAccountState()
+            callViewModel.dismissCallOverlay()
+        }
+    }
+    callViewModel.onSessionRevoked = { handleSessionRevoked() }
+    SocketManager.getInstance().onSessionRevoked = { handleSessionRevoked() }
     val callState by callViewModel.state.collectAsState()
     val incomingCallLaunch by HelloNotificationCenter.incomingCallState.collectAsState()
     var pendingIncomingAccept by remember { mutableStateOf(false) }
@@ -168,6 +244,7 @@ fun HelloApp(darkTheme: Boolean = true) {
 
     fun acceptIncomingFromNotification() {
         val signal = callState.signal ?: return
+        HelloDebugLog.d("Call", "acceptIncomingFromNotification callId=${signal.callId} isVideo=${signal.isVideo}")
         val needsCamera = signal.isVideo
         val hasAudio = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
         val hasCamera = !needsCamera || ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
@@ -187,13 +264,18 @@ fun HelloApp(darkTheme: Boolean = true) {
 
     LaunchedEffect(currentUser.value?.id) {
         currentUser.value?.let {
+            HelloDebugLog.d("App", "userReady userId=${it.id} initializing notifications and calls")
             HelloNotificationCenter.initialize(context, it.id)
+            FcmPushRegistrar.registerPendingToken(context, "user_ready")
             FcmPushRegistrar.refreshAndRegister(context)
             callViewModel.connect(context, it)
         }
     }
     LaunchedEffect(incomingCallLaunch?.signal?.callId) {
-        incomingCallLaunch?.let { callViewModel.showIncomingCall(it.signal) }
+        incomingCallLaunch?.let {
+            HelloDebugLog.d("Call", "incomingCallLaunch callId=${it.signal.callId} action=${it.action}")
+            callViewModel.showIncomingCall(it.signal)
+        }
     }
     LaunchedEffect(incomingCallLaunch?.action, callState.signal?.callId) {
         val launch = incomingCallLaunch ?: return@LaunchedEffect
@@ -201,11 +283,13 @@ fun HelloApp(darkTheme: Boolean = true) {
         if (launch.signal.callId != currentSignal.callId) return@LaunchedEffect
         when (launch.action) {
             HelloNotificationCenter.CALL_ACTION_ACCEPT -> {
+                HelloDebugLog.d("Call", "notificationAction accept callId=${launch.signal.callId}")
                 acceptIncomingFromNotification()
                 HelloNotificationCenter.consumeIncomingCallAction()
                 HelloNotificationCenter.consumeIncomingCall(launch.signal.callId)
             }
             HelloNotificationCenter.CALL_ACTION_DECLINE -> {
+                HelloDebugLog.d("Call", "notificationAction decline callId=${launch.signal.callId}")
                 callViewModel.declineCall()
                 HelloNotificationCenter.consumeIncomingCallAction()
                 HelloNotificationCenter.consumeIncomingCall(launch.signal.callId)
@@ -245,30 +329,33 @@ fun HelloApp(darkTheme: Boolean = true) {
                 ) { tab ->
                     when (tab) {
                         MainTab.Chats -> ChatScreen(
-                            sessionManager = sessionManager,
+                            currentUser = currentUser.value!!,
                             logoutToken = logoutToken.intValue,
                             callViewModel = callViewModel,
                             onChatRoomVisibilityChanged = { isChatRoomVisible.value = it },
                             onOpenSettings = { selectedTab.intValue = MainTab.Settings.ordinal },
-                            onOpenStories = { selectMainTab(MainTab.Status) },
                             modifier = Modifier.fillMaxSize()
                         )
                         MainTab.Drive -> FamilyDriveScreen(
                             currentUserId = currentUser.value!!.id,
                             modifier = Modifier.fillMaxSize()
                         )
-                        MainTab.Status -> StatusScreen(currentUserId = currentUser.value!!.id, modifier = Modifier.fillMaxSize())
                         MainTab.Browser -> Box(modifier = Modifier.fillMaxSize())
                         MainTab.Settings -> SettingsScreen(
                             sessionManager = sessionManager,
+                            currentUser = currentUser.value,
                             onDetailVisibilityChanged = { isSettingsDetailVisible.value = it },
                             onLogout = {
-                                sessionManager.clearSession()
-                                cloudSessionManager.clear()
-                                currentUser.value = null
+                                val token = cloudSessionManager.token()
+                                clearLocalAccountState()
+                                callViewModel.dismissCallOverlay()
                                 logoutToken.intValue += 1
-                                selectedTab.intValue = MainTab.Chats.ordinal
-                                tabBackStack.clear()
+                                if (!token.isNullOrBlank()) {
+                                    appScope.launch {
+                                        FcmPushRegistrar.unregisterRegisteredDevice(context, token, "logout")
+                                        CloudAuthApi().logout(token)
+                                    }
+                                }
                             },
                             modifier = Modifier.fillMaxSize()
                         )
@@ -279,6 +366,7 @@ fun HelloApp(darkTheme: Boolean = true) {
                 HelloBottomNav(dark = darkTheme) {
                     MainTab.values().forEach { tab ->
                         val selected = selectedTab.intValue == tab.ordinal
+                        val cute = HelloThemeRuntime.activePalette.value.id == "cute"
                         val scale by animateFloatAsState(
                             targetValue = if (selected) 1.08f else 1f,
                             animationSpec = tween(160),
@@ -296,7 +384,16 @@ fun HelloApp(darkTheme: Boolean = true) {
                         ) {
                             Column(
                                 horizontalAlignment = Alignment.CenterHorizontally,
-                                modifier = Modifier.scale(scale)
+                                modifier = Modifier
+                                    .scale(scale)
+                                    .clip(RoundedCornerShape(if (cute) 24.dp else 1.dp))
+                                    .background(if (cute && selected) HelloColors.AccentSoft else androidx.compose.ui.graphics.Color.Transparent)
+                                    .border(
+                                        if (cute && selected) 1.dp else 0.dp,
+                                        if (cute && selected) HelloColors.BorderStrong else androidx.compose.ui.graphics.Color.Transparent,
+                                        RoundedCornerShape(if (cute) 24.dp else 1.dp)
+                                    )
+                                    .padding(horizontal = if (cute) 12.dp else 0.dp, vertical = if (cute) 6.dp else 0.dp)
                             ) {
                                 Icon(
                                     imageVector = tab.icon,
@@ -309,6 +406,9 @@ fun HelloApp(darkTheme: Boolean = true) {
                                     fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
                                     maxLines = 1
                                 )
+                                if (cute && selected) {
+                                    Text("♡", color = HelloColors.Accent, fontWeight = FontWeight.Bold)
+                                }
                             }
                         }
                     }

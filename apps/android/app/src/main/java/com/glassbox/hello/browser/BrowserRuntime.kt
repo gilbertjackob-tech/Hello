@@ -29,6 +29,7 @@ import kotlin.coroutines.resume
 
 private const val BROWSER_DATA_SUFFIX = "glassbox_browser"
 private const val PROFILE_BRIDGE_NAME = "GlassBoxProfileBridge"
+private var browserDataSuffixConfigured = false
 
 class BrowserRuntime(
     private val context: Context,
@@ -38,12 +39,11 @@ class BrowserRuntime(
 ) {
     private val http = OkHttpClient.Builder().build()
     private val sessions = linkedMapOf<String, BrowserTabSession>()
-    private val cookieManager = CookieManager.getInstance()
-    private var browserSuffixConfigured = false
+    private val cookieManager: CookieManager by lazy { CookieManager.getInstance() }
 
     init {
-        cookieManager.setAcceptCookie(true)
         ensureBrowserSuffix()
+        cookieManager.setAcceptCookie(true)
     }
 
     fun ensureSession(tab: BrowserTabRecord): BrowserTabSession {
@@ -636,12 +636,15 @@ class BrowserRuntime(
     }
 
     private fun ensureBrowserSuffix() {
-        if (browserSuffixConfigured) return
-        runCatching {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                WebView.setDataDirectorySuffix(BROWSER_DATA_SUFFIX)
+        if (browserDataSuffixConfigured) return
+        synchronized(BrowserRuntime::class.java) {
+            if (browserDataSuffixConfigured) return
+            runCatching {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    WebView.setDataDirectorySuffix(BROWSER_DATA_SUFFIX)
+                }
             }
-            browserSuffixConfigured = true
+            browserDataSuffixConfigured = true
         }
     }
 

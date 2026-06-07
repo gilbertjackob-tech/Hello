@@ -727,7 +727,7 @@ export function Sidebar({
     reader.readAsDataURL(file);
   };
 
-  const buildCroppedAvatarFile = async () => {
+  const buildCroppedAvatarFile = async (): Promise<File> => {
     if (!avatarCropSource) throw new Error("No avatar selected");
     const image = document.createElement("img");
     await new Promise<void>((resolve, reject) => {
@@ -764,7 +764,15 @@ export function Sidebar({
       );
     });
     const safeName = avatarCropFileName.replace(/\.[^.]+$/, "") || "avatar";
-    return new File([blob], `${safeName}_profile.jpg`, { type: "image/jpeg" });
+    const finalName = `${safeName}_profile.jpg`;
+    try {
+      return new File([blob], finalName, { type: "image/jpeg" });
+    } catch {
+      const fallback = blob as Blob & { name?: string; lastModified?: number };
+      fallback.name = finalName;
+      fallback.lastModified = Date.now();
+      return fallback as File;
+    }
   };
 
   const saveCroppedAvatar = async () => {
@@ -1295,6 +1303,7 @@ export function Sidebar({
                     className="hello-input rounded-xl px-3 py-2 text-xs"
                   >
                     <option value="system">System</option>
+                    <option value="cute">Cute theme</option>
                     <option value="light">Light</option>
                     <option value="dark">Dark</option>
                   </select>
@@ -1322,6 +1331,7 @@ export function Sidebar({
                       onChange={(e) => setChatWallpaper(e.target.value)}
                       className="hello-input rounded-xl px-3 py-2 text-xs"
                     >
+                      <option value="cute-theme">Cute theme</option>
                       <option value="default">Default</option>
                       <option value="solid-dark">Solid Dark</option>
                       <option value="solid-light">Solid Light</option>
@@ -1596,7 +1606,7 @@ export function Sidebar({
               <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 transform -translate-y-1/2" />
               <input
                 type="text"
-                placeholder="Search users by name"
+                placeholder="Search Hello users by name or username"
                 value={userSearchQuery}
                 onChange={(e) => setUserSearchQuery(e.target.value)}
                 className="w-full pl-9 pr-4 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-sm text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500"
@@ -1604,8 +1614,16 @@ export function Sidebar({
             </div>
 
             {usersToChat.length === 0 ? (
-              <div className="text-center text-sm text-slate-500 mt-4">
-                No users found. Register another cloud account, then refresh users.
+              <div className="mt-4 rounded-2xl border border-dashed border-slate-300/80 bg-white/70 px-5 py-8 text-center dark:border-slate-700 dark:bg-slate-800/60">
+                <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-indigo-50 text-indigo-600 dark:bg-indigo-900/30 dark:text-indigo-300">
+                  <UserPlus className="h-5 w-5" />
+                </div>
+                <div className="text-sm font-semibold text-slate-700 dark:text-slate-200">
+                  No Hello users found
+                </div>
+                <div className="mt-1 text-sm text-slate-500">
+                  Try another name or username, then refresh users.
+                </div>
               </div>
             ) : (
               <div className="flex flex-col space-y-4">
@@ -1641,7 +1659,11 @@ export function Sidebar({
                               <p className="font-semibold text-slate-800 dark:text-slate-200 text-sm">
                                 {u.name}
                               </p>
-                              {u.phone && (
+                              {u.username ? (
+                                <p className="text-xs text-indigo-500 dark:text-indigo-300">
+                                  @{u.username}
+                                </p>
+                              ) : u.phone && (
                                 <p className="text-xs text-slate-500">
                                   {u.phone}
                                 </p>
@@ -1686,7 +1708,11 @@ export function Sidebar({
                               <p className="font-semibold text-slate-800 dark:text-slate-200 text-sm">
                                 {u.name}
                               </p>
-                              {u.phone ? (
+                              {u.username ? (
+                                <p className="text-xs text-indigo-500 dark:text-indigo-300">
+                                  @{u.username}
+                                </p>
+                              ) : u.phone ? (
                                 <p className="text-xs text-slate-500">
                                   {u.phone}
                                 </p>

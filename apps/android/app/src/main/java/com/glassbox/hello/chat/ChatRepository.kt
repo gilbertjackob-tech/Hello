@@ -10,7 +10,7 @@ class ChatRepository(
     private val cloudRepository: CloudChatRepository? = null
 ) {
 
-    suspend fun fetchUsers(query: String? = null, cloudChatEnabled: Boolean = false): Result<List<User>> {
+    suspend fun fetchUsers(query: String? = null, cloudChatEnabled: Boolean = true): Result<List<User>> {
         if (cloudChatEnabled && cloudRepository != null) {
             return cloudRepository.fetchUsers(query)
         }
@@ -22,7 +22,7 @@ class ChatRepository(
         targetUserId: String,
         currentUserName: String,
         targetUserName: String? = null,
-        cloudChatEnabled: Boolean = false
+        cloudChatEnabled: Boolean = true
     ): Result<Chat> {
         if (cloudChatEnabled && cloudRepository != null) {
             return cloudRepository.createDirectChat(currentUserId, targetUserId, currentUserName, targetUserName)
@@ -35,7 +35,7 @@ class ChatRepository(
         currentUserName: String,
         name: String,
         members: List<String>,
-        cloudChatEnabled: Boolean = false
+        cloudChatEnabled: Boolean = true
     ): Result<Chat> {
         if (cloudChatEnabled && cloudRepository != null) {
             return cloudRepository.createGroupChat(currentUserId, currentUserName, name, members)
@@ -43,21 +43,21 @@ class ChatRepository(
         return api.createChat(name, isGroup = true, members = members)
     }
 
-    suspend fun fetchChats(userId: String, cloudChatEnabled: Boolean = false): Result<List<Chat>> {
+    suspend fun fetchChats(userId: String, cloudChatEnabled: Boolean = true): Result<List<Chat>> {
         if (cloudChatEnabled && cloudRepository != null) {
             return cloudRepository.fetchChats(userId)
         }
         return api.fetchChats(userId)
     }
 
-    fun cachedChats(userId: String, cloudChatEnabled: Boolean = false): List<Chat> {
+    fun cachedChats(userId: String, cloudChatEnabled: Boolean = true): List<Chat> {
         if (cloudChatEnabled && cloudRepository != null) {
             return cloudRepository.cachedChats(userId)
         }
         return emptyList()
     }
 
-    fun clearCachedUnread(userId: String, chatId: String, cloudChatEnabled: Boolean = false) {
+    fun clearCachedUnread(userId: String, chatId: String, cloudChatEnabled: Boolean = true) {
         if (cloudChatEnabled && cloudRepository != null) {
             cloudRepository.clearCachedUnread(userId, chatId)
         }
@@ -67,7 +67,7 @@ class ChatRepository(
         chatId: String,
         limit: Int? = null,
         offset: Int? = null,
-        cloudChatEnabled: Boolean = false
+        cloudChatEnabled: Boolean = true
     ): Result<List<Message>> {
         if (cloudChatEnabled && cloudRepository != null) {
             return cloudRepository.fetchMessages(chatId, limit, offset)
@@ -87,7 +87,7 @@ class ChatRepository(
         attachmentSize: Long? = null,
         location: ChatModels.LocationData? = null,
         replyTo: ChatModels.ReplyTo? = null,
-        cloudChatEnabled: Boolean = false,
+        cloudChatEnabled: Boolean = true,
         chat: Chat? = null
     ): Result<Message> {
         if (
@@ -133,7 +133,7 @@ class ChatRepository(
         messageId: String,
         emoji: String,
         userId: String,
-        cloudChatEnabled: Boolean = false
+        cloudChatEnabled: Boolean = true
     ) =
         if (cloudChatEnabled && cloudRepository != null) {
             cloudRepository.reactToMessage(messageId, emoji, userId)
@@ -141,16 +141,38 @@ class ChatRepository(
             api.reactToMessage(chatId, messageId, emoji, userId)
         }
 
-    suspend fun starMessage(chatId: String, messageId: String, userId: String) =
-        api.starMessage(chatId, messageId, userId)
+    suspend fun starMessage(chatId: String, messageId: String, userId: String, cloudChatEnabled: Boolean = true) =
+        if (cloudChatEnabled && cloudRepository != null) {
+            cloudRepository.starMessage(messageId, userId)
+        } else {
+            api.starMessage(chatId, messageId, userId)
+        }
 
-    suspend fun pinMessage(chatId: String, messageId: String, durationDays: Int) =
-        api.pinMessage(chatId, messageId, durationDays)
+    suspend fun pinMessage(chatId: String, messageId: String, userId: String, durationDays: Int, cloudChatEnabled: Boolean = true) =
+        if (cloudChatEnabled && cloudRepository != null) {
+            cloudRepository.pinMessage(messageId, userId, durationDays)
+        } else {
+            api.pinMessage(chatId, messageId, durationDays)
+        }
 
-    suspend fun deleteMessage(chatId: String, messageId: String, userId: String, type: String) =
-        api.deleteMessage(chatId, messageId, userId, type)
+    suspend fun deleteMessage(chatId: String, messageId: String, userId: String, type: String, cloudChatEnabled: Boolean = true) =
+        if (cloudChatEnabled && cloudRepository != null) {
+            cloudRepository.deleteMessage(messageId, userId, type)
+        } else {
+            api.deleteMessage(chatId, messageId, userId, type)
+        }
 
-    suspend fun clearChat(chatId: String, userId: String) = api.clearChat(chatId, userId)
+    suspend fun clearChat(chatId: String, userId: String, cloudChatEnabled: Boolean = true) =
+        if (cloudChatEnabled && cloudRepository != null) {
+            cloudRepository.clearChat(chatId, userId)
+        } else {
+            api.clearChat(chatId, userId)
+        }
 
-    suspend fun deleteChat(chatId: String, userId: String) = api.deleteChat(chatId, userId)
+    suspend fun deleteChat(chatId: String, userId: String, cloudChatEnabled: Boolean = true) =
+        if (cloudChatEnabled && cloudRepository != null) {
+            cloudRepository.deleteChat(chatId, userId)
+        } else {
+            api.deleteChat(chatId, userId)
+        }
 }

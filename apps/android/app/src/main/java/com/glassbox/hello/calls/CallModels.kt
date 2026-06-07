@@ -143,6 +143,7 @@ data class CallUiState(
     val debugEvents: List<String> = emptyList(),
     val debugLastEvent: String? = null,
     val debugOfferReceived: Boolean = false,
+    val debugAnswerReceived: Boolean = false,
     val debugAnswerSent: Boolean = false,
     val debugIceSentCount: Int = 0,
     val debugIceReceivedCount: Int = 0,

@@ -40,16 +40,6 @@ interface HelloApi {
     suspend fun fetchCallRoom(roomId: String): Result<CallRoom>
     suspend fun joinCallRoom(roomId: String, userId: String): Result<CallRoom>
     suspend fun leaveCallRoom(roomId: String, userId: String, ended: Boolean): Result<CallRoom>
-    suspend fun fetchStatuses(userId: String): Result<List<ChatModels.StatusItem>>
-    suspend fun createStatus(
-        userId: String,
-        text: String,
-        attachmentUrl: String? = null,
-        attachmentType: String? = null,
-        backgroundColor: String = "#0b141a",
-        duration: Long = 5000
-    ): Result<ChatModels.StatusItem>
-    suspend fun markStatusViewed(statusId: String, userId: String): Result<Unit>
     suspend fun reactToMessage(chatId: String, messageId: String, emoji: String, userId: String): Result<ChatModels.Message>
     suspend fun starMessage(chatId: String, messageId: String, userId: String): Result<ChatModels.Message>
     suspend fun pinMessage(chatId: String, messageId: String, durationDays: Int): Result<ChatModels.Message>

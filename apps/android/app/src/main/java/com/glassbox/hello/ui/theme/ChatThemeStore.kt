@@ -45,9 +45,9 @@ data class ChatThemeSelection(
 }
 
 object ChatThemeStore {
-    const val DefaultThemeId = "classic-green"
-    const val DefaultColorId = "green"
-    const val DefaultIncomingArgb: Int = 0xFF1F2C34.toInt()
+    const val DefaultThemeId = "app-cute"
+    const val DefaultColorId = "pink"
+    const val DefaultIncomingArgb: Int = 0xFFFFF7FB.toInt()
 
     private const val PREFS_NAME = "hello_chat_theme"
     private const val KEY_THEME_ID = "theme_id"
@@ -57,6 +57,7 @@ object ChatThemeStore {
     private const val KEY_WALLPAPER_OPACITY = "wallpaper_opacity"
     private const val KEY_BUBBLE_OPACITY = "bubble_opacity"
     private const val KEY_DARK_MODE = "dark_mode"
+    private const val KEY_CUTE_THEME_MIGRATED = "cute_theme_migrated"
 
     val Colors = listOf(
         ChatColorOption("green", "Green", 0xFF128C7E.toInt()),
@@ -83,6 +84,7 @@ object ChatThemeStore {
 
     val Wallpapers = listOf(
         HelloWallpapers.Default,
+        HelloWallpapers.ThemeCute,
         HelloWallpapers.ThemeMidnight,
         HelloWallpapers.ThemeAmoled,
         HelloWallpapers.ThemeTwilight,
@@ -118,6 +120,7 @@ object ChatThemeStore {
     )
 
     val AppThemeOptions = listOf(
+        ChatThemeOption("app-cute", "Cute theme", "pink", 0xFFFFF7FB.toInt(), HelloWallpapers.ThemeCute, 92, 96, false),
         ChatThemeOption("app-midnight", "Midnight", "teal", 0xFF172432.toInt(), HelloWallpapers.ThemeMidnight, 84, 94, true),
         ChatThemeOption("app-amoled", "Amoled", "sky", 0xFF111827.toInt(), HelloWallpapers.ThemeAmoled, 82, 95, true),
         ChatThemeOption("app-twilight", "Twilight", "amethyst", 0xFF211535.toInt(), HelloWallpapers.ThemeTwilight, 86, 94, true),
@@ -135,6 +138,7 @@ object ChatThemeStore {
     fun read(context: Context, userId: String): ChatThemeSelection {
         val prefs = prefs(context)
         val prefix = keyPrefix(userId)
+        migrateCuteDefaults(prefs, prefix)
         val themeId = prefs.getString("$prefix$KEY_THEME_ID", DefaultThemeId) ?: DefaultThemeId
         val colorId = prefs.getString("$prefix$KEY_COLOR_ID", null)
         val incomingArgb = prefs.getInt("$prefix$KEY_INCOMING_ARGB", Int.MIN_VALUE)
@@ -205,7 +209,8 @@ object ChatThemeStore {
     }
 
     fun themeById(id: String?): ChatThemeOption {
-        return (Themes + AppThemeOptions).firstOrNull { it.id == id } ?: Themes.first { it.id == DefaultThemeId }
+        val allThemes = Themes + AppThemeOptions
+        return allThemes.firstOrNull { it.id == id } ?: allThemes.first { it.id == DefaultThemeId }
     }
 
     fun companionIncomingArgb(colorId: String, darkMode: Boolean): Int {
@@ -235,6 +240,28 @@ object ChatThemeStore {
 
     private fun keyPrefix(userId: String): String {
         return "${userId.ifBlank { "local" }}."
+    }
+
+    private fun migrateCuteDefaults(prefs: SharedPreferences, prefix: String) {
+        val migratedKey = "$prefix$KEY_CUTE_THEME_MIGRATED"
+        if (prefs.getBoolean(migratedKey, false)) return
+        val savedTheme = prefs.getString("$prefix$KEY_THEME_ID", null)
+        val savedColor = prefs.getString("$prefix$KEY_COLOR_ID", null)
+        val savedWallpaper = prefs.getString("$prefix$KEY_WALLPAPER", null)
+        prefs.edit().apply {
+            if (savedTheme == null || savedTheme == "classic-green") {
+                putString("$prefix$KEY_THEME_ID", DefaultThemeId)
+                if (savedColor == null || savedColor == "green") putString("$prefix$KEY_COLOR_ID", DefaultColorId)
+                putInt("$prefix$KEY_INCOMING_ARGB", DefaultIncomingArgb)
+                putInt("$prefix$KEY_WALLPAPER_OPACITY", 92)
+                putInt("$prefix$KEY_BUBBLE_OPACITY", 96)
+                putBoolean("$prefix$KEY_DARK_MODE", false)
+            }
+            if (savedWallpaper == null || savedWallpaper == HelloWallpapers.Default) {
+                putString("$prefix$KEY_WALLPAPER", HelloWallpapers.ThemeCute)
+            }
+            putBoolean(migratedKey, true)
+        }.apply()
     }
 }
 

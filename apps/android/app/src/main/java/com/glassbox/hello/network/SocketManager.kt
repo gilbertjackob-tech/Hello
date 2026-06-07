@@ -1,15 +1,19 @@
 package com.glassbox.hello.network
 
 import android.content.Context
-import com.glassbox.hello.chat.ChatModels
-import com.glassbox.hello.calls.CallSocket
+import android.os.Handler
+import android.os.Looper
+import android.util.Log
 import com.glassbox.hello.auth.CloudSessionManager
+import com.glassbox.hello.calls.CallSocket
+import com.glassbox.hello.chat.CloudChatPayloadParser
+import com.glassbox.hello.chat.ChatModels
 import com.glassbox.hello.core.AppConfig
 import com.glassbox.hello.core.User
+import com.glassbox.hello.debug.HelloDebugLog
 import com.google.gson.Gson
 import io.socket.client.IO
 import io.socket.client.Socket
-import android.util.Log
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -23,6 +27,7 @@ import java.util.concurrent.TimeUnit
 class SocketManager private constructor() : CallSocket {
     private val gson = Gson()
     private val socketLock = Any()
+    private val mainHandler = Handler(Looper.getMainLooper())
     private var socket: Socket? = null
     private var cloudSocket: WebSocket? = null
     private var cloudConnected = false
@@ -37,6 +42,8 @@ class SocketManager private constructor() : CallSocket {
     private var isConnecting = false
     private val messageListeners = CopyOnWriteArraySet<(ChatModels.Message) -> Unit>()
     private val messageUpdateListeners = CopyOnWriteArraySet<(ChatModels.Message) -> Unit>()
+    private val chatUpdateListeners = CopyOnWriteArraySet<(ChatModels.Chat) -> Unit>()
+    private val presenceListeners = CopyOnWriteArraySet<(JSONObject) -> Unit>()
     private val typingListeners = CopyOnWriteArraySet<(JSONObject) -> Unit>()
 
     var onMessageReceived: ((ChatModels.Message) -> Unit)? = null
@@ -45,6 +52,7 @@ class SocketManager private constructor() : CallSocket {
     var onPresenceUpdated: ((JSONObject) -> Unit)? = null
     var onTyping: ((JSONObject) -> Unit)? = null
     var onNotification: ((JSONObject) -> Unit)? = null
+    var onSessionRevoked: ((JSONObject) -> Unit)? = null
     override var onCallEvent: ((String, JSONObject) -> Unit)? = null
     override var onConnectedChanged: ((Boolean) -> Unit)? = null
 
@@ -115,36 +123,71 @@ class SocketManager private constructor() : CallSocket {
             }
             s.on("receive_message") { args ->
                 parse<ChatModels.Message>(args.firstOrNull())?.let { message ->
-                    onMessageReceived?.invoke(message)
-                    messageListeners.forEach { listener -> listener(message) }
+                    dispatchOnMain {
+                        onMessageReceived?.invoke(message)
+                        messageListeners.forEach { listener -> listener(message) }
+                    }
                 }
             }
             s.on("message_updated") { args ->
                 parse<ChatModels.Message>(args.firstOrNull())?.let {
-                    onMessageUpdated?.invoke(it)
-                    messageUpdateListeners.forEach { listener -> listener(it) }
+                    dispatchOnMain {
+                        onMessageUpdated?.invoke(it)
+                        messageUpdateListeners.forEach { listener -> listener(it) }
+                    }
                 }
             }
             s.on("chat_updated") { args ->
-                parse<ChatModels.Chat>(args.firstOrNull())?.let { onChatUpdated?.invoke(it) }
+                parse<ChatModels.Chat>(args.firstOrNull())?.let {
+                    dispatchOnMain {
+                        onChatUpdated?.invoke(it)
+                        chatUpdateListeners.forEach { listener -> listener(it) }
+                    }
+                }
             }
             s.on("new_chat") { args ->
-                parse<ChatModels.Chat>(args.firstOrNull())?.let { onChatUpdated?.invoke(it) }
+                parse<ChatModels.Chat>(args.firstOrNull())?.let {
+                    dispatchOnMain {
+                        onChatUpdated?.invoke(it)
+                        chatUpdateListeners.forEach { listener -> listener(it) }
+                    }
+                }
             }
             s.on("user_presence") { args ->
-                parseJsonObject(args.firstOrNull())?.let { onPresenceUpdated?.invoke(it) }
+                parseJsonObject(args.firstOrNull())?.let {
+                    dispatchOnMain {
+                        onPresenceUpdated?.invoke(it)
+                        presenceListeners.forEach { listener -> listener(it) }
+                    }
+                }
             }
             s.on("user_updated") { args ->
-                parseJsonObject(args.firstOrNull())?.let { onPresenceUpdated?.invoke(it) }
+                parseJsonObject(args.firstOrNull())?.let {
+                    dispatchOnMain {
+                        onPresenceUpdated?.invoke(it)
+                        presenceListeners.forEach { listener -> listener(it) }
+                    }
+                }
             }
             s.on("presence_updated") { args ->
-                (args.firstOrNull() as? JSONObject)?.let { onPresenceUpdated?.invoke(it) }
+                (args.firstOrNull() as? JSONObject)?.let {
+                    dispatchOnMain {
+                        onPresenceUpdated?.invoke(it)
+                        presenceListeners.forEach { listener -> listener(it) }
+                    }
+                }
             }
             s.on("user_typing") { args ->
                 parseJsonObject(args.firstOrNull())?.let {
-                    onTyping?.invoke(it)
-                    typingListeners.forEach { listener -> listener(it) }
+                    dispatchOnMain {
+                        onTyping?.invoke(it)
+                        typingListeners.forEach { listener -> listener(it) }
+                    }
                 }
+            }
+            s.on("session_revoked") { args ->
+                val payload = parseJsonObject(args.firstOrNull()) ?: JSONObject()
+                dispatchOnMain { onSessionRevoked?.invoke(payload) }
             }
             listOf(
                 "call:start",
@@ -178,7 +221,7 @@ class SocketManager private constructor() : CallSocket {
                             TAG,
                             "[CALL_TRACE] android recv event=$event callId=${it.optString("callId")} eventId=${it.optString("eventId")} hasOfferSdp=${it.optJSONObject("offer")?.optString("sdp").isNullOrBlank().not()} hasAnswerSdp=${it.optJSONObject("answer")?.optString("sdp").isNullOrBlank().not()} hasIce=${it.optJSONObject("candidate")?.optString("candidate").isNullOrBlank().not()}"
                         )
-                        onCallEvent?.invoke(event, it)
+                        dispatchOnMain { onCallEvent?.invoke(event, it) }
                     }
                 }
             }
@@ -192,9 +235,11 @@ class SocketManager private constructor() : CallSocket {
     fun connect(context: Context, user: User) {
         val token = CloudSessionManager(context.applicationContext).token() ?: user.sessionToken
         if (token.isNullOrBlank()) {
+            HelloDebugLog.w("Socket", "connectCloud fallback_to_local userId=${user.id} reason=no_token")
             connect(user)
             return
         }
+        HelloDebugLog.d("Socket", "connectCloud userId=${user.id} origin=${AppConfig.CHAT_CLOUD_BASE_URL}")
         synchronized(socketLock) {
             currentUser = user
             socket?.let {
@@ -207,9 +252,11 @@ class SocketManager private constructor() : CallSocket {
             pendingCloudSends.clear()
             isConnecting = true
         }
-        val wsUrl = "${AppConfig.CHAT_CLOUD_BASE_URL}/api/calls/ws?token=${encode(token)}"
-            .replace("https://", "wss://")
-            .replace("http://", "ws://")
+        connectCloudSocket(user, token, AppConfig.CHAT_CLOUD_BASE_URL, allowFallback = true)
+    }
+
+    private fun connectCloudSocket(user: User, token: String, origin: String, allowFallback: Boolean) {
+        val wsUrl = cloudWebSocketUrl(origin, token)
         val request = Request.Builder().url(wsUrl).build()
         cloudSocket = cloudClient.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
@@ -217,7 +264,8 @@ class SocketManager private constructor() : CallSocket {
                     isConnecting = false
                     cloudConnected = true
                 }
-                Log.d(TAG, "Cloud chat realtime connected for ${user.id}")
+                Log.d(TAG, "Cloud chat realtime connected for ${user.id} origin=$origin")
+                HelloDebugLog.d("Socket", "cloudOpen userId=${user.id} origin=$origin")
                 onConnectedChanged?.invoke(true)
                 identify()
                 emitCloudPresence("online")
@@ -227,11 +275,18 @@ class SocketManager private constructor() : CallSocket {
 
             override fun onMessage(webSocket: WebSocket, text: String) {
                 runCatching {
+                    HelloDebugLog.d("Socket", "cloudMessage raw=${HelloDebugLog.snippet(text)}")
                     val envelope = JSONObject(text)
                     val event = envelope.optString("event")
                     val payload = envelope.optJSONObject("payload") ?: envelope
-                    dispatchCloudEvent(event, payload)
+                    runCatching {
+                        dispatchCloudEvent(event, payload)
+                    }.onFailure {
+                        HelloDebugLog.w("Socket", "cloudMessage dispatch_failed origin=$origin event=$event error=${it.message}", it)
+                        throw it
+                    }
                 }.onFailure {
+                    HelloDebugLog.w("Socket", "cloudMessage parse_failed origin=$origin error=${it.message}", it)
                     Log.w(TAG, "Failed to parse cloud realtime event", it)
                 }
             }
@@ -241,6 +296,7 @@ class SocketManager private constructor() : CallSocket {
                     isConnecting = false
                     cloudConnected = false
                 }
+                HelloDebugLog.w("Socket", "cloudClosed code=$code reason=${HelloDebugLog.snippet(reason)} origin=$origin")
                 onConnectedChanged?.invoke(false)
             }
 
@@ -249,7 +305,15 @@ class SocketManager private constructor() : CallSocket {
                     isConnecting = false
                     cloudConnected = false
                 }
-                Log.w(TAG, "Cloud chat realtime failed", t)
+                Log.w(TAG, "Cloud chat realtime failed origin=$origin", t)
+                HelloDebugLog.w("Socket", "cloudFailure origin=$origin error=${t.message}", t)
+                if (allowFallback && origin != AppConfig.CHAT_CLOUD_FALLBACK_URL) {
+                    synchronized(socketLock) {
+                        isConnecting = true
+                    }
+                    connectCloudSocket(user, token, AppConfig.CHAT_CLOUD_FALLBACK_URL, allowFallback = false)
+                    return
+                }
                 onConnectedChanged?.invoke(false)
             }
         })
@@ -265,6 +329,7 @@ class SocketManager private constructor() : CallSocket {
     }
 
     fun joinChat(chatId: String) {
+        HelloDebugLog.d("Socket", "joinChat chatId=$chatId cloudConnected=$cloudConnected")
         currentChatId?.takeIf { it != chatId }?.let { socket?.emit("leave_chat", it) }
         currentChatId = chatId
         if (cloudConnected) {
@@ -275,6 +340,7 @@ class SocketManager private constructor() : CallSocket {
     }
 
     fun leaveChat(chatId: String) {
+        HelloDebugLog.d("Socket", "leaveChat chatId=$chatId cloudConnected=$cloudConnected")
         if (currentChatId == chatId) currentChatId = null
         if (cloudConnected) {
             emitCloud("leave_chat", JSONObject(mapOf("chatId" to chatId)))
@@ -284,6 +350,7 @@ class SocketManager private constructor() : CallSocket {
     }
 
     fun typing(chatId: String, userId: String, userName: String, isTyping: Boolean = true) {
+        HelloDebugLog.d("Socket", "typing chatId=$chatId userId=$userId isTyping=$isTyping")
         val payload = JSONObject(
             mapOf(
                 "chatId" to chatId,
@@ -304,6 +371,7 @@ class SocketManager private constructor() : CallSocket {
     }
 
     fun markMessagesRead(chatId: String, readerId: String) {
+        HelloDebugLog.d("Socket", "markMessagesRead chatId=$chatId readerId=$readerId")
         if (cloudConnected) {
             emitCloud("mark_messages_read", JSONObject(mapOf("chatId" to chatId, "readerId" to readerId)))
             return
@@ -325,6 +393,22 @@ class SocketManager private constructor() : CallSocket {
 
     fun removeMessageUpdateListener(listener: (ChatModels.Message) -> Unit) {
         messageUpdateListeners.remove(listener)
+    }
+
+    fun addChatUpdateListener(listener: (ChatModels.Chat) -> Unit) {
+        chatUpdateListeners.add(listener)
+    }
+
+    fun removeChatUpdateListener(listener: (ChatModels.Chat) -> Unit) {
+        chatUpdateListeners.remove(listener)
+    }
+
+    fun addPresenceListener(listener: (JSONObject) -> Unit) {
+        presenceListeners.add(listener)
+    }
+
+    fun removePresenceListener(listener: (JSONObject) -> Unit) {
+        presenceListeners.remove(listener)
     }
 
     fun addTypingListener(listener: (JSONObject) -> Unit) {
@@ -353,7 +437,7 @@ class SocketManager private constructor() : CallSocket {
 
     override fun ack(payload: JSONObject) {
         Log.d(TAG, "[CALL_TRACE] android emit event=call:ack callId=${payload.optString("callId")} eventId=${payload.optString("eventId")}")
-        socket?.emit("call:ack", payload)
+        if (cloudConnected) emitCloud("call:ack", payload) else socket?.emit("call:ack", payload)
     }
 
     override fun declineCall(payload: JSONObject) {
@@ -486,27 +570,62 @@ class SocketManager private constructor() : CallSocket {
     }
 
     private fun dispatchCloudEvent(event: String, payload: JSONObject) {
+        HelloDebugLog.d("Socket", "dispatchCloudEvent event=$event payload=${HelloDebugLog.snippet(payload.toString())}")
         when (event) {
-            "receive_message" -> parse<ChatModels.Message>(payload)?.let { message ->
-                onMessageReceived?.invoke(message)
-                messageListeners.forEach { listener -> listener(message) }
+            "receive_message" -> parseMessage(payload)?.let { message ->
+                dispatchOnMain {
+                    onMessageReceived?.invoke(message)
+                    messageListeners.forEach { listener -> listener(message) }
+                }
             }
-            "message_updated" -> parse<ChatModels.Message>(payload)?.let {
-                onMessageUpdated?.invoke(it)
-                messageUpdateListeners.forEach { listener -> listener(it) }
+            "message_updated" -> parseMessage(payload)?.let {
+                dispatchOnMain {
+                    onMessageUpdated?.invoke(it)
+                    messageUpdateListeners.forEach { listener -> listener(it) }
+                }
             }
-            "chat_updated", "new_chat" -> parse<ChatModels.Chat>(payload)?.let { onChatUpdated?.invoke(it) }
-            "user_presence", "user_updated", "presence_updated" -> onPresenceUpdated?.invoke(payload)
-            "notification" -> onNotification?.invoke(payload)
+            "chat_updated", "new_chat" -> parseChat(payload)?.let {
+                dispatchOnMain {
+                    onChatUpdated?.invoke(it)
+                    chatUpdateListeners.forEach { listener -> listener(it) }
+                }
+            }
+            "user_presence", "user_updated", "presence_updated" -> {
+                dispatchOnMain {
+                    onPresenceUpdated?.invoke(payload)
+                    presenceListeners.forEach { listener -> listener(payload) }
+                }
+            }
+            "notification" -> dispatchOnMain { onNotification?.invoke(payload) }
+            "session_revoked" -> dispatchOnMain { onSessionRevoked?.invoke(payload) }
             "user_typing" -> {
-                onTyping?.invoke(payload)
-                typingListeners.forEach { listener -> listener(payload) }
+                dispatchOnMain {
+                    onTyping?.invoke(payload)
+                    typingListeners.forEach { listener -> listener(payload) }
+                }
             }
-            else -> if (event.startsWith("call:")) onCallEvent?.invoke(event, payload)
+            else -> if (event.startsWith("call:")) dispatchOnMain { onCallEvent?.invoke(event, payload) }
         }
     }
 
+    private fun parseMessage(payload: JSONObject): ChatModels.Message? {
+        val parsed = CloudChatPayloadParser.parseMessage(payload.toString())
+        if (parsed == null) {
+            HelloDebugLog.w("Socket", "parseMessage failed payload=${HelloDebugLog.snippet(payload.toString())}")
+        }
+        return parsed
+    }
+
+    private fun parseChat(payload: JSONObject): ChatModels.Chat? {
+        val parsed = CloudChatPayloadParser.parseChat(payload.toString())
+        if (parsed == null) {
+            HelloDebugLog.w("Socket", "parseChat failed payload=${HelloDebugLog.snippet(payload.toString())}")
+        }
+        return parsed
+    }
+
     private fun emitCloud(event: String, payload: JSONObject) {
+        HelloDebugLog.d("Socket", "emitCloud event=$event payload=${HelloDebugLog.snippet(payload.toString())}")
         val body = JSONObject()
             .put("event", event)
             .put("payload", payload)
@@ -545,5 +664,18 @@ class SocketManager private constructor() : CallSocket {
 
     private fun encode(value: String): String =
         java.net.URLEncoder.encode(value, "UTF-8").replace("+", "%20")
+
+    private fun cloudWebSocketUrl(origin: String, token: String): String =
+        "$origin/api/calls/ws?token=${encode(token)}"
+            .replace("https://", "wss://")
+            .replace("http://", "ws://")
+
+    private fun dispatchOnMain(block: () -> Unit) {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            block()
+        } else {
+            mainHandler.post(block)
+        }
+    }
 
 }

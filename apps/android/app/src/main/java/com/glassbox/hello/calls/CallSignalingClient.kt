@@ -1,6 +1,8 @@
 package com.glassbox.hello.calls
 
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import com.glassbox.hello.auth.CloudSessionManager
 import com.glassbox.hello.core.AppConfig
@@ -17,6 +19,7 @@ import java.util.concurrent.TimeUnit
 class CallSignalingClient(context: Context) : CallSocket {
     private val appContext = context.applicationContext
     private val sessionManager = CloudSessionManager(appContext)
+    private val mainHandler = Handler(Looper.getMainLooper())
     private val client = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(0, TimeUnit.SECONDS)
@@ -28,6 +31,7 @@ class CallSignalingClient(context: Context) : CallSocket {
 
     override var onCallEvent: ((String, JSONObject) -> Unit)? = null
     override var onConnectedChanged: ((Boolean) -> Unit)? = null
+    var onSessionRevoked: ((JSONObject) -> Unit)? = null
 
     override fun connect(user: User) {
         currentUser = user
@@ -37,15 +41,17 @@ class CallSignalingClient(context: Context) : CallSocket {
             onConnectedChanged?.invoke(false)
             return
         }
-        val wsUrl = "${AppConfig.CHAT_CLOUD_BASE_URL}/api/calls/ws?token=${encode(token)}"
-            .replace("https://", "wss://")
-            .replace("http://", "ws://")
+        connectSocket(user, token, AppConfig.CHAT_CLOUD_BASE_URL, allowFallback = true)
+    }
+
+    private fun connectSocket(user: User, token: String, origin: String, allowFallback: Boolean) {
+        val wsUrl = cloudWebSocketUrl(origin, token)
         val request = Request.Builder().url(wsUrl).build()
         socket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
-                Log.d(TAG, "Cloud call signaling connected for ${user.id}")
+                Log.d(TAG, "Cloud call signaling connected for ${user.id} origin=$origin")
                 connected = true
-                onConnectedChanged?.invoke(true)
+                dispatchOnMain { onConnectedChanged?.invoke(true) }
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
@@ -53,8 +59,11 @@ class CallSignalingClient(context: Context) : CallSocket {
                     val envelope = JSONObject(text)
                     val event = envelope.optString("event")
                     val payload = envelope.optJSONObject("payload") ?: envelope
-                    if (event.startsWith("call:")) {
-                        onCallEvent?.invoke(event, payload)
+                    if (event == "session_revoked") {
+                        dispatchOnMain { onSessionRevoked?.invoke(payload) }
+                        webSocket.close(1000, "session_revoked")
+                    } else if (event.startsWith("call:")) {
+                        dispatchOnMain { onCallEvent?.invoke(event, payload) }
                     }
                 }.onFailure {
                     Log.w(TAG, "Failed to parse cloud call event", it)
@@ -63,18 +72,22 @@ class CallSignalingClient(context: Context) : CallSocket {
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                 connected = false
-                onConnectedChanged?.invoke(false)
+                dispatchOnMain { onConnectedChanged?.invoke(false) }
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                Log.w(TAG, "Cloud call signaling failed", t)
+                Log.w(TAG, "Cloud call signaling failed origin=$origin", t)
                 connected = false
-                onConnectedChanged?.invoke(false)
+                if (allowFallback && origin != AppConfig.CHAT_CLOUD_FALLBACK_URL) {
+                    connectSocket(user, token, AppConfig.CHAT_CLOUD_FALLBACK_URL, allowFallback = false)
+                    return
+                }
+                dispatchOnMain { onConnectedChanged?.invoke(false) }
             }
         })
     }
 
-    override fun startCall(payload: JSONObject) = Unit
+    override fun startCall(payload: JSONObject) = send("call:start", payload)
     override fun ringing(payload: JSONObject) = send("call:ringing", payload)
     override fun acceptCall(payload: JSONObject) = send("call:accepted", payload)
     override fun connected(payload: JSONObject) = send("call:connected", payload)
@@ -88,9 +101,9 @@ class CallSignalingClient(context: Context) : CallSocket {
     override fun sendAnswer(payload: JSONObject) = send("call:answer", payload)
     override fun sendIceCandidate(payload: JSONObject) = send("call:ice-candidate", payload)
 
-    override fun createRoom(payload: JSONObject) = Unit
-    override fun joinRoom(payload: JSONObject) = Unit
-    override fun leaveRoom(payload: JSONObject) = Unit
+    override fun createRoom(payload: JSONObject) = send("call:room-created", payload)
+    override fun joinRoom(payload: JSONObject) = send("call:room-join", payload)
+    override fun leaveRoom(payload: JSONObject) = send("call:room-leave", payload)
     override fun participantState(payload: JSONObject) = send("call:participant-state", payload)
     override fun sendRoomOffer(payload: JSONObject) = send("call:room-offer", payload)
     override fun sendRoomAnswer(payload: JSONObject) = send("call:room-answer", payload)
@@ -108,6 +121,19 @@ class CallSignalingClient(context: Context) : CallSocket {
     }
 
     private fun encode(value: String): String = java.net.URLEncoder.encode(value, "UTF-8").replace("+", "%20")
+
+    private fun cloudWebSocketUrl(origin: String, token: String): String =
+        "$origin/api/calls/ws?token=${encode(token)}"
+            .replace("https://", "wss://")
+            .replace("http://", "ws://")
+
+    private fun dispatchOnMain(block: () -> Unit) {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            block()
+        } else {
+            mainHandler.post(block)
+        }
+    }
 
     companion object {
         private const val TAG = "CloudCallSignaling"

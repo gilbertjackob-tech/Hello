@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 
-type Theme = 'light' | 'dark' | 'system';
+type Theme = 'light' | 'dark' | 'system' | 'cute';
 
 interface ThemeContextType {
   theme: Theme;
@@ -15,12 +15,12 @@ interface ThemeContextType {
 }
 
 const ThemeContext = createContext<ThemeContextType>({ 
-  theme: 'system', 
+  theme: 'cute',
   setTheme: () => {}, 
   isDark: false,
   enterIsSend: true,
   setEnterIsSend: () => {},
-  chatWallpaper: 'default',
+  chatWallpaper: 'cute-theme',
   setChatWallpaper: () => {},
   chatWallpaperOpacity: 100,
   setChatWallpaperOpacity: () => {}
@@ -28,16 +28,30 @@ const ThemeContext = createContext<ThemeContextType>({
 
 export const useTheme = () => useContext(ThemeContext);
 
+const CUTE_THEME_MIGRATION_KEY = 'whatsclone_cute_theme_migrated';
+
 export const ThemeProvider = ({ children }: { children: ReactNode }) => {
   const [theme, setTheme] = useState<Theme>(() => {
-     return (localStorage.getItem('whatsclone_theme') as Theme) || 'system';
+     const saved = localStorage.getItem('whatsclone_theme') as Theme | null;
+     if (!localStorage.getItem(CUTE_THEME_MIGRATION_KEY) && (!saved || saved === 'system')) {
+       localStorage.setItem(CUTE_THEME_MIGRATION_KEY, 'true');
+       localStorage.setItem('whatsclone_theme', 'cute');
+       return 'cute';
+     }
+     return saved || 'cute';
   });
   const [enterIsSend, setEnterIsSend] = useState<boolean>(() => {
     const val = localStorage.getItem('whatsclone_enter_send');
     return val !== null ? val === 'true' : true;
   });
   const [chatWallpaper, setChatWallpaper] = useState<string>(() => {
-    return localStorage.getItem('whatsclone_wallpaper') || 'default';
+    const saved = localStorage.getItem('whatsclone_wallpaper');
+    if (!localStorage.getItem(`${CUTE_THEME_MIGRATION_KEY}_wallpaper`) && (!saved || saved === 'default')) {
+      localStorage.setItem(`${CUTE_THEME_MIGRATION_KEY}_wallpaper`, 'true');
+      localStorage.setItem('whatsclone_wallpaper', 'cute-theme');
+      return 'cute-theme';
+    }
+    return saved || 'cute-theme';
   });
   const [chatWallpaperOpacity, setChatWallpaperOpacity] = useState<number>(() => {
     const val = localStorage.getItem('whatsclone_wallpaper_opacity');
@@ -54,10 +68,15 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
     
     const updateTheme = () => {
       const isSystemDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      const willBeCute = theme === 'cute';
       const willBeDark = theme === 'dark' || (theme === 'system' && isSystemDark);
       
-      root.classList.remove('dark', 'light');
-      if (willBeDark) {
+      root.classList.remove('dark', 'light', 'cute');
+      if (willBeCute) {
+        root.classList.add('cute');
+        document.body.style.backgroundColor = '#fff1f7';
+        document.body.style.color = '#84234b';
+      } else if (willBeDark) {
         root.classList.add('dark');
         document.body.style.backgroundColor = '#0f172a'; // slate-900
         document.body.style.color = '#f8fafc'; // slate-50
