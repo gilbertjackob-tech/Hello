@@ -40,6 +40,10 @@ for issue with gradle build- reset :
 .\gradlew.bat clean assembleRelease --no-daemon; if ($LASTEXITCODE -eq 0) { adb install -r app\build\outputs\apk\release\app-release.apk }
 ```
 
+for version mismatch with sqlite 3
+```
+npx electron-rebuild -f -w better-sqlite3 -v 41.3.0
+```
 Open:
 
 ```text

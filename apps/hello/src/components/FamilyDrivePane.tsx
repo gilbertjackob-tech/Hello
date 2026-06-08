@@ -13,6 +13,7 @@ import {
   fetchDriveFavorites,
   fetchDriveItems,
   fetchDriveTrash,
+  fetchUsers,
   leaveDriveCircle,
   permanentlyDeleteDriveItem,
   renameDriveEvent,
@@ -30,6 +31,7 @@ interface FamilyDrivePaneProps {
 }
 
 type DriveView = "circles" | "events" | "items" | "trash";
+type MemberRole = "view" | "add" | "manage";
 
 export function FamilyDrivePane({ currentUser, visible }: FamilyDrivePaneProps) {
   const [view, setView] = useState<DriveView>("circles");
@@ -46,7 +48,8 @@ export function FamilyDrivePane({ currentUser, visible }: FamilyDrivePaneProps) 
   const [uploading, setUploading] = useState(false);
   const [circleName, setCircleName] = useState("");
   const [eventName, setEventName] = useState("");
-  const [selectedContactIds, setSelectedContactIds] = useState<Set<string>>(new Set());
+  const [contactSearch, setContactSearch] = useState("");
+  const [selectedContactRoles, setSelectedContactRoles] = useState<Record<string, MemberRole>>({});
 
   const selectedCircle = useMemo(
     () => circles.find((circle) => circle.id === selectedCircleId) || null,
@@ -124,10 +127,12 @@ export function FamilyDrivePane({ currentUser, visible }: FamilyDrivePaneProps) 
   }
 
   async function loadContacts() {
-    const chats = await fetchChats(currentUser.id).catch(() => [] as Chat[]);
-    const nextContacts = chats
-      .flatMap((chat) => chat.participants || [])
-      .filter((user) => user.id !== currentUser.id)
+    const [chats, users] = await Promise.all([
+      fetchChats(currentUser.id).catch(() => [] as Chat[]),
+      fetchUsers().catch(() => [] as User[]),
+    ]);
+    const nextContacts = [...chats.flatMap((chat) => chat.participants || []), ...users]
+      .filter((user) => user.id && user.id !== currentUser.id)
       .reduce<User[]>((acc, user) => {
         if (!acc.some((existing) => existing.id === user.id)) acc.push(user);
         return acc;
@@ -140,10 +145,10 @@ export function FamilyDrivePane({ currentUser, visible }: FamilyDrivePaneProps) 
     const name = circleName.trim();
     if (!name) return;
     const members = contacts
-      .filter((contact) => selectedContactIds.has(contact.id))
+      .filter((contact) => Boolean(selectedContactRoles[contact.id]))
       .map((contact) => ({
         userId: contact.id,
-        role: "member",
+        role: selectedContactRoles[contact.id],
         name: contact.name,
         username: contact.username || null,
         avatar: contact.avatar || null,
@@ -163,7 +168,8 @@ export function FamilyDrivePane({ currentUser, visible }: FamilyDrivePaneProps) 
       ],
     });
     setCircleName("");
-    setSelectedContactIds(new Set());
+    setContactSearch("");
+    setSelectedContactRoles({});
     await refreshCircles();
   }
 
@@ -284,10 +290,21 @@ export function FamilyDrivePane({ currentUser, visible }: FamilyDrivePaneProps) 
     if (selectedCircleId) await refreshCircles();
   }
 
+  const filteredContacts = useMemo(() => {
+    const query = contactSearch.trim().toLowerCase();
+    if (!query) return contacts;
+    return contacts.filter((contact) =>
+      [contact.name, contact.username ? `@${contact.username}` : "", contact.id]
+        .join(" ")
+        .toLowerCase()
+        .includes(query),
+    );
+  }, [contactSearch, contacts]);
+
   if (!visible) return null;
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-[var(--hello-surface)] text-[var(--hello-text)]">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-[var(--hello-surface)] text-[var(--hello-text)]">
       <div className="border-b border-[var(--hello-border)] px-5 py-4">
         <div className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--hello-muted)]">Hello Drive</div>
         <div className="mt-1 flex items-center justify-between gap-3">
@@ -305,8 +322,8 @@ export function FamilyDrivePane({ currentUser, visible }: FamilyDrivePaneProps) 
         </div>
       </div>
 
-      <div className="grid min-h-0 flex-1 gap-0 md:grid-cols-[320px_minmax(0,1fr)]">
-        <aside className="border-r border-[var(--hello-border)] p-4">
+      <div className="grid min-h-0 flex-1 gap-0 overflow-hidden md:grid-cols-[320px_minmax(0,1fr)]">
+        <aside className="min-h-0 overflow-y-auto border-r border-[var(--hello-border)] p-4 custom-scrollbar">
           <div className="rounded-2xl border border-[var(--hello-border)] bg-white/70 p-4 shadow-sm">
             <div className="mb-3 flex items-center gap-2 text-sm font-semibold">
               <Users className="h-4 w-4" />
@@ -318,31 +335,59 @@ export function FamilyDrivePane({ currentUser, visible }: FamilyDrivePaneProps) 
               placeholder="Circle name"
               className="mb-3 w-full rounded-xl border border-[var(--hello-border)] bg-white px-3 py-2 text-sm outline-none"
             />
+            <input
+              value={contactSearch}
+              onChange={(event) => setContactSearch(event.target.value)}
+              placeholder="Search members by name or user id"
+              className="mb-3 w-full rounded-xl border border-[var(--hello-border)] bg-white px-3 py-2 text-sm outline-none"
+            />
             <div className="mb-3 max-h-40 space-y-2 overflow-auto rounded-xl border border-[var(--hello-border)] bg-white p-2">
-              {contacts.map((contact) => {
-                const checked = selectedContactIds.has(contact.id);
+              {filteredContacts.map((contact) => {
+                const checked = Boolean(selectedContactRoles[contact.id]);
                 return (
                   <label key={contact.id} className="flex cursor-pointer items-center gap-3 rounded-lg px-2 py-2 hover:bg-pink-50">
                     <input
                       type="checkbox"
                       checked={checked}
                       onChange={() =>
-                        setSelectedContactIds((current) => {
-                          const next = new Set(current);
-                          if (checked) next.delete(contact.id);
-                          else next.add(contact.id);
+                        setSelectedContactRoles((current) => {
+                          const next = { ...current };
+                          if (checked) delete next[contact.id];
+                          else next[contact.id] = "add";
                           return next;
                         })
                       }
                     />
                     <Avatar user={contact} />
-                    <div className="min-w-0">
+                    <div className="min-w-0 flex-1">
                       <div className="truncate text-sm font-semibold">{contact.name}</div>
-                      <div className="truncate text-xs text-[var(--hello-muted)]">{contact.username ? `@${contact.username}` : "Chat contact"}</div>
+                      <div className="truncate text-xs text-[var(--hello-muted)]">{contact.username ? `@${contact.username}` : contact.id}</div>
                     </div>
+                    {checked ? (
+                      <select
+                        value={selectedContactRoles[contact.id]}
+                        onChange={(event) =>
+                          setSelectedContactRoles((current) => ({
+                            ...current,
+                            [contact.id]: event.target.value as MemberRole,
+                          }))
+                        }
+                        onClick={(event) => event.stopPropagation()}
+                        className="rounded-full border border-[var(--hello-border)] bg-white px-3 py-1 text-xs font-semibold text-[var(--hello-text)] outline-none"
+                      >
+                        <option value="view">Can view</option>
+                        <option value="add">Can add</option>
+                        <option value="manage">Can manage</option>
+                      </select>
+                    ) : null}
                   </label>
                 );
               })}
+              {!filteredContacts.length ? (
+                <div className="rounded-lg border border-dashed border-[var(--hello-border)] px-3 py-4 text-xs text-[var(--hello-muted)]">
+                  No users found for this search.
+                </div>
+              ) : null}
             </div>
             <button
               type="button"

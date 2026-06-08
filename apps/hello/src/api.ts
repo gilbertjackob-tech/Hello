@@ -512,6 +512,7 @@ export async function uploadDriveFiles(
   },
 ): Promise<DriveUploadResponse> {
   const formData = new FormData();
+  formData.append("userId", uploaderId);
   formData.append("uploaderId", uploaderId);
   if (plan.eventId) formData.append("eventId", plan.eventId);
   if (plan.eventName) formData.append("eventName", plan.eventName);

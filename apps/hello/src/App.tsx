@@ -9,6 +9,7 @@ import { ChatWindow } from "./components/ChatWindow";
 import { CallOverlay } from "./components/CallOverlay";
 import { AuthScreen } from "./components/AuthScreen";
 import { HelloBrowser } from "./components/HelloBrowser";
+import { FamilyDrivePane } from "./components/FamilyDrivePane";
 import { Chat, User } from "./types";
 import { ThemeProvider } from "./ThemeContext";
 import { NotificationProvider } from "./NotificationContext";
@@ -411,7 +412,7 @@ export default function App() {
           <div
             className={cn(
               "relative order-2 flex h-full flex-1 flex-col min-h-0 overflow-hidden bg-transparent transition-colors duration-300 md:order-3",
-              !activeChat && !isBrowserRailTab && "hidden md:flex",
+              !activeChat && activeRailTab !== "drive" && !isBrowserRailTab && "hidden md:flex",
             )}
           >
             {/* Minimal top bar when sidebar is collapsed on desktop, or mobile back button */}
@@ -438,7 +439,9 @@ export default function App() {
               </div>
             )}
 
-            {isBrowserRailTab ? (
+            {activeRailTab === "drive" ? (
+              <FamilyDrivePane currentUser={currentUser} visible />
+            ) : isBrowserRailTab ? (
               <HelloBrowser />
             ) : activeChat ? (
               <ChatPaneErrorBoundary resetKey={activeChat.id} onReset={() => selectChat(null)}>

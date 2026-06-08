@@ -46,7 +46,6 @@ import { useNotifications } from "../NotificationContext";
 import { describeMediaAccessError, testCameraMicrophoneAccess } from "../mediaPermissions";
 import { useToast } from "../ToastContext";
 import { EmptyState, FilterChip, SkeletonBlock } from "./HelloUi";
-import { FamilyDrivePane } from "./FamilyDrivePane";
 
 interface SidebarProps {
   activeChatId?: string;
@@ -1803,16 +1802,6 @@ export function Sidebar({
             This will create a group with a few of your contacts automatically.
           </p>
         </div>
-      </div>
-
-      {/* Drive Pane */}
-      <div
-        className={cn(
-          "absolute inset-0 z-20 flex flex-col bg-white transition-transform duration-300 dark:bg-[#111b21]",
-          showDrive ? "translate-x-0" : "-translate-x-full",
-        )}
-      >
-        <FamilyDrivePane currentUser={currentUser} visible={showDrive} />
       </div>
 
       {/* Calls Pane */}

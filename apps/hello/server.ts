@@ -640,7 +640,7 @@ function getDriveActorId(req: express.Request) {
   const candidate =
     req.get("x-user-id") ||
     req.query.userId ||
-    (req.body && typeof req.body === "object" ? req.body.userId : null);
+    (req.body && typeof req.body === "object" ? (req.body.userId || req.body.uploaderId) : null);
   return String(candidate || "unknown").trim() || "unknown";
 }
 
@@ -819,10 +819,39 @@ function getDriveActorCircleIds(userId: string) {
     .filter(Boolean);
 }
 
+function normalizeDriveCircleRole(role: string | null | undefined) {
+  const value = String(role || "").trim().toLowerCase();
+  if (value === "owner") return "owner";
+  if (value === "manage" || value.includes("manage")) return "manage";
+  if (value === "add" || value === "member" || value.includes("contribute")) return "add";
+  return "view";
+}
+
 function isDriveCircleMember(circleId: string, userId: string) {
   return Boolean(
     db.prepare("SELECT 1 FROM drive_circle_members WHERE circleId = ? AND userId = ? LIMIT 1").get(circleId, userId),
   );
+}
+
+function getDriveCircleMember(circleId: string, userId: string) {
+  const row = db.prepare(
+    "SELECT circleId, userId, role, name, username, avatar, createdAt FROM drive_circle_members WHERE circleId = ? AND userId = ? LIMIT 1",
+  ).get(circleId, userId) as any;
+  if (!row) return null;
+  return {
+    ...row,
+    role: normalizeDriveCircleRole(row.role),
+  };
+}
+
+function canDriveCircleManage(circleId: string, userId: string) {
+  const member = getDriveCircleMember(circleId, userId);
+  return member?.role === "owner" || member?.role === "manage";
+}
+
+function canDriveCircleAdd(circleId: string, userId: string) {
+  const member = getDriveCircleMember(circleId, userId);
+  return member?.role === "owner" || member?.role === "manage" || member?.role === "add";
 }
 
 function getDriveCircle(circleId: string) {
@@ -832,7 +861,11 @@ function getDriveCircle(circleId: string) {
 function getDriveCircleMembers(circleId: string) {
   return db
     .prepare("SELECT circleId, userId, role, name, username, avatar, createdAt FROM drive_circle_members WHERE circleId = ? ORDER BY createdAt ASC")
-    .all(circleId) as any[];
+    .all(circleId)
+    .map((member: any) => ({
+      ...member,
+      role: normalizeDriveCircleRole(member.role),
+    })) as any[];
 }
 
 function getDriveCircleSummary(circleId: string) {
@@ -850,6 +883,14 @@ function getDriveEventCircleIds(eventId: string) {
   return (db.prepare("SELECT circleId FROM drive_event_circles WHERE eventId = ?").all(eventId) as Array<{ circleId?: string }>)
     .map((row) => String(row.circleId || "").trim())
     .filter(Boolean);
+}
+
+function canDriveEventManage(eventId: string, userId: string) {
+  return getDriveEventCircleIds(eventId).some((circleId) => canDriveCircleManage(circleId, userId));
+}
+
+function canDriveEventAdd(eventId: string, userId: string) {
+  return getDriveEventCircleIds(eventId).some((circleId) => canDriveCircleAdd(circleId, userId));
 }
 
 function isDriveEventVisibleToActor(eventId: string, userId: string) {
@@ -2284,7 +2325,7 @@ export async function mountHello(
     const actorUserId = getDriveActorId(req);
     const rows = db.prepare(
       `
-      SELECT c.*
+      SELECT DISTINCT c.*
       FROM drive_circles c
       JOIN drive_circle_members m ON m.circleId = c.id
       WHERE m.userId = ?
@@ -2295,6 +2336,7 @@ export async function mountHello(
     res.json({
       circles: rows
         .map((row) => getDriveCircleSummary(row.id))
+        .filter((circle: any, index: number, all: any[]) => all.findIndex((candidate: any) => candidate?.id === circle?.id) == index)
         .filter(Boolean),
     });
   });
@@ -2309,31 +2351,47 @@ export async function mountHello(
       return;
     }
     const inputMembers = Array.isArray(req.body?.members) ? req.body.members : [];
-    const members = inputMembers
+    const existing = getDriveCircle(id);
+    if (existing && !canDriveCircleManage(id, actorUserId)) {
+      res.status(403).json({ error: "Circle manage access denied" });
+      return;
+    }
+    const ownerUserId = existing?.ownerUserId || actorUserId;
+    const memberMap = new Map<string, any>();
+    inputMembers
       .map((member: any) => ({
         userId: String(member?.userId || "").trim(),
-        role: String(member?.role || "member").trim() || "member",
+        role: normalizeDriveCircleRole(String(member?.role || "add").trim() || "add"),
         name: member?.name ? String(member.name).trim() : null,
         username: member?.username ? String(member.username).trim() : null,
         avatar: member?.avatar ? String(member.avatar).trim() : null,
       }))
-      .filter((member: any) => member.userId);
-    if (!members.some((member: any) => member.userId === actorUserId)) {
+      .filter((member: any) => member.userId)
+      .forEach((member: any) => memberMap.set(member.userId, member));
+    const ownerSummary = getDriveUserSummary(ownerUserId);
+    memberMap.set(ownerUserId, {
+      userId: ownerUserId,
+      role: "owner",
+      name: memberMap.get(ownerUserId)?.name || ownerSummary?.name || null,
+      username: memberMap.get(ownerUserId)?.username || null,
+      avatar: memberMap.get(ownerUserId)?.avatar || ownerSummary?.avatar || null,
+    });
+    if (!memberMap.has(actorUserId)) {
       const actor = getDriveUserSummary(actorUserId);
-      members.unshift({
+      memberMap.set(actorUserId, {
         userId: actorUserId,
-        role: "owner",
+        role: actorUserId === ownerUserId ? "owner" : (getDriveCircleMember(id, actorUserId)?.role || "manage"),
         name: actor?.name || null,
         username: null,
         avatar: actor?.avatar || null,
       });
     }
+    const members = Array.from(memberMap.values());
     const saveCircle = db.transaction(() => {
-      const existing = getDriveCircle(id);
       db.prepare("INSERT OR REPLACE INTO drive_circles (id, name, ownerUserId, createdAt, updatedAt) VALUES (?, ?, ?, COALESCE(?, ?), ?)").run(
         id,
         name,
-        existing?.ownerUserId || actorUserId,
+        ownerUserId,
         existing?.createdAt || null,
         now,
         now,
@@ -2352,8 +2410,8 @@ export async function mountHello(
   app.delete("/api/drive/circles/:id", (req, res) => {
     const actorUserId = getDriveActorId(req);
     const circleId = req.params.id;
-    if (!isDriveCircleMember(circleId, actorUserId)) {
-      res.status(403).json({ error: "Circle access denied" });
+    if (!canDriveCircleManage(circleId, actorUserId)) {
+      res.status(403).json({ error: "Circle manage access denied" });
       return;
     }
     const summary = getDriveCircleSummary(circleId);
@@ -2377,11 +2435,16 @@ export async function mountHello(
       res.status(403).json({ error: "Circle access denied" });
       return;
     }
+    const circle = getDriveCircle(circleId);
     db.prepare("DELETE FROM drive_circle_members WHERE circleId = ? AND userId = ?").run(circleId, actorUserId);
     const remaining = getDriveCircleMembers(circleId);
     if (!remaining.length) {
       db.prepare("DELETE FROM drive_circles WHERE id = ?").run(circleId);
       db.prepare("DELETE FROM drive_event_circles WHERE circleId = ?").run(circleId);
+    } else if (circle?.ownerUserId === actorUserId) {
+      const nextOwner = remaining.find((member: any) => member.role === "manage") || remaining[0];
+      db.prepare("UPDATE drive_circles SET ownerUserId = ?, updatedAt = ? WHERE id = ?").run(nextOwner.userId, Date.now(), circleId);
+      db.prepare("UPDATE drive_circle_members SET role = ? WHERE circleId = ? AND userId = ?").run("owner", circleId, nextOwner.userId);
     }
     res.json({ ok: true, circleId, leftByUserId: actorUserId });
   });
@@ -2423,8 +2486,8 @@ export async function mountHello(
   app.post("/api/drive/circles/:id/events", express.json(), (req, res) => {
     const actorUserId = getDriveActorId(req);
     const circleId = req.params.id;
-    if (!isDriveCircleMember(circleId, actorUserId)) {
-      res.status(403).json({ error: "Circle access denied" });
+    if (!canDriveCircleAdd(circleId, actorUserId)) {
+      res.status(403).json({ error: "Circle add access denied" });
       return;
     }
     const event = getOrCreateDriveEvent(req.body?.name, actorUserId, req.body?.id);
@@ -2437,8 +2500,12 @@ export async function mountHello(
   app.post("/api/drive/events", express.json(), (req, res) => {
     const actorUserId = getDriveActorId(req);
     const circleId = String(req.body?.circleId || "").trim();
-    if (!circleId || !isDriveCircleMember(circleId, actorUserId)) {
+    if (!circleId) {
       res.status(400).json({ error: "A valid circleId is required" });
+      return;
+    }
+    if (!canDriveCircleAdd(circleId, actorUserId)) {
+      res.status(403).json({ error: "Circle add access denied" });
       return;
     }
     const event = getOrCreateDriveEvent(req.body?.name, actorUserId, req.body?.id);
@@ -2451,8 +2518,8 @@ export async function mountHello(
   app.patch("/api/drive/events/:id", express.json(), (req, res) => {
     const actorUserId = getDriveActorId(req);
     const eventId = req.params.id;
-    if (!isDriveEventVisibleToActor(eventId, actorUserId)) {
-      res.status(403).json({ error: "Event access denied" });
+    if (!canDriveEventManage(eventId, actorUserId)) {
+      res.status(403).json({ error: "Event manage access denied" });
       return;
     }
     const name = String(req.body?.name || "").trim();
@@ -2469,8 +2536,8 @@ export async function mountHello(
   app.delete("/api/drive/events/:id", (req, res) => {
     const actorUserId = getDriveActorId(req);
     const eventId = req.params.id;
-    if (!isDriveEventVisibleToActor(eventId, actorUserId)) {
-      res.status(403).json({ error: "Event access denied" });
+    if (!canDriveEventManage(eventId, actorUserId)) {
+      res.status(403).json({ error: "Event manage access denied" });
       return;
     }
     if (getDriveEventItemsCount(eventId) > 0) {
@@ -2524,8 +2591,12 @@ export async function mountHello(
     } else if (!circleId) {
       circleId = getDriveEventCircleIds(targetId)[0] || "";
     }
-    if (!circleId || !isDriveCircleMember(circleId, actorUserId)) {
+    if (!circleId) {
       res.status(403).json({ error: "Circle access denied" });
+      return;
+    }
+    if ((targetType === "circle" && !canDriveCircleManage(circleId, actorUserId)) || (targetType === "event" && !canDriveEventManage(targetId, actorUserId))) {
+      res.status(403).json({ error: "Delete poll manage access denied" });
       return;
     }
     const existing = db.prepare(
@@ -2622,8 +2693,8 @@ export async function mountHello(
       res.status(400).json({ error: "Please choose a circle before uploading" });
       return;
     }
-    if (!circleIds.every((circleId) => isDriveCircleMember(circleId, actorUserId))) {
-      res.status(403).json({ error: "Circle access denied" });
+    if (!circleIds.every((circleId) => canDriveCircleAdd(circleId, actorUserId))) {
+      res.status(403).json({ error: "Circle add access denied" });
       return;
     }
     const requestedEventId = String(req.body.eventId || "").trim() || undefined;
