@@ -165,9 +165,10 @@ class FamilyDriveViewModel : ViewModel() {
         viewModelScope.launch {
             repository.fetchCircles(userId).fold(
                 onSuccess = { circles ->
-                    val nextCircleId = circleId ?: circles.firstOrNull()?.id
+                    val uniqueCircles = circles.distinctBy { it.id }.sortedByDescending { it.updatedAt }
+                    val nextCircleId = circleId ?: uniqueCircles.firstOrNull()?.id
                     activeCircleId = nextCircleId
-                    _state.update { it.copy(circles = circles, activeCircleId = nextCircleId) }
+                    _state.update { it.copy(circles = uniqueCircles, activeCircleId = nextCircleId) }
                     loadEvents(userId, nextCircleId)
                     if (!nextCircleId.isNullOrBlank()) loadDeletePolls(userId, nextCircleId)
                     else _state.update { it.copy(deletePolls = emptyList()) }
@@ -288,26 +289,48 @@ class FamilyDriveViewModel : ViewModel() {
                     }
                     onDeleted()
                 },
-                onFailure = { error -> _state.update { it.copy(error = error.message ?: "Event could not be deleted") } }
+                onFailure = { error ->
+                    val pollRequired = (error as? DrivePcApiClient.DriveApiException)?.let {
+                        it.code == 409 && it.responseBody.contains("\"requiresPoll\":true")
+                    } == true
+                    if (pollRequired) {
+                        val circleId = activeCircleId
+                        repository.createDeletePoll(userId, "event", eventId, circleId).fold(
+                            onSuccess = { poll ->
+                                _state.update { current ->
+                                    current.copy(
+                                        deletePolls = listOf(poll) + current.deletePolls.filterNot { it.id == poll.id },
+                                        infoMessage = "Delete poll started."
+                                    )
+                                }
+                            },
+                            onFailure = { pollError ->
+                                _state.update { it.copy(error = pollError.message ?: "Delete poll could not be created") }
+                            }
+                        )
+                    } else {
+                        _state.update { it.copy(error = error.message ?: "Event could not be deleted") }
+                    }
+                }
             )
         }
     }
 
-    fun createCircle(name: String, ownerUserId: String, members: List<DriveCircleMember>, onCreated: (DriveCircle) -> Unit = {}) {
+    fun createCircle(id: String? = null, name: String, ownerUserId: String, members: List<DriveCircleMember>, onCreated: (DriveCircle) -> Unit = {}) {
         val cleanName = name.trim()
         if (cleanName.isBlank()) {
             _state.update { it.copy(error = "Enter a circle name") }
             return
         }
         viewModelScope.launch {
-            repository.createCircle(cleanName, ownerUserId, members).fold(
+            repository.createCircle(id, cleanName, ownerUserId, members).fold(
                 onSuccess = { circle ->
                     activeCircleId = circle.id
                     _state.update { current ->
                         current.copy(
-                            circles = (listOf(circle) + current.circles.filterNot { it.id == circle.id }),
+                            circles = (listOf(circle) + current.circles.filterNot { it.id == circle.id }).sortedByDescending { it.updatedAt },
                             activeCircleId = circle.id,
-                            infoMessage = "Circle created."
+                            infoMessage = if (id.isNullOrBlank()) "Circle created." else "Circle updated."
                         )
                     }
                     loadEvents(ownerUserId, circle.id)
@@ -380,7 +403,28 @@ class FamilyDriveViewModel : ViewModel() {
                     }
                     onDone()
                 },
-                onFailure = { error -> _state.update { it.copy(error = error.message ?: "Circle could not be deleted") } }
+                onFailure = { error ->
+                    val pollRequired = (error as? DrivePcApiClient.DriveApiException)?.let {
+                        it.code == 409 && it.responseBody.contains("\"requiresPoll\":true")
+                    } == true
+                    if (pollRequired) {
+                        repository.createDeletePoll(userId, "circle", circleId, circleId).fold(
+                            onSuccess = { poll ->
+                                _state.update { current ->
+                                    current.copy(
+                                        deletePolls = listOf(poll) + current.deletePolls.filterNot { it.id == poll.id },
+                                        infoMessage = "Delete poll started."
+                                    )
+                                }
+                            },
+                            onFailure = { pollError ->
+                                _state.update { it.copy(error = pollError.message ?: "Delete poll could not be created") }
+                            }
+                        )
+                    } else {
+                        _state.update { it.copy(error = error.message ?: "Circle could not be deleted") }
+                    }
+                }
             )
         }
     }

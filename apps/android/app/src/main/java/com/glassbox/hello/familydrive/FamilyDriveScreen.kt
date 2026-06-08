@@ -46,13 +46,17 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -178,6 +182,7 @@ fun FamilyDriveScreen(
     var viewerTrashMode by remember { mutableStateOf(false) }
     var pendingAction by remember { mutableStateOf<DrivePendingAction?>(null) }
     var uploadStep by remember { mutableStateOf<DriveUploadStep?>(null) }
+    var editingCircle by remember { mutableStateOf<DriveCircle?>(null) }
     var selectedUploadMedia by remember { mutableStateOf<List<SelectedDriveMedia>>(emptyList()) }
     var selectedEventId by remember { mutableStateOf<String?>(null) }
     var selectedEventName by remember { mutableStateOf("") }
@@ -256,6 +261,7 @@ fun FamilyDriveScreen(
 
     fun closeUploadFlow() {
         uploadStep = null
+        editingCircle = null
         selectedUploadMedia = emptyList()
         sortAssignments = emptyMap()
         customPeopleIds = emptySet()
@@ -289,6 +295,7 @@ fun FamilyDriveScreen(
                 state = state,
                 onUploadClick = openPicker,
                 onOpenAllPhotos = { mode = DriveMode.AllPhotos },
+                onOpenCircles = { uploadStep = DriveUploadStep.Circles },
                 onOpenTrash = { mode = DriveMode.Trash },
                 modifier = Modifier.fillMaxSize()
             )
@@ -342,6 +349,7 @@ fun FamilyDriveScreen(
 
         uploadStep?.let { step ->
             DriveUploadFlow(
+                activeUserId = currentUserId,
                 step = step,
                 media = selectedUploadMedia,
                 selectedEventName = selectedEventName,
@@ -385,6 +393,19 @@ fun FamilyDriveScreen(
                         }
                     }
                 },
+                onRenameEvent = { eventId, name ->
+                    viewModel.renameEvent(eventId, currentUserId, name) { event ->
+                        if (selectedEventId == event.id) selectedEventName = event.name
+                    }
+                },
+                onDeleteEvent = { eventId ->
+                    viewModel.deleteEvent(eventId, currentUserId) {
+                        if (selectedEventId == eventId) {
+                            selectedEventId = null
+                            selectedEventName = ""
+                        }
+                    }
+                },
                 onToggleAudience = { audience ->
                     val nextAudiences = if (selectedAudienceIds.contains(audience.id)) emptySet() else setOf(audience.id)
                     selectedAudienceIds = nextAudiences
@@ -418,9 +439,40 @@ fun FamilyDriveScreen(
                 onOpenPending = { uploadStep = DriveUploadStep.PendingUploads },
                 onOpenEvent = { uploadStep = DriveUploadStep.EventView },
                 onOpenCircles = { uploadStep = DriveUploadStep.Circles },
-                onEditCircle = { uploadStep = DriveUploadStep.EditCircle },
-                onCreateCircle = { name, members ->
-                    viewModel.createCircle(name, currentUserId, members) {
+                onEditCircle = {
+                    editingCircle = null
+                    uploadStep = DriveUploadStep.EditCircle
+                },
+                onOpenCircle = { circle ->
+                    editingCircle = null
+                    selectedEventId = null
+                    selectedEventName = ""
+                    viewModel.setScope(currentUserId, circle.id, null)
+                    viewModel.loadEvents(currentUserId, circle.id)
+                    viewModel.refresh(currentUserId, circle.id, null)
+                    mode = DriveMode.AllPhotos
+                    uploadStep = null
+                },
+                onManageCircle = { circle ->
+                    editingCircle = circle
+                    uploadStep = DriveUploadStep.EditCircle
+                },
+                editingCircle = editingCircle,
+                onCreateCircle = { circleId, name, members ->
+                    viewModel.createCircle(circleId, name, currentUserId, members) {
+                        editingCircle = null
+                        uploadStep = DriveUploadStep.Circles
+                    }
+                },
+                onDeleteCircle = { circle ->
+                    viewModel.deleteCircle(circle.id, currentUserId) {
+                        if (editingCircle?.id == circle.id) editingCircle = null
+                        uploadStep = DriveUploadStep.Circles
+                    }
+                },
+                onLeaveCircle = { circle ->
+                    viewModel.leaveCircle(circle.id, currentUserId) {
+                        if (editingCircle?.id == circle.id) editingCircle = null
                         uploadStep = DriveUploadStep.Circles
                     }
                 },
@@ -526,6 +578,7 @@ fun FamilyDriveScreen(
 
 @Composable
 private fun DriveUploadFlow(
+    activeUserId: String,
     step: DriveUploadStep,
     media: List<SelectedDriveMedia>,
     selectedEventName: String,
@@ -540,6 +593,8 @@ private fun DriveUploadFlow(
     onNextFromSelection: () -> Unit,
     onChooseEvent: (DriveEvent) -> Unit,
     onCreateEvent: (String) -> Unit,
+    onRenameEvent: (String, String) -> Unit,
+    onDeleteEvent: (String) -> Unit,
     onToggleAudience: (DriveAudienceOption) -> Unit,
     onDonePeople: (Set<String>) -> Unit,
     onContinueAudiences: () -> Unit,
@@ -552,7 +607,12 @@ private fun DriveUploadFlow(
     onOpenEvent: () -> Unit,
     onOpenCircles: () -> Unit,
     onEditCircle: () -> Unit,
-    onCreateCircle: (String, List<DriveCircleMember>) -> Unit,
+    onOpenCircle: (DriveCircle) -> Unit,
+    onManageCircle: (DriveCircle) -> Unit,
+    editingCircle: DriveCircle?,
+    onCreateCircle: (String?, String, List<DriveCircleMember>) -> Unit,
+    onDeleteCircle: (DriveCircle) -> Unit,
+    onLeaveCircle: (DriveCircle) -> Unit,
     onSuccess: () -> Unit,
     onRetryPending: () -> Unit,
     modifier: Modifier = Modifier
@@ -564,7 +624,7 @@ private fun DriveUploadFlow(
     ) {
         when (step) {
             DriveUploadStep.SelectPhotos -> SelectPhotosStep(media, onBack, onAddMorePhotos, onNextFromSelection)
-            DriveUploadStep.ChooseEvent -> ChooseEventStep(state.events, selectedEventName, onBack, onChooseEvent, onCreateEvent)
+            DriveUploadStep.ChooseEvent -> ChooseEventStep(state.events, selectedEventName, onBack, onChooseEvent, onCreateEvent, onRenameEvent, onDeleteEvent)
             DriveUploadStep.ChooseAudiences -> ChooseAudiencesStep(state.circles, selectedAudienceIds, customPeopleIds, onBack, onToggleAudience, onContinueAudiences, onEditCircle)
             DriveUploadStep.SortPhotos -> SortPhotosStep(
                 media = media,
@@ -583,8 +643,8 @@ private fun DriveUploadFlow(
             DriveUploadStep.UploadSummary -> UploadSummaryStep(media, selectedEventName, state.circles, selectedAudienceIds, customPeopleIds, sortAssignments, state, onBack, onSubmit)
             DriveUploadStep.PendingUploads -> PendingUploadsStep(state, onBack, onRetryPending, onOpenEvent, onSuccess)
             DriveUploadStep.EventView -> UploadEventPreviewStep(media, selectedEventName, state.circles, sortAssignments, onBack, onOpenCircles)
-            DriveUploadStep.Circles -> CircleManagementStep(state.circles, onBack, onEditCircle)
-            DriveUploadStep.EditCircle -> EditCircleStep(state.chatContacts, onBack, onCreateCircle)
+            DriveUploadStep.Circles -> CircleManagementStep(state.circles, onBack, onEditCircle, onOpenCircle, onManageCircle)
+            DriveUploadStep.EditCircle -> EditCircleStep(state.chatContacts, editingCircle, activeUserId = activeUserId, onBack, onCreateCircle, onDeleteCircle, onLeaveCircle)
             DriveUploadStep.Success -> UploadSuccessStep(onOpenEvent, onClose)
         }
         TextButton(onClick = onClose, modifier = Modifier.align(Alignment.TopEnd).height(48.dp)) {
@@ -656,9 +716,13 @@ private fun ChooseEventStep(
     selectedEventName: String,
     onBack: () -> Unit,
     onChoose: (DriveEvent) -> Unit,
-    onCreateEvent: (String) -> Unit
+    onCreateEvent: (String) -> Unit,
+    onRenameEvent: (String, String) -> Unit,
+    onDeleteEvent: (String) -> Unit
 ) {
     var eventName by remember { mutableStateOf("") }
+    var editingEventId by remember { mutableStateOf<String?>(null) }
+    var editingName by remember { mutableStateOf("") }
     Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         FlowHeader("Choose Event", "Where should these memories go?", onBack)
         Spacer(modifier = Modifier.height(HelloSpacing.Md))
@@ -687,12 +751,102 @@ private fun ChooseEventStep(
             EmptyInlineState("No events yet", "Create an event to keep this upload in its own PC folder.")
         } else {
             events.forEach { event ->
-                EventChoiceCard(event.name, "${event.itemCount} items", selected = event.name == selectedEventName) {
-                    onChoose(event)
-                }
+                EventManagementCard(
+                    event = event,
+                    selected = event.name == selectedEventName,
+                    editing = editingEventId == event.id,
+                    editingName = editingName,
+                    onSelect = { onChoose(event) },
+                    onStartRename = {
+                        editingEventId = event.id
+                        editingName = event.name
+                    },
+                    onEditingNameChange = { editingName = it },
+                    onConfirmRename = {
+                        onRenameEvent(event.id, editingName)
+                        editingEventId = null
+                        editingName = ""
+                    },
+                    onCancelRename = {
+                        editingEventId = null
+                        editingName = ""
+                    },
+                    onDelete = { onDeleteEvent(event.id) }
+                )
             }
         }
         Spacer(modifier = Modifier.height(80.dp))
+    }
+}
+
+@Composable
+private fun EventManagementCard(
+    event: DriveEvent,
+    selected: Boolean,
+    editing: Boolean,
+    editingName: String,
+    onSelect: () -> Unit,
+    onStartRename: () -> Unit,
+    onEditingNameChange: (String) -> Unit,
+    onConfirmRename: () -> Unit,
+    onCancelRename: () -> Unit,
+    onDelete: () -> Unit
+) {
+    HelloPanel(
+        modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp),
+        strong = selected,
+        shape = HelloShapes.Lg
+    ) {
+        Column(modifier = Modifier.padding(HelloSpacing.Md), verticalArrangement = Arrangement.spacedBy(HelloSpacing.Sm)) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = onSelect, role = Role.Button),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(modifier = Modifier.size(48.dp).clip(HelloShapes.Md).background(HelloColors.DarkPanelStrong), contentAlignment = Alignment.Center) {
+                    Icon(Icons.Default.Image, contentDescription = null, tint = HelloColors.DarkAccent)
+                }
+                Spacer(modifier = Modifier.width(HelloSpacing.Md))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(event.name, color = HelloColors.DarkText, fontWeight = FontWeight.Bold)
+                    Text("${event.itemCount} items", color = HelloColors.DarkTextMuted, style = MaterialTheme.typography.bodySmall)
+                }
+                Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = HelloColors.DarkTextMuted)
+            }
+            if (editing) {
+                OutlinedTextField(
+                    value = editingName,
+                    onValueChange = onEditingNameChange,
+                    label = { Text("Rename event") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = onConfirmRename,
+                        enabled = editingName.isNotBlank(),
+                        modifier = Modifier.weight(1f).height(44.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = HelloColors.DarkAccent),
+                        shape = HelloShapes.Md
+                    ) {
+                        Text("Save", color = HelloColors.DarkBg, fontWeight = FontWeight.Black)
+                    }
+                    TextButton(onClick = onCancelRename, modifier = Modifier.weight(1f).height(44.dp)) {
+                        Text("Cancel", color = HelloColors.DarkTextMuted, fontWeight = FontWeight.Bold)
+                    }
+                }
+            } else {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(onClick = onStartRename, modifier = Modifier.weight(1f).height(44.dp)) {
+                        Text("Rename", color = HelloColors.DarkAccent, fontWeight = FontWeight.Bold)
+                    }
+                    TextButton(onClick = onDelete, modifier = Modifier.weight(1f).height(44.dp)) {
+                        Text("Delete", color = HelloColors.DarkDanger, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -739,7 +893,7 @@ private fun ChooseAudiencesStep(
         FlowHeader("Choose Circle", "Upload into one circle, then choose an event.", onBack)
         Text("Select one circle.", color = HelloColors.DarkTextMuted, modifier = Modifier.padding(start = 48.dp, bottom = HelloSpacing.Md))
         if (circles.isEmpty()) {
-            EmptyInlineState("No circles yet", "Create a circle from chat contacts before uploading.")
+            EmptyInlineState("No circles yet", "Create a circle from your Hello people before uploading.")
             Button(
                 onClick = onCreateCircle,
                 modifier = Modifier.fillMaxWidth().height(48.dp).padding(bottom = HelloSpacing.Md),
@@ -903,13 +1057,13 @@ private fun ChoosePeopleStep(contacts: List<DriveContact>, currentIds: Set<Strin
             OutlinedTextField(
                 value = query,
                 onValueChange = { query = it },
-                label = { Text("Search chat contacts") },
+                label = { Text("Search people") },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth().padding(HelloSpacing.Md)
             )
         }
         if (contacts.isEmpty()) {
-            EmptyInlineState("No chat contacts", "Start chats first. Family Drive only suggests people from your chat list.")
+            EmptyInlineState("No people found", "Family Drive suggests people from your Hello account and existing chats.")
         }
         visibleContacts.forEach { contact ->
             val isSelected = contact.id in selected
@@ -1032,29 +1186,114 @@ private fun UploadEventPreviewStep(media: List<SelectedDriveMedia>, eventName: S
 }
 
 @Composable
-private fun CircleManagementStep(circles: List<DriveCircle>, onBack: () -> Unit, onEditCircle: () -> Unit) {
+private fun CircleManagementStep(
+    circles: List<DriveCircle>,
+    onBack: () -> Unit,
+    onCreateCircle: () -> Unit,
+    onOpenCircle: (DriveCircle) -> Unit,
+    onManageCircle: (DriveCircle) -> Unit
+) {
     Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         FlowHeader("My Circles", "Saved sharing groups", onBack)
         if (circles.isEmpty()) {
-            EmptyInlineState("No circles yet", "Create a circle from people already in your chat list.")
+            EmptyInlineState("No circles yet", "Create a circle from your Hello people list.")
         } else {
             circles.forEach { circle ->
-                EventChoiceCard(circle.name, "${circle.memberCount} member${if (circle.memberCount == 1) "" else "s"}", selected = false, onClick = onEditCircle)
+                CircleManagementCard(
+                    circle = circle,
+                    onOpenCircle = { onOpenCircle(circle) },
+                    onManageCircle = { onManageCircle(circle) }
+                )
             }
         }
-        Button(onClick = onEditCircle, modifier = Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(containerColor = HelloColors.DarkAccent), shape = HelloShapes.Lg) {
+        Button(onClick = onCreateCircle, modifier = Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(containerColor = HelloColors.DarkAccent), shape = HelloShapes.Lg) {
             Text("Create Circle", color = HelloColors.DarkBg, fontWeight = FontWeight.Black)
         }
     }
 }
 
 @Composable
-private fun EditCircleStep(contacts: List<DriveContact>, onBack: () -> Unit, onSave: (String, List<DriveCircleMember>) -> Unit) {
-    var circleName by remember { mutableStateOf("") }
-    var selectedIds by remember { mutableStateOf(setOf<String>()) }
-    var role by remember { mutableStateOf("Can only see") }
+private fun CircleManagementCard(
+    circle: DriveCircle,
+    onOpenCircle: () -> Unit,
+    onManageCircle: () -> Unit
+) {
+    var menuExpanded by remember(circle.id) { mutableStateOf(false) }
+    HelloPanel(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(bottom = 10.dp)
+            .clickable(onClick = onOpenCircle, role = Role.Button),
+        strong = false,
+        shape = HelloShapes.Lg
+    ) {
+        Row(modifier = Modifier.padding(HelloSpacing.Md), verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier
+                    .size(42.dp)
+                    .clip(CircleShape)
+                    .background(HelloColors.DarkAccent.copy(alpha = 0.18f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.Default.Image, contentDescription = null, tint = HelloColors.DarkAccent)
+            }
+            Spacer(modifier = Modifier.width(HelloSpacing.Md))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(circle.name, color = HelloColors.DarkText, fontWeight = FontWeight.Bold)
+                Text(buildCircleManagementSubtitle(circle), color = HelloColors.DarkTextMuted, style = MaterialTheme.typography.bodySmall)
+            }
+            Box {
+                IconButton(onClick = { menuExpanded = true }) {
+                    Icon(Icons.Default.MoreVert, contentDescription = "Circle options", tint = HelloColors.DarkTextMuted)
+                }
+                DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                    DropdownMenuItem(
+                        text = { Text("Open photos") },
+                        onClick = {
+                            menuExpanded = false
+                            onOpenCircle()
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Manage circle") },
+                        onClick = {
+                            menuExpanded = false
+                            onManageCircle()
+                        }
+                    )
+                }
+            }
+            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = HelloColors.DarkAccent)
+        }
+    }
+}
+
+@Composable
+private fun EditCircleStep(
+    contacts: List<DriveContact>,
+    existingCircle: DriveCircle?,
+    activeUserId: String,
+    onBack: () -> Unit,
+    onSave: (String?, String, List<DriveCircleMember>) -> Unit,
+    onDeleteCircle: (DriveCircle) -> Unit,
+    onLeaveCircle: (DriveCircle) -> Unit
+) {
+    var circleName by remember(existingCircle?.id) { mutableStateOf(existingCircle?.name.orEmpty()) }
+    var selectedIds by remember(existingCircle?.id) {
+        mutableStateOf(existingCircle?.members.orEmpty().map { it.userId }.filter(String::isNotBlank).toSet())
+    }
+    var selectedRoles by remember(existingCircle?.id) {
+        mutableStateOf(
+            existingCircle?.members.orEmpty()
+                .filter { it.userId.isNotBlank() }
+                .associate { it.userId to normalizeDriveRole(it.role) }
+        )
+    }
+    var role by remember(existingCircle?.id) {
+        mutableStateOf(existingCircle?.members.orEmpty().firstOrNull { it.userId != existingCircle?.ownerUserId }?.role?.let(::normalizeDriveRole) ?: "Can only see")
+    }
     Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-        FlowHeader("Create Circle", "Simple permissions for family sharing", onBack)
+        FlowHeader(if (existingCircle == null) "Create Circle" else "Manage Circle", "Simple permissions for family sharing", onBack)
         HelloPanel(modifier = Modifier.fillMaxWidth().padding(vertical = HelloSpacing.Md), strong = true, shape = HelloShapes.Lg) {
             Column(modifier = Modifier.padding(HelloSpacing.Md)) {
                 OutlinedTextField(
@@ -1068,36 +1307,86 @@ private fun EditCircleStep(contacts: List<DriveContact>, onBack: () -> Unit, onS
         }
         HelloPanel(modifier = Modifier.fillMaxWidth().padding(bottom = HelloSpacing.Md), strong = false, shape = HelloShapes.Lg) {
             Column(modifier = Modifier.padding(HelloSpacing.Md)) {
-                Text("Add people from chat list", color = HelloColors.DarkTextMuted)
+                Text("Add people from Hello", color = HelloColors.DarkTextMuted)
                 if (contacts.isEmpty()) {
-                    EmptyInlineState("No chat contacts", "Only people from your chat list can be added.")
+                    EmptyInlineState("No people found", "People from your Hello account and existing chats can be added here.")
                 }
                 contacts.forEach { contact ->
                     val selected = contact.id in selectedIds
-                    AudienceChoiceCard(DriveAudienceOption(contact.id, contact.name, contactHandle(contact)), selected = selected) {
-                        selectedIds = selectedIds.toMutableSet().apply {
+                    val contactRole = selectedRoles[contact.id] ?: role
+                    AudienceChoiceCard(
+                        DriveAudienceOption(
+                            contact.id,
+                            contact.name,
+                            if (selected) "${contactHandle(contact)} - $contactRole" else contactHandle(contact)
+                        ),
+                        selected = selected
+                    ) {
+                        val nextSelected = selectedIds.toMutableSet().apply {
                             if (contains(contact.id)) remove(contact.id) else add(contact.id)
+                        }.toSet()
+                        selectedIds = nextSelected
+                        selectedRoles = selectedRoles.toMutableMap().apply {
+                            if (contact.id in nextSelected) {
+                                put(contact.id, this[contact.id] ?: role)
+                            } else {
+                                remove(contact.id)
+                            }
                         }
                     }
                 }
             }
         }
         listOf("Can manage", "Can add", "Can only see").forEach { label ->
-            AudienceChoiceCard(DriveAudienceOption(label, label, "Simple sharing permission"), selected = label == role, onClick = { role = label })
+            AudienceChoiceCard(
+                DriveAudienceOption(
+                    label,
+                    label,
+                    if (selectedIds.isEmpty()) "Select people first" else "Apply to ${selectedIds.size} selected member${if (selectedIds.size == 1) "" else "s"}"
+                ),
+                selected = label == role,
+                onClick = {
+                    role = label
+                    if (selectedIds.isNotEmpty()) {
+                        selectedRoles = selectedRoles.toMutableMap().apply {
+                            selectedIds.forEach { put(it, label) }
+                        }
+                    }
+                }
+            )
         }
         Button(
             onClick = {
                 val members = contacts
                     .filter { it.id in selectedIds }
-                    .map { DriveCircleMember(userId = it.id, role = role, name = it.name, username = it.username, avatar = it.avatar) }
-                onSave(circleName, members)
+                    .map {
+                        DriveCircleMember(
+                            userId = it.id,
+                            role = driveRoleStorageValue(selectedRoles[it.id] ?: role),
+                            name = it.name,
+                            username = it.username,
+                            avatar = it.avatar
+                        )
+                    }
+                onSave(existingCircle?.id, circleName, members)
             },
             enabled = circleName.isNotBlank() && selectedIds.isNotEmpty(),
             modifier = Modifier.fillMaxWidth().height(52.dp),
             colors = ButtonDefaults.buttonColors(containerColor = HelloColors.DarkAccent),
             shape = HelloShapes.Lg
         ) {
-            Text("Save", color = HelloColors.DarkBg, fontWeight = FontWeight.Black)
+            Text(if (existingCircle == null) "Save" else "Update Circle", color = HelloColors.DarkBg, fontWeight = FontWeight.Black)
+        }
+        existingCircle?.let { circle ->
+            val isOwner = circle.ownerUserId.isNullOrBlank() || circle.ownerUserId == activeUserId
+            TextButton(
+                onClick = {
+                    if (isOwner) onDeleteCircle(circle) else onLeaveCircle(circle)
+                },
+                modifier = Modifier.fillMaxWidth().height(48.dp)
+            ) {
+                Text(if (isOwner) "Delete Circle" else "Leave Circle", color = HelloColors.DarkDanger, fontWeight = FontWeight.Bold)
+            }
         }
     }
 }
@@ -1237,6 +1526,7 @@ private fun DriveHomeContent(
     state: FamilyDriveUiState,
     onUploadClick: () -> Unit,
     onOpenAllPhotos: () -> Unit,
+    onOpenCircles: () -> Unit,
     onOpenTrash: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -1278,8 +1568,31 @@ private fun DriveHomeContent(
         Spacer(modifier = Modifier.height(30.dp))
         DriveHomeCard(
             icon = Icons.Default.Image,
-            title = "All Circles",
+            title = "My Circles",
             subtitle = if (state.isLoading) "Loading..." else "${state.circles.size} circles",
+            onClick = onOpenCircles
+        )
+        if (state.circles.isNotEmpty()) {
+            Spacer(modifier = Modifier.height(12.dp))
+            HelloPanel(modifier = Modifier.fillMaxWidth(), strong = false, shape = HelloShapes.Lg) {
+                Column(modifier = Modifier.padding(HelloSpacing.Md), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Shared groups", color = HelloColors.AccentStrong, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Black)
+                    state.circles.take(4).forEach { circle ->
+                        EventChoiceCard(circle.name, buildCircleManagementSubtitle(circle), selected = circle.id == state.activeCircleId) {
+                            onOpenCircles()
+                        }
+                    }
+                    TextButton(onClick = onOpenCircles, modifier = Modifier.fillMaxWidth().height(44.dp)) {
+                        Text("Manage Circles", color = HelloColors.DarkAccent, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+        Spacer(modifier = Modifier.height(12.dp))
+        DriveHomeCard(
+            icon = Icons.Default.Cloud,
+            title = "Circle Media",
+            subtitle = if (state.activeCircleId.isNullOrBlank()) "Open your shared media library" else "Viewing ${audienceTitle(state.activeCircleId, state.circles)}",
             onClick = onOpenAllPhotos
         )
         Spacer(modifier = Modifier.height(12.dp))
@@ -2107,4 +2420,34 @@ private fun buildCircleSubtitle(circle: DriveCircle): String {
         .take(2)
     val prefix = "${circle.memberCount} member${if (circle.memberCount == 1) "" else "s"}"
     return if (visibleMembers.isEmpty()) prefix else "$prefix - ${visibleMembers.joinToString(", ")}"
+}
+
+private fun buildCircleManagementSubtitle(circle: DriveCircle): String {
+    val roleSummary = circle.members
+        .filter { it.userId != circle.ownerUserId }
+        .groupingBy { normalizeDriveRole(it.role) }
+        .eachCount()
+        .entries
+        .sortedByDescending { it.value }
+        .joinToString(" - ") { "${it.value} ${it.key.lowercase(Locale.US)}" }
+    return listOf(buildCircleSubtitle(circle), roleSummary)
+        .filter { it.isNotBlank() }
+        .joinToString(" - ")
+}
+
+private fun normalizeDriveRole(role: String?): String {
+    val value = role?.trim().orEmpty().lowercase(Locale.US)
+    return when {
+        value == "owner" || value.contains("manage") -> "Can manage"
+        value.contains("add") || value.contains("contribute") || value == "member" -> "Can add"
+        else -> "Can only see"
+    }
+}
+
+private fun driveRoleStorageValue(label: String): String {
+    return when (label.trim().lowercase(Locale.US)) {
+        "can manage" -> "manage"
+        "can add" -> "add"
+        else -> "view"
+    }
 }

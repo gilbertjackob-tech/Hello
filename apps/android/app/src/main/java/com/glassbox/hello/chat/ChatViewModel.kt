@@ -8,6 +8,7 @@ import com.glassbox.hello.chat.ChatModels.Chat
 import com.glassbox.hello.chat.ChatModels.Message
 import com.glassbox.hello.chat.ChatModels.User
 import com.glassbox.hello.chat.components.AttachmentDraft
+import com.glassbox.hello.chat.components.messagePreviewText
 import com.glassbox.hello.core.ResultState
 import com.glassbox.hello.network.HelloApiClient
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -747,9 +748,7 @@ class ChatViewModel : ViewModel() {
         val current = _chatsState.value
         val chats = if (current is ResultState.Success) current.data else emptyList()
         val existing = chats.firstOrNull { it.id == message.chatId || it.id == baseChat?.id }
-        val preview = message.text.takeIf { it.isNotBlank() }
-            ?: message.attachmentName?.takeIf { it.isNotBlank() }
-            ?: if (message.attachmentUrl != null) "Attachment" else ""
+        val preview = messagePreviewText(message)
         val unread = when {
             !incoming -> 0
             activeChatId == message.chatId || activeChatId == baseChat?.id -> 0
@@ -778,6 +777,7 @@ class ChatViewModel : ViewModel() {
 
     private fun classifyAttachment(mimeType: String): String = when {
         mimeType.startsWith("image/") -> "image"
+        mimeType.startsWith("video/") -> "video"
         mimeType.startsWith("audio/") -> "audio"
         else -> "file"
     }

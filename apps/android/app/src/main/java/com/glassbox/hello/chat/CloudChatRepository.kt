@@ -3,6 +3,7 @@ package com.glassbox.hello.chat
 import android.content.Context
 import android.util.Log
 import com.glassbox.hello.auth.CloudSessionManager
+import com.glassbox.hello.chat.components.messagePreviewText
 import com.glassbox.hello.chat.components.callSummaryLabel
 import com.google.gson.Gson
 import com.google.gson.JsonParser
@@ -375,10 +376,7 @@ class CloudChatRepository(
     }
 
     private fun messagePreview(message: ChatModels.Message): String =
-        message.callInfo?.let(::callSummaryLabel)
-            ?: message.text.takeIf { it.isNotBlank() }
-            ?: message.attachmentName?.takeIf { it.isNotBlank() }
-            ?: if (message.attachmentUrl != null) "Attachment" else ""
+        messagePreviewText(message)
 
     private fun String.isGeneratedIdentityName(): Boolean {
         val lower = trim().lowercase()

@@ -323,8 +323,9 @@ private fun MessageBody(
     }
 
     val resolved = normalizeAttachmentUrl(message.attachmentUrl)
+    val attachmentKind = attachmentKind(message)
     if (!resolved.isNullOrBlank()) {
-        when (message.attachmentType) {
+        when (attachmentKind) {
             "image" -> ImageCard(message, resolved, onOpenImage, onDownloadAttachment)
             "audio" -> AudioCard(message, resolved, onDownloadAttachment)
             "video" -> VideoCard(message, resolved, onOpenAttachment, onDownloadAttachment)

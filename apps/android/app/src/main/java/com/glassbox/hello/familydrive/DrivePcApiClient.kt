@@ -11,10 +11,16 @@ import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import java.io.IOException
 import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 
 class DrivePcApiClient : DrivePcApi {
+    class DriveApiException(
+        val code: Int,
+        val responseBody: String
+    ) : Exception("PC Drive HTTP $code: $responseBody")
+
     private val client = OkHttpClient.Builder()
         .connectTimeout(8, TimeUnit.SECONDS)
         .readTimeout(120, TimeUnit.SECONDS)
@@ -87,10 +93,11 @@ class DrivePcApiClient : DrivePcApi {
         parseDriveCircles(get("$driveBaseUrl/drive/circles?userId=${encodePathValue(userId)}"))
     }
 
-    override suspend fun createDriveCircle(name: String, ownerUserId: String, members: List<DriveCircleMember>): Result<DriveCircle> = safePcCall {
-        HelloDebugLog.d("DriveApi", "createDriveCircle ownerUserId=$ownerUserId name=${HelloDebugLog.snippet(name)} members=${members.size}")
+    override suspend fun createDriveCircle(id: String?, name: String, ownerUserId: String, members: List<DriveCircleMember>): Result<DriveCircle> = safePcCall {
+        HelloDebugLog.d("DriveApi", "createDriveCircle id=${id.orEmpty()} ownerUserId=$ownerUserId name=${HelloDebugLog.snippet(name)} members=${members.size}")
         val body = gson.toJson(
             mapOf(
+                "id" to id,
                 "name" to name,
                 "userId" to ownerUserId,
                 "members" to members.map { member ->
@@ -166,6 +173,7 @@ class DrivePcApiClient : DrivePcApi {
         )
         val bodyBuilder = MultipartBody.Builder()
             .setType(MultipartBody.FORM)
+            .addFormDataPart("userId", uploaderId)
             .addFormDataPart("uploaderId", uploaderId)
             .addFormDataPart("eventName", plan.eventName)
             .addFormDataPart("batchId", plan.batchId)
@@ -211,7 +219,7 @@ class DrivePcApiClient : DrivePcApi {
                     "DriveApi",
                     "http failure code=${response.code} url=${request.url} body=${HelloDebugLog.snippet(responseBody)}"
                 )
-                throw Exception("PC Drive HTTP ${response.code}: ${responseBody ?: response.message}")
+                throw DriveApiException(response.code, responseBody ?: response.message)
             }
             HelloDebugLog.d(
                 "DriveApi",
@@ -226,8 +234,24 @@ class DrivePcApiClient : DrivePcApi {
             Result.success(block())
         } catch (error: Exception) {
             HelloDebugLog.w("DriveApi", "safePcCall failure error=${error.message}", error)
-            Result.failure(error)
+            Result.failure(normalizeDriveError(error))
         }
+
+    private fun normalizeDriveError(error: Exception): Exception {
+        if (error is DriveApiException) {
+            val friendlyMessage = when (error.code) {
+                502, 503, 504 -> "PC Drive is unavailable right now. Check that your PC backend or Cloudflare tunnel is online, then try again."
+                else -> null
+            }
+            if (!friendlyMessage.isNullOrBlank()) {
+                return Exception(friendlyMessage, error)
+            }
+        }
+        if (error is IOException) {
+            return Exception("PC Drive is offline or unreachable. Make sure your PC backend is running and reachable, then try again.", error)
+        }
+        return error
+    }
 
     private fun encodePathValue(value: String): String = URLEncoder.encode(value, "UTF-8").replace("+", "%20")
 
@@ -258,7 +282,7 @@ class DrivePcApiClient : DrivePcApi {
     private fun parseDriveCircles(raw: String): List<DriveCircle> {
         val root = parseMap(raw)
         val circles = root["circles"]
-        return parseList(circles).mapNotNull { parseDriveCircle(it) }
+        return parseList(circles).mapNotNull { parseDriveCircle(it) }.distinctBy { it.id }
     }
 
     private fun parseDriveCircle(raw: String): DriveCircle? = parseDriveCircle(parseMap(raw))

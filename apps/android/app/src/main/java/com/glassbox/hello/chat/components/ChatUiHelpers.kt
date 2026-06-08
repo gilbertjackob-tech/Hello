@@ -72,6 +72,7 @@ fun attachmentTypeLabel(message: ChatModels.Message): String {
     return when {
         message.attachmentName?.lowercase()?.endsWith(".pdf") == true -> "PDF"
         mime.startsWith("image/") || mime == "image" -> "Image"
+        mime.startsWith("video/") || mime == "video" -> "Video"
         mime.startsWith("audio/") || mime == "audio" -> "Audio"
         mime.contains("word", ignoreCase = true) -> "DOC"
         mime.contains("sheet", ignoreCase = true) || mime.contains("excel", ignoreCase = true) -> "XLS"
@@ -79,6 +80,22 @@ fun attachmentTypeLabel(message: ChatModels.Message): String {
         message.attachmentName?.substringAfterLast('.', "")?.isNotBlank() == true ->
             message.attachmentName.substringAfterLast('.').uppercase(Locale.getDefault())
         else -> "FILE"
+    }
+}
+
+fun attachmentKind(message: ChatModels.Message): String? {
+    val mime = message.attachmentType.orEmpty().trim().lowercase(Locale.getDefault())
+    val extension = message.attachmentName
+        ?.substringAfterLast('.', "")
+        ?.trim()
+        ?.lowercase(Locale.getDefault())
+        .orEmpty()
+    return when {
+        mime.startsWith("image/") || mime == "image" || extension in setOf("jpg", "jpeg", "png", "gif", "webp", "bmp", "heic", "heif", "svg") -> "image"
+        mime.startsWith("video/") || mime == "video" || extension in setOf("mp4", "mov", "mkv", "webm", "avi", "m4v", "3gp") -> "video"
+        mime.startsWith("audio/") || mime == "audio" || extension in setOf("mp3", "m4a", "aac", "wav", "ogg", "opus") -> "audio"
+        message.attachmentUrl.isNullOrBlank() && message.attachmentName.isNullOrBlank() -> null
+        else -> "file"
     }
 }
 
@@ -90,7 +107,7 @@ fun messagePreviewText(message: ChatModels.Message): String {
         message.location != null -> message.text.ifBlank { "Location" }
         message.text.isNotBlank() -> message.text
         !message.attachmentName.isNullOrBlank() -> message.attachmentName
-        !message.attachmentUrl.isNullOrBlank() -> "Attachment"
+        attachmentKind(message) != null -> attachmentTypeLabel(message)
         else -> "Message"
     }
 }

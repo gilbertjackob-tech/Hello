@@ -29,6 +29,7 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
@@ -76,6 +77,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
@@ -402,6 +404,7 @@ fun IncomingCallScreen(
         subtitle = message.ifBlank { "Ringing..." },
         status = "Incoming ${if (video) "video" else "audio"} call",
         pulsingAvatar = true,
+        wrapControlsInPanel = false,
         controlsPanel = {
             SwipeCallControls(
                 video = video,
@@ -749,12 +752,28 @@ private fun AudioCallSurface(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(HelloSpacing.Lg)
         ) {
-            CallAvatar(name = name, avatarUrl = avatarUrl, pulsing = mediaPhase != CallMediaPhase.Connected, size = 170.dp)
-            Text(name, color = HelloColors.DarkText, fontWeight = FontWeight.Bold)
-            Text(
-                text = if (mediaPhase == CallMediaPhase.Connected) formatCallDuration(durationSeconds) else phaseLabel(mediaPhase),
-                color = HelloColors.DarkTextMuted
+            CallStatusBadge(
+                eyebrow = if (mediaPhase == CallMediaPhase.Connected) "HELLO CONNECTED" else "HELLO AUDIO",
+                label = phaseLabel(mediaPhase)
             )
+            Box(contentAlignment = Alignment.Center) {
+                CallHeroHalo()
+                CallAvatar(name = name, avatarUrl = avatarUrl, pulsing = mediaPhase != CallMediaPhase.Connected, size = 170.dp)
+            }
+            CallGlassPanel(modifier = Modifier.widthIn(max = 320.dp)) {
+                Column(
+                    modifier = Modifier.padding(horizontal = HelloSpacing.Xl, vertical = HelloSpacing.Lg),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text(name, color = HelloColors.DarkText, fontWeight = FontWeight.ExtraBold, textAlign = TextAlign.Center)
+                    Text(
+                        text = if (mediaPhase == CallMediaPhase.Connected) formatCallDuration(durationSeconds) else phaseLabel(mediaPhase),
+                        color = HelloColors.DarkTextMuted,
+                        textAlign = TextAlign.Center
+                    )
+                }
+            }
         }
     }
 }
@@ -776,8 +795,9 @@ private fun CallBottomDock(
                 Brush.verticalGradient(
                     listOf(
                         Color.Transparent,
-                        HelloColors.DarkBg.copy(alpha = 0.44f),
-                        HelloColors.DarkBg.copy(alpha = 0.92f)
+                        HelloColors.DarkBg.copy(alpha = 0.28f),
+                        HelloColors.DarkBg.copy(alpha = 0.70f),
+                        HelloColors.DarkBg.copy(alpha = 0.90f)
                     )
                 )
             )
@@ -785,7 +805,7 @@ private fun CallBottomDock(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(HelloSpacing.Md)
     ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(title, color = HelloColors.DarkText, fontWeight = FontWeight.Bold)
             Text(subtitle, color = HelloColors.DarkTextMuted, fontWeight = FontWeight.Medium)
         }
@@ -820,6 +840,11 @@ private fun CallThemeBackdrop(
         modifier = modifier,
         darkOverride = palette.isDark
     ) {
+        CallBackdropOrnaments(
+            paletteId = palette.id,
+            accent = HelloColors.AccentStrong,
+            warmAccent = HelloColors.WarmAccent
+        )
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -827,8 +852,9 @@ private fun CallThemeBackdrop(
                     Brush.verticalGradient(
                         listOf(
                             Color.Transparent,
-                            palette.bgDeep.copy(alpha = if (palette.isDark) 0.18f else 0.08f),
-                            palette.bgDeep.copy(alpha = if (palette.isDark) 0.62f else 0.16f)
+                            palette.bgDeep.copy(alpha = if (palette.isDark) 0.10f else 0.03f),
+                            palette.bgDeep.copy(alpha = if (palette.isDark) 0.34f else 0.08f),
+                            palette.bgDeep.copy(alpha = if (palette.isDark) 0.54f else 0.14f)
                         )
                     )
                 )
@@ -846,6 +872,7 @@ private fun CallLobbyScreen(
     status: String,
     modifier: Modifier = Modifier,
     pulsingAvatar: Boolean = false,
+    wrapControlsInPanel: Boolean = true,
     controlsPanel: @Composable () -> Unit,
     overlay: @Composable BoxScope.() -> Unit = {}
 ) {
@@ -857,31 +884,37 @@ private fun CallLobbyScreen(
                 .padding(horizontal = HelloSpacing.Xl, vertical = HelloSpacing.Xxl),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Spacer(modifier = Modifier.height(18.dp))
-            Text(title, color = HelloColors.DarkText, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+            Spacer(modifier = Modifier.height(12.dp))
+            CallStatusBadge(
+                eyebrow = if (pulsingAvatar) "HELLO LIVE" else "HELLO CALL",
+                label = status
+            )
+            Spacer(modifier = Modifier.weight(0.10f))
+            Box(contentAlignment = Alignment.Center) {
+                CallHeroHalo()
+                CallAvatar(
+                    name = name,
+                    avatarUrl = avatarUrl,
+                    pulsing = pulsingAvatar,
+                    size = 184.dp
+                )
+            }
+            Spacer(modifier = Modifier.height(24.dp))
+            Text(title, color = HelloColors.DarkText, fontWeight = FontWeight.ExtraBold, textAlign = TextAlign.Center)
             Text(subtitle, color = HelloColors.DarkTextMuted, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center)
             Spacer(modifier = Modifier.weight(0.18f))
-            CallAvatar(
-                name = name,
-                avatarUrl = avatarUrl,
-                pulsing = pulsingAvatar,
-                size = 184.dp
-            )
-            Spacer(modifier = Modifier.height(26.dp))
-            Text(status, color = HelloColors.DarkTextMuted, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center)
-            Spacer(modifier = Modifier.weight(0.24f))
-            HelloPanel(
-                modifier = Modifier.fillMaxWidth(),
-                strong = true,
-                shape = HelloShapes.Xl
-            ) {
-                Column(
-                    modifier = Modifier.padding(horizontal = HelloSpacing.Lg, vertical = HelloSpacing.Lg),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(HelloSpacing.Md)
-                ) {
-                    controlsPanel()
+            if (wrapControlsInPanel) {
+                CallGlassPanel(modifier = Modifier.fillMaxWidth()) {
+                    Column(
+                        modifier = Modifier.padding(horizontal = HelloSpacing.Lg, vertical = HelloSpacing.Lg),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(HelloSpacing.Md)
+                    ) {
+                        controlsPanel()
+                    }
                 }
+            } else {
+                controlsPanel()
             }
             Spacer(modifier = Modifier.height(20.dp))
         }
@@ -897,6 +930,67 @@ private fun LobbyActionRow(content: @Composable RowScope.() -> Unit) {
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
         content = content
+    )
+}
+
+@Composable
+private fun CallGlassPanel(
+    modifier: Modifier = Modifier,
+    content: @Composable BoxScope.() -> Unit
+) {
+    Box(
+        modifier = modifier
+            .shadow(18.dp, HelloShapes.Xl, ambientColor = HelloColors.Accent.copy(alpha = 0.18f))
+            .clip(HelloShapes.Xl)
+            .background(
+                Brush.verticalGradient(
+                    listOf(
+                        Color.White.copy(alpha = 0.18f),
+                        HelloColors.PanelStrong.copy(alpha = 0.94f),
+                        HelloColors.PanelStrong.copy(alpha = 0.88f)
+                    )
+                )
+            )
+            .border(1.dp, HelloColors.GlassBorder, HelloShapes.Xl)
+    ) {
+        content()
+    }
+}
+
+@Composable
+private fun CallStatusBadge(eyebrow: String, label: String) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        HelloPill(
+            text = eyebrow,
+            active = true
+        )
+        Text(
+            text = label,
+            color = HelloColors.DarkTextMuted,
+            fontWeight = FontWeight.SemiBold,
+            textAlign = TextAlign.Center
+        )
+    }
+}
+
+@Composable
+private fun CallHeroHalo() {
+    Box(
+        modifier = Modifier
+            .size(280.dp)
+            .clip(CircleShape)
+            .background(
+                Brush.radialGradient(
+                    listOf(
+                        HelloColors.AccentStrong.copy(alpha = 0.16f),
+                        HelloColors.WarmAccent.copy(alpha = 0.08f),
+                        Color.Transparent
+                    )
+                )
+            )
     )
 }
 
@@ -1220,6 +1314,55 @@ private fun CallWallpaperTexture(modifier: Modifier = Modifier) {
 }
 
 @Composable
+private fun CallBackdropOrnaments(
+    paletteId: String,
+    accent: Color,
+    warmAccent: Color
+) {
+    Canvas(modifier = Modifier.fillMaxSize()) {
+        val isCute = paletteId == "cute"
+        val softAccent = accent.copy(alpha = if (isCute) 0.14f else 0.10f)
+        val softWarm = warmAccent.copy(alpha = if (isCute) 0.16f else 0.08f)
+        drawCircle(
+            brush = Brush.radialGradient(listOf(softAccent, Color.Transparent)),
+            radius = size.minDimension * 0.28f,
+            center = Offset(size.width * 0.18f, size.height * 0.18f)
+        )
+        drawCircle(
+            brush = Brush.radialGradient(listOf(softWarm, Color.Transparent)),
+            radius = size.minDimension * 0.34f,
+            center = Offset(size.width * 0.82f, size.height * 0.74f)
+        )
+        val strokeColor = if (isCute) Color.White.copy(alpha = 0.32f) else Color.White.copy(alpha = 0.14f)
+        drawCircle(
+            color = strokeColor,
+            radius = size.minDimension * 0.20f,
+            center = Offset(size.width * 0.80f, size.height * 0.22f),
+            style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.2.dp.toPx())
+        )
+        drawCircle(
+            color = strokeColor.copy(alpha = strokeColor.alpha * 0.72f),
+            radius = size.minDimension * 0.14f,
+            center = Offset(size.width * 0.16f, size.height * 0.68f),
+            style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.dp.toPx())
+        )
+        if (isCute) {
+            val star = Color.White.copy(alpha = 0.82f)
+            listOf(
+                Offset(size.width * 0.10f, size.height * 0.30f),
+                Offset(size.width * 0.88f, size.height * 0.34f),
+                Offset(size.width * 0.26f, size.height * 0.84f),
+                Offset(size.width * 0.74f, size.height * 0.58f)
+            ).forEach { center ->
+                val r = 8.dp.toPx()
+                drawLine(star, Offset(center.x - r, center.y), Offset(center.x + r, center.y), strokeWidth = 1.4.dp.toPx())
+                drawLine(star, Offset(center.x, center.y - r), Offset(center.x, center.y + r), strokeWidth = 1.4.dp.toPx())
+            }
+        }
+    }
+}
+
+@Composable
 private fun CallAvatar(name: String, avatarUrl: String? = null, pulsing: Boolean, size: androidx.compose.ui.unit.Dp = 106.dp) {
     val transition = rememberInfiniteTransition(label = "call-pulse")
     val pulseScale by transition.animateFloat(
@@ -1278,35 +1421,38 @@ private fun SwipeCallControls(
     onAccept: () -> Unit,
     onDecline: () -> Unit
 ) {
-    val density = LocalDensity.current
-    val haptic = LocalHapticFeedback.current
-    val trackWidth = 248.dp
-    val thumbSize = 64.dp
-    val maxDrag = with(density) { ((trackWidth - thumbSize) / 2).toPx() }
-    val threshold = maxDrag * 0.68f
-    var dragTarget by remember { mutableStateOf(0f) }
-    var dragging by remember { mutableStateOf(false) }
-    var thresholdHit by remember { mutableStateOf(false) }
-    val dragX by animateFloatAsState(
-        targetValue = dragTarget,
-        animationSpec = tween(if (dragging) 0 else 180),
-        label = "call-swipe"
-    )
-    val progress = (dragX.absoluteValue / maxDrag).coerceIn(0f, 1f)
-    val actionColor = when {
-        dragX > 0f -> HelloColors.DarkAccent
-        dragX < 0f -> HelloColors.DarkDanger
-        else -> HelloColors.PanelStrong
-    }
+    BoxWithConstraints(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = HelloSpacing.Sm)
+    ) {
+        val density = LocalDensity.current
+        val haptic = LocalHapticFeedback.current
+        val thumbSize = 72.dp
+        val maxDrag = with(density) { ((maxWidth - thumbSize) / 2).toPx() }
+        val threshold = maxDrag * 0.68f
+        var dragTarget by remember { mutableStateOf(0f) }
+        var dragging by remember { mutableStateOf(false) }
+        var thresholdHit by remember { mutableStateOf(false) }
+        val dragX by animateFloatAsState(
+            targetValue = dragTarget,
+            animationSpec = tween(if (dragging) 0 else 180),
+            label = "call-swipe"
+        )
+        val progress = if (maxDrag > 0f) (dragX.absoluteValue / maxDrag).coerceIn(0f, 1f) else 0f
+        val actionColor = when {
+            dragX > 0f -> HelloColors.DarkAccent
+            dragX < 0f -> HelloColors.DarkDanger
+            else -> HelloColors.PanelStrong
+        }
 
-    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Box(
             modifier = Modifier
-                .width(trackWidth)
-                .height(76.dp)
+                .fillMaxWidth()
+                .height(84.dp)
                 .clip(CircleShape)
                 .background(HelloColors.Text.copy(alpha = 0.58f))
-                .pointerInput(Unit) {
+                .pointerInput(maxDrag) {
                     detectDragGestures(
                         onDragStart = {
                             dragging = true
@@ -1366,14 +1512,6 @@ private fun SwipeCallControls(
                     contentDescription = if (dragX < 0f) "Decline call" else "Accept call",
                     tint = if (dragX > 0f) HelloColors.DarkBg else HelloColors.AuthText
                 )
-            }
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(32.dp), verticalAlignment = Alignment.CenterVertically) {
-            RoundCallButton(onClick = onDecline, danger = true, size = 72.dp) {
-                Icon(Icons.Default.PhoneDisabled, contentDescription = "Decline call", tint = HelloColors.AuthText)
-            }
-            RoundCallButton(onClick = onAccept, active = true, size = 72.dp) {
-                Icon(if (video) Icons.Default.Videocam else Icons.Default.Call, contentDescription = "Accept call", tint = Color.White)
             }
         }
     }

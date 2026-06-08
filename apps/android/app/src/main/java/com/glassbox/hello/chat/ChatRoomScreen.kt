@@ -17,10 +17,15 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -619,7 +624,7 @@ fun ChatRoomScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .safeDrawingPadding()
+                .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))
         ) {
             ChatHeader(
                 title = title,
@@ -759,7 +764,8 @@ fun ChatRoomScreen(
                 hasPayload = messageText.trim().isNotEmpty() || pendingAttachments.isNotEmpty(),
                 placeholder = if (pendingAttachments.isEmpty()) "Message Hello" else "Add a caption",
                 enterSends = settingsState.enterSends,
-                onKeyboardSend = { sendCurrentMessage() }
+                onKeyboardSend = { sendCurrentMessage() },
+                modifier = Modifier.imePadding()
             )
         }
 

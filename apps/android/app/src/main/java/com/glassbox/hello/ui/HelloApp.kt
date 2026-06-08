@@ -9,21 +9,33 @@ import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.Cloud
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Settings
@@ -41,6 +53,7 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.core.content.ContextCompat
@@ -75,6 +88,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.delay
 
 private enum class MainTab(val label: String, val icon: ImageVector) {
     Chats("Chats", Icons.AutoMirrored.Filled.Chat),
@@ -220,6 +234,7 @@ fun HelloApp(darkTheme: Boolean = true) {
     SocketManager.getInstance().onSessionRevoked = { handleSessionRevoked() }
     val callState by callViewModel.state.collectAsState()
     val incomingCallLaunch by HelloNotificationCenter.incomingCallState.collectAsState()
+    val bannerNotification by HelloNotificationCenter.bannerState.collectAsState()
     var pendingIncomingAccept by remember { mutableStateOf(false) }
     val incomingPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -311,11 +326,18 @@ fun HelloApp(darkTheme: Boolean = true) {
             )
         }
     }
+    LaunchedEffect(bannerNotification?.chatId, bannerNotification?.body) {
+        val active = bannerNotification ?: return@LaunchedEffect
+        delay(4200)
+        if (HelloNotificationCenter.bannerState.value == active) {
+            HelloNotificationCenter.clearBanner()
+        }
+    }
 
     AppBackground(modifier = Modifier.fillMaxSize()) {
         Column(modifier = Modifier
             .fillMaxSize()
-            .safeDrawingPadding()) {
+            .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))) {
             Box(
                 modifier = Modifier
                     .weight(1f)
@@ -363,7 +385,10 @@ fun HelloApp(darkTheme: Boolean = true) {
                 }
             }
             if (showBottomNav) {
-                HelloBottomNav(dark = darkTheme) {
+                HelloBottomNav(
+                    dark = darkTheme,
+                    modifier = Modifier.navigationBarsPadding()
+                ) {
                     MainTab.values().forEach { tab ->
                         val selected = selectedTab.intValue == tab.ordinal
                         val cute = HelloThemeRuntime.activePalette.value.id == "cute"
@@ -415,6 +440,11 @@ fun HelloApp(darkTheme: Boolean = true) {
                 }
             }
         }
+        InAppNotificationBanner(
+            sender = bannerNotification?.senderName,
+            body = bannerNotification?.body,
+            onDismiss = { HelloNotificationCenter.clearBanner() }
+        )
         GlobalCallOverlay(callViewModel = callViewModel, modifier = Modifier.fillMaxSize())
     }
 }
@@ -423,4 +453,87 @@ private tailrec fun Context.findActivity(): Activity? = when (this) {
     is Activity -> this
     is ContextWrapper -> baseContext.findActivity()
     else -> null
+}
+
+@Composable
+private fun InAppNotificationBanner(
+    sender: String?,
+    body: String?,
+    onDismiss: () -> Unit
+) {
+    val visible = !sender.isNullOrBlank() && !body.isNullOrBlank()
+    if (!visible) return
+    val cute = HelloThemeRuntime.activePalette.value.id == "cute"
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .statusBarsPadding()
+            .padding(horizontal = HelloSpacing.Lg, vertical = HelloSpacing.Md),
+        contentAlignment = Alignment.TopCenter
+    ) {
+        AnimatedVisibility(
+            visible = visible,
+            enter = fadeIn(animationSpec = tween(180)),
+            exit = fadeOut(animationSpec = tween(140))
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(if (cute) 28.dp else 22.dp))
+                    .background(
+                        if (cute) HelloColors.PanelStrong.copy(alpha = 0.96f)
+                        else HelloColors.DarkPanelStrong.copy(alpha = 0.95f)
+                    )
+                    .border(
+                        1.dp,
+                        if (cute) HelloColors.BorderStrong else HelloColors.GlassBorder,
+                        RoundedCornerShape(if (cute) 28.dp else 22.dp)
+                    )
+                    .clickable(onClick = onDismiss)
+                    .padding(horizontal = HelloSpacing.Lg, vertical = HelloSpacing.Md)
+            ) {
+                Column {
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(999.dp))
+                            .background(if (cute) HelloColors.AccentSoft else HelloColors.Accent.copy(alpha = 0.12f))
+                            .padding(horizontal = 10.dp, vertical = 4.dp)
+                    ) {
+                        Text(
+                            text = if (cute) "Hello message" else "New message",
+                            color = if (cute) HelloColors.AccentStrong else HelloColors.AccentStrong,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    Box(modifier = Modifier.padding(top = 10.dp)) {
+                        androidx.compose.foundation.layout.Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(18.dp))
+                                    .background(if (cute) HelloColors.AccentSoft else HelloColors.Accent.copy(alpha = 0.14f))
+                                    .padding(10.dp)
+                            ) {
+                                Icon(Icons.Default.Notifications, contentDescription = null, tint = HelloColors.AccentStrong)
+                            }
+                            Column(modifier = Modifier.padding(start = 12.dp)) {
+                                Text(
+                                    text = sender.orEmpty(),
+                                    color = HelloColors.DarkText,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = body.orEmpty(),
+                                    color = HelloColors.DarkTextMuted,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }

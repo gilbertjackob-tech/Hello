@@ -276,6 +276,7 @@ class HelloApiClient : HelloApi {
     override suspend fun uploadDriveFile(fileName: String, mimeType: String, bytes: ByteArray, uploaderId: String): Result<DriveUploadResponse> = safeApiCall {
         val body = MultipartBody.Builder()
             .setType(MultipartBody.FORM)
+            .addFormDataPart("userId", uploaderId)
             .addFormDataPart("uploaderId", uploaderId)
             .addFormDataPart("files", fileName, bytes.toRequestBody(mimeType.toMediaType()))
             .build()

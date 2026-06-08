@@ -2,6 +2,7 @@ package com.glassbox.hello.ui.theme
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.fillMaxSize
@@ -19,10 +20,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
-import coil.compose.AsyncImage
-import coil.request.ImageRequest
 import com.glassbox.hello.R
-import com.glassbox.hello.core.AppConfig
 
 object HelloWallpapers {
     const val Default = "default"
@@ -88,7 +86,7 @@ fun ChatWallpaperBackground(
     ) {
         when (normalized) {
             HelloWallpapers.None -> Unit
-            HelloWallpapers.ThemeCute -> CuteWallpaperLayer(alpha)
+            HelloWallpapers.ThemeCute,
             HelloWallpapers.ThemeMidnight,
             HelloWallpapers.ThemeAmoled,
             HelloWallpapers.ThemeTwilight,
@@ -253,16 +251,9 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawCuteHeart(
 @Composable
 private fun ThemeImageLayer(wallpaper: String, alpha: Float) {
     val asset = themeImageAsset(wallpaper)
-    val fallback = painterResource(asset.resId)
-    AsyncImage(
-        model = ImageRequest.Builder(LocalContext.current)
-            .data("${AppConfig.CHAT_API_BASE}/theme-assets/${asset.fileName}")
-            .crossfade(true)
-            .build(),
+    Image(
+        painter = painterResource(asset.resId),
         contentDescription = null,
-        placeholder = fallback,
-        error = fallback,
-        fallback = fallback,
         contentScale = ContentScale.Crop,
         modifier = Modifier
             .fillMaxSize()
@@ -274,6 +265,7 @@ private data class ThemeImageAsset(val fileName: String, val resId: Int)
 
 private fun themeImageAsset(wallpaper: String): ThemeImageAsset {
     return when (wallpaper) {
+        HelloWallpapers.ThemeCute -> ThemeImageAsset("theme_cute.png", R.drawable.theme_cute)
         HelloWallpapers.ThemeAmoled -> ThemeImageAsset("theme_amoled.png", R.drawable.theme_amoled)
         HelloWallpapers.ThemeTwilight -> ThemeImageAsset("theme_twilight.png", R.drawable.theme_twilight)
         HelloWallpapers.ThemeEmber -> ThemeImageAsset("theme_ember.png", R.drawable.theme_ember)

@@ -59,7 +59,8 @@ fun ChatComposer(
     hasPayload: Boolean,
     placeholder: String,
     enterSends: Boolean,
-    onKeyboardSend: () -> Unit
+    onKeyboardSend: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     val actionScale = animateFloatAsState(
         targetValue = if (hasPayload || voiceState.active) 1.05f else 1f,
@@ -67,7 +68,7 @@ fun ChatComposer(
         label = "composerActionScale"
     )
     Box(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .background(
                 Brush.verticalGradient(
@@ -81,8 +82,8 @@ fun ChatComposer(
             .padding(
                 start = HelloDimens.SpaceL,
                 end = HelloDimens.SpaceL,
-                top = HelloDimens.SpaceM,
-                bottom = HelloDimens.SpaceL
+                top = HelloDimens.SpaceXs,
+                bottom = HelloDimens.SpaceS
             )
     ) {
         Column(modifier = Modifier.animateContentSize()) {

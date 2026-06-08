@@ -14,6 +14,8 @@ import android.media.RingtoneManager
 import android.net.Uri
 import android.os.Build
 import android.util.Log
+import android.view.View
+import android.widget.RemoteViews
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.Person
@@ -68,6 +70,16 @@ private data class HelloPushPayload(
     val targetType: String?,
     val deepLink: String?,
     val collapseKey: String
+)
+
+private data class NotificationVisualTheme(
+    val isCute: Boolean,
+    val rootBackgroundRes: Int,
+    val callBackgroundRes: Int,
+    val titleColor: Int,
+    val bodyColor: Int,
+    val metaColor: Int,
+    val accentColor: Int
 )
 
 object HelloNotificationCenter {
@@ -287,6 +299,7 @@ object HelloNotificationCenter {
     private suspend fun postSystemNotification(context: Context, payload: HelloPushPayload, title: String, body: String) {
         val isCall = payload.channel == NotificationPrefs.CHANNEL_CALLS || payload.type == "call_incoming"
         val avatarBitmap = loadNotificationBitmap(payload.senderAvatar)
+        val visualTheme = notificationVisualTheme(context)
         val launchIntent = notificationIntent(context, payload, null)
         val pendingIntent = PendingIntent.getActivity(
             context,
@@ -305,8 +318,6 @@ object HelloNotificationCenter {
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setColor(0xFF00A884.toInt())
             .setWhen(System.currentTimeMillis())
-
-        avatarBitmap?.let { builder.setLargeIcon(it) }
 
         if (isCall) {
             val fullScreenIntent = PendingIntent.getActivity(
@@ -334,18 +345,20 @@ object HelloNotificationCenter {
                 .setOngoing(true)
                 .setAutoCancel(false)
                 .setTimeoutAfter(45_000L)
-                .setStyle(NotificationCompat.CallStyle.forIncomingCall(caller, declineIntent, acceptIntent))
+                .setColorized(true)
+                .setCustomBigContentView(buildCallRemoteViews(context, visualTheme, title, body, avatarBitmap, declineIntent, acceptIntent, true))
+                .setCustomHeadsUpContentView(buildCallRemoteViews(context, visualTheme, title, body, avatarBitmap, declineIntent, acceptIntent, true))
             if (!canUseFullScreenIntent(context)) {
                 Log.w(TAG, "Full-screen intent permission denied; falling back to expanded heads-up call notification")
             }
         } else if (payload.channel == NotificationPrefs.CHANNEL_MESSAGES || payload.channel == NotificationPrefs.CHANNEL_MENTIONS) {
-            val sender = personFor(payload.senderName, payload.senderAvatar, avatarBitmap)
-            builder.setStyle(
-                NotificationCompat.MessagingStyle(sender)
-                    .setConversationTitle(payload.groupName)
-                    .addMessage(body, System.currentTimeMillis(), sender)
-            )
+            avatarBitmap?.let { builder.setLargeIcon(it) }
+            builder
+                .setCustomContentView(buildMessageRemoteViews(context, visualTheme, title, body, avatarBitmap, payload.groupName, false))
+                .setCustomBigContentView(buildMessageRemoteViews(context, visualTheme, title, body, avatarBitmap, payload.groupName, true))
+                .setStyle(NotificationCompat.DecoratedCustomViewStyle())
         } else {
+            avatarBitmap?.let { builder.setLargeIcon(it) }
             builder.setStyle(NotificationCompat.BigTextStyle().bigText(body))
         }
 
@@ -504,6 +517,104 @@ object HelloNotificationCenter {
             message.location != null -> "Shared a location"
             else -> "New message"
         }
+    }
+
+    private fun notificationVisualTheme(context: Context): NotificationVisualTheme {
+        val theme = context.getSharedPreferences(NotificationPrefs.PREFS_NAME, PREFS_MODE)
+            .getString("theme", "cute")
+            .orEmpty()
+            .trim()
+            .lowercase()
+        val isCute = theme.contains("cute") || theme.contains("pink")
+        return if (isCute) {
+            NotificationVisualTheme(
+                isCute = true,
+                rootBackgroundRes = R.drawable.notification_bg_cute,
+                callBackgroundRes = R.drawable.notification_bg_call_cute,
+                titleColor = 0xFF8D2352.toInt(),
+                bodyColor = 0xFFB3567C.toInt(),
+                metaColor = 0xFFC16B90.toInt(),
+                accentColor = 0xFFE83F86.toInt()
+            )
+        } else {
+            NotificationVisualTheme(
+                isCute = false,
+                rootBackgroundRes = R.drawable.notification_bg_glass,
+                callBackgroundRes = R.drawable.notification_bg_call_glass,
+                titleColor = 0xFFF4F7FB.toInt(),
+                bodyColor = 0xFFD1D9E6.toInt(),
+                metaColor = 0xFF8FA1BA.toInt(),
+                accentColor = 0xFF63E6BE.toInt()
+            )
+        }
+    }
+
+    private fun buildMessageRemoteViews(
+        context: Context,
+        theme: NotificationVisualTheme,
+        title: String,
+        body: String,
+        avatarBitmap: Bitmap?,
+        groupName: String?,
+        expanded: Boolean
+    ): RemoteViews {
+        return RemoteViews(context.packageName, R.layout.notification_message).apply {
+            setInt(R.id.notification_message_root, "setBackgroundResource", theme.rootBackgroundRes)
+            setTextViewText(R.id.notification_message_title, title)
+            setTextViewText(R.id.notification_message_body, body)
+            setTextViewText(R.id.notification_message_time, notificationClock())
+            setTextViewText(R.id.notification_message_tag, groupName?.takeIf { it.isNotBlank() } ?: "Hello message")
+            setTextColor(R.id.notification_message_title, theme.titleColor)
+            setTextColor(R.id.notification_message_body, theme.bodyColor)
+            setTextColor(R.id.notification_message_time, theme.metaColor)
+            setTextColor(R.id.notification_message_tag, theme.accentColor)
+            setViewVisibility(R.id.notification_message_body, if (expanded || body.isNotBlank()) View.VISIBLE else View.GONE)
+            if (avatarBitmap != null) {
+                setImageViewBitmap(R.id.notification_message_avatar, avatarBitmap)
+            } else {
+                setImageViewResource(R.id.notification_message_avatar, R.drawable.ic_stat_message)
+            }
+        }
+    }
+
+    private fun buildCallRemoteViews(
+        context: Context,
+        theme: NotificationVisualTheme,
+        title: String,
+        body: String,
+        avatarBitmap: Bitmap?,
+        declineIntent: PendingIntent,
+        acceptIntent: PendingIntent,
+        expanded: Boolean
+    ): RemoteViews {
+        return RemoteViews(context.packageName, R.layout.notification_call).apply {
+            setInt(R.id.notification_call_root, "setBackgroundResource", theme.callBackgroundRes)
+            setTextViewText(R.id.notification_call_title, title)
+            setTextViewText(R.id.notification_call_body, if (theme.isCute) "Tap to answer" else body)
+            setTextViewText(R.id.notification_call_time, notificationClock())
+            setTextColor(R.id.notification_call_title, theme.titleColor)
+            setTextColor(R.id.notification_call_body, theme.bodyColor)
+            setTextColor(R.id.notification_call_time, theme.metaColor)
+            if (avatarBitmap != null) {
+                setImageViewBitmap(R.id.notification_call_avatar, avatarBitmap)
+            } else {
+                setImageViewResource(R.id.notification_call_avatar, R.drawable.ic_stat_call)
+            }
+            setOnClickPendingIntent(R.id.notification_call_decline, declineIntent)
+            setOnClickPendingIntent(R.id.notification_call_accept, acceptIntent)
+            setViewVisibility(R.id.notification_call_actions, if (expanded) View.VISIBLE else View.GONE)
+        }
+    }
+
+    private fun notificationClock(): String {
+        val now = LocalTime.now()
+        val hour = when {
+            now.hour == 0 -> 12
+            now.hour > 12 -> now.hour - 12
+            else -> now.hour
+        }
+        val suffix = if (now.hour >= 12) "pm" else "am"
+        return "%d:%02d %s".format(hour, now.minute, suffix)
     }
 
     private fun ensureChannels(context: Context) {

@@ -87,8 +87,8 @@ class FamilyDriveRepository(
         return api.fetchDriveCircles(userId)
     }
 
-    suspend fun createCircle(name: String, ownerUserId: String, members: List<DriveCircleMember>): Result<DriveCircle> {
-        return api.createDriveCircle(name, ownerUserId, members).also { result ->
+    suspend fun createCircle(id: String? = null, name: String, ownerUserId: String, members: List<DriveCircleMember>): Result<DriveCircle> {
+        return api.createDriveCircle(id, name, ownerUserId, members).also { result ->
             result.getOrNull()?.let { circle ->
                 mirrorDriveMetadataToFirestore("circles", circle.id, circle)
             }
@@ -129,7 +129,7 @@ class FamilyDriveRepository(
             val cloudRepository = CloudChatRepository(context.applicationContext)
             val chats = cloudRepository.fetchChats(currentUserId)
                 .getOrElse { cloudRepository.cachedChats(currentUserId) }
-            val contacts = chats
+            val chatContacts = chats
                 .flatMap { chat ->
                     chat.participants.orEmpty()
                         .filter { it.id != currentUserId }
@@ -143,9 +143,23 @@ class FamilyDriveRepository(
                             )
                         }
                 }
+            val globalContacts = cloudRepository.fetchUsers()
+                .getOrDefault(emptyList())
+                .filter { user -> user.id != currentUserId }
+                .map { user ->
+                    DriveContact(
+                        id = user.id,
+                        name = normalizedContactName(user),
+                        username = user.username?.trim()?.ifBlank { null },
+                        avatar = user.avatar,
+                        sourceChatId = null
+                    )
+                }
+            val contacts = (chatContacts + globalContacts)
+                .filter { it.id.isNotBlank() }
                 .distinctBy { it.id }
                 .sortedBy { it.name.trim().lowercase(Locale.US) }
-            HelloDebugLog.d("DriveRepo", "fetchChatContacts success chats=${chats.size} contacts=${contacts.size}")
+            HelloDebugLog.d("DriveRepo", "fetchChatContacts success chats=${chats.size} chatContacts=${chatContacts.size} globalContacts=${globalContacts.size} mergedContacts=${contacts.size}")
             Result.success(contacts)
         } catch (error: Exception) {
             HelloDebugLog.w("DriveRepo", "fetchChatContacts failure error=${error.message}", error)
