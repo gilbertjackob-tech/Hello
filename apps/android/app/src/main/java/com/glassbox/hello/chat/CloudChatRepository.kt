@@ -1,7 +1,7 @@
 package com.glassbox.hello.chat
 
 import android.content.Context
-import android.util.Log
+import com.glassbox.hello.debug.AppLog as Log
 import com.glassbox.hello.auth.CloudSessionManager
 import com.glassbox.hello.chat.components.messagePreviewText
 import com.glassbox.hello.chat.components.callSummaryLabel
@@ -14,6 +14,7 @@ class CloudChatRepository(
 ) {
     companion object {
         private const val TAG = "HelloInbox"
+        private const val MAX_AUTO_MATERIALIZED_CONTACTS = 40
     }
 
     private val sessionManager = CloudSessionManager(context.applicationContext)
@@ -42,38 +43,102 @@ class CloudChatRepository(
         }
     }
 
-    suspend fun fetchChats(userId: String): Result<List<ChatModels.Chat>> {
-        val effectiveUserId = currentCloudUserId() ?: resolveCloudUserId(userId)
+    suspend fun fetchChats(userId: String, displayName: String? = null): Result<List<ChatModels.Chat>> {
+        val resolvedUserId = resolveCloudUserId(userId, displayName)
+        val sessionUserId = currentCloudUserId()
+        val effectiveUserId = resolvedUserId.takeIf { it.startsWith("usr_") }
+            ?: sessionUserId
+            ?: resolvedUserId
         Log.d(
             TAG,
-            "repo_fetch_chats_start requestedUserId=$userId effectiveUserId=$effectiveUserId tokenPresent=${!sessionManager.token().isNullOrBlank()} cachedUserId=${sessionManager.cachedUser()?.id.orEmpty()}"
+            "repo_fetch_chats_start requestedUserId=$userId displayName=${displayName.orEmpty()} resolvedUserId=$resolvedUserId effectiveUserId=$effectiveUserId tokenPresent=${!sessionManager.token().isNullOrBlank()} cachedUserId=${sessionManager.cachedUser()?.id.orEmpty()}"
         )
         val result = api.fetchConversations(effectiveUserId)
-        val deduped = result.getOrNull()?.map(::normalizeChat)?.let { dedupeChats(it, effectiveUserId) }
+        val remoteChats = result.getOrNull()?.map(::normalizeChat)
+        val materializedChats = remoteChats?.let { chats ->
+            materializeDirectConversationsForContacts(
+                currentUserId = effectiveUserId,
+                currentUserName = displayName,
+                existingChats = chats
+            )
+        }.orEmpty()
+        val deduped = remoteChats
+            ?.plus(materializedChats)
+            ?.let { dedupeChats(it, effectiveUserId) }
         deduped?.let {
             saveChats(userId, it)
+            if (resolvedUserId != userId) saveChats(resolvedUserId, it)
             if (effectiveUserId != userId) saveChats(effectiveUserId, it)
         }
         if (deduped != null) {
             Log.d(
                 TAG,
-                "repo_fetch_chats_success requestedUserId=$userId effectiveUserId=$effectiveUserId count=${deduped.size} ids=${deduped.take(8).joinToString(",") { chat -> chat.id }}"
+                "repo_fetch_chats_success requestedUserId=$userId resolvedUserId=$resolvedUserId effectiveUserId=$effectiveUserId count=${deduped.size} ids=${deduped.take(8).joinToString(",") { chat -> chat.id }}"
             )
         } else {
             Log.w(
                 TAG,
-                "repo_fetch_chats_error requestedUserId=$userId effectiveUserId=$effectiveUserId error=${result.exceptionOrNull()?.message ?: "unknown"}"
+                "repo_fetch_chats_error requestedUserId=$userId resolvedUserId=$resolvedUserId effectiveUserId=$effectiveUserId error=${result.exceptionOrNull()?.message ?: "unknown"}"
             )
         }
         return if (deduped != null) Result.success(deduped) else {
-            val cached = (cachedChats(userId) + cachedChats(effectiveUserId))
+            val cached = (cachedChats(userId) + cachedChats(resolvedUserId) + cachedChats(effectiveUserId))
                 .let { dedupeChats(it, effectiveUserId) }
             Log.d(
                 TAG,
-                "repo_fetch_chats_fallback_cache requestedUserId=$userId effectiveUserId=$effectiveUserId cachedCount=${cached.size}"
+                "repo_fetch_chats_fallback_cache requestedUserId=$userId resolvedUserId=$resolvedUserId effectiveUserId=$effectiveUserId cachedCount=${cached.size}"
             )
             if (cached.isNotEmpty()) Result.success(cached) else result
         }
+    }
+
+    private suspend fun materializeDirectConversationsForContacts(
+        currentUserId: String,
+        currentUserName: String?,
+        existingChats: List<ChatModels.Chat>
+    ): List<ChatModels.Chat> {
+        val token = sessionManager.token().orEmpty()
+        if (token.isBlank()) return emptyList()
+        val existingDirectKeys = existingChats
+            .mapNotNull { directKeyForChat(it, currentUserId) }
+            .toMutableSet()
+        val contacts = api.fetchContacts(token)
+            .getOrNull()
+            .orEmpty()
+            .filter { it.safeId().isNotBlank() && it.safeId() != currentUserId }
+            .take(MAX_AUTO_MATERIALIZED_CONTACTS)
+        if (contacts.isEmpty()) return emptyList()
+
+        val created = mutableListOf<ChatModels.Chat>()
+        for (contact in contacts) {
+            val contactId = contact.safeId()
+            val directKey = directKey(currentUserId, contactId)
+            if (directKey in existingDirectKeys) continue
+            val result = api.ensureDirectConversation(
+                currentUserId = currentUserId,
+                targetUserId = contactId,
+                currentUserName = currentUserName ?: currentUserId,
+                targetUserName = contact.safeName()
+            )
+            result
+                .onSuccess { chat ->
+                    val normalized = normalizeChat(chat)
+                    cacheDirectConversationId(currentUserId, contactId, normalized.id)
+                    upsertCachedChat(currentUserId, normalized)
+                    existingDirectKeys += directKeyForChat(normalized, currentUserId) ?: directKey
+                    created += normalized
+                }
+                .onFailure { error ->
+                    Log.w(TAG, "repo_materialize_direct_failed currentUserId=$currentUserId contactId=$contactId error=${error.message}")
+                }
+        }
+        if (created.isNotEmpty()) {
+            Log.d(
+                TAG,
+                "repo_materialize_direct_success currentUserId=$currentUserId createdCount=${created.size} ids=${created.take(8).joinToString(",") { it.id }}"
+            )
+        }
+        return created
     }
 
     suspend fun fetchUsers(query: String? = null): Result<List<ChatModels.User>> {
@@ -387,5 +452,12 @@ class CloudChatRepository(
 
     private fun ChatModels.User.safeName(): String = rawString(name).ifBlank { safeId() }
 
-    private fun rawString(value: String?): String = value?.trim().orEmpty()
+    private fun rawString(value: String?): String {
+        val normalized = value?.trim().orEmpty()
+        return when {
+            normalized.equals("null", ignoreCase = true) -> ""
+            normalized.equals("undefined", ignoreCase = true) -> ""
+            else -> normalized
+        }
+    }
 }

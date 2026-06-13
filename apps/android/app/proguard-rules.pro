@@ -34,4 +34,37 @@
 # WebRTC call setup runs in the shipped release APK. Keep the WebRTC surface
 # and the app's call stack stable so release behavior matches debug behavior.
 -keep class org.webrtc.** { *; }
+-keep class org.jni_zero.** { *; }
 -keep class com.glassbox.hello.calls.** { *; }
+
+# Release builds still parse many backend responses with Gson into plain Kotlin
+# data classes. Those field names must survive R8 obfuscation or release starts
+# returning default/null values for calls, inbox rows, notifications, and Drive.
+-keepclassmembers class com.glassbox.hello.core.User {
+    <fields>;
+}
+-keepclassmembers class com.glassbox.hello.chat.ChatModels$* {
+    <fields>;
+}
+-keepclassmembers class com.glassbox.hello.familydrive.** {
+    <fields>;
+}
+-keepclassmembers class com.glassbox.hello.auth.CloudChatPreferences {
+    <fields>;
+}
+-keepclassmembers class com.glassbox.hello.calls.CallIceServer {
+    <fields>;
+}
+-keepclassmembers class com.glassbox.hello.calls.CallParticipant {
+    <fields>;
+}
+-keepclassmembers class com.glassbox.hello.calls.CallMediaState {
+    <fields>;
+}
+-keepclassmembers class com.glassbox.hello.calls.CallRoom {
+    <fields>;
+}
+-keepclassmembers class com.glassbox.hello.calls.RoomSignal {
+    <fields>;
+}
+-keep class com.glassbox.hello.notifications.HelloFirebaseMessagingService { *; }

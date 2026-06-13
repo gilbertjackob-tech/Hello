@@ -495,5 +495,12 @@ class HelloApiClient : HelloApi {
         )
     }
 
-    private fun rawString(value: String?): String = value?.trim().orEmpty()
+    private fun rawString(value: String?): String {
+        val normalized = value?.trim().orEmpty()
+        return when {
+            normalized.equals("null", ignoreCase = true) -> ""
+            normalized.equals("undefined", ignoreCase = true) -> ""
+            else -> normalized
+        }
+    }
 }

@@ -134,4 +134,11 @@ private fun String?.isGeneratedDisplayName(): Boolean {
         lower.matches(Regex("""codex.*\d{8,}.*"""))
 }
 
-private fun String?.rawString(): String = this?.trim().orEmpty()
+private fun String?.rawString(): String {
+    val normalized = this?.trim().orEmpty()
+    return when {
+        normalized.equals("null", ignoreCase = true) -> ""
+        normalized.equals("undefined", ignoreCase = true) -> ""
+        else -> normalized
+    }
+}

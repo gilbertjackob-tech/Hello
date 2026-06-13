@@ -10,6 +10,7 @@ interface DrivePcApi {
     suspend fun deleteDriveEvent(eventId: String, userId: String): Result<Unit>
     suspend fun fetchDriveCircles(userId: String): Result<List<DriveCircle>>
     suspend fun createDriveCircle(id: String? = null, name: String, ownerUserId: String, members: List<DriveCircleMember>): Result<DriveCircle>
+    suspend fun uploadDriveCircleAvatar(circleId: String, userId: String, fileName: String, mimeType: String, bytes: ByteArray): Result<DriveCircle>
     suspend fun leaveDriveCircle(circleId: String, userId: String): Result<Unit>
     suspend fun deleteDriveCircle(circleId: String, userId: String): Result<Unit>
     suspend fun fetchDriveDeletePolls(userId: String, circleId: String): Result<List<DriveDeletePoll>>

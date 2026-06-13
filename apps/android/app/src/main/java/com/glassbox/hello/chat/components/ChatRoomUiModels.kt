@@ -27,6 +27,11 @@ data class TimelineGrouping(
     val compactWithNext: Boolean
 )
 
+data class ImageClusterTimeline(
+    val clustersByLeadIndex: Map<Int, List<ChatModels.Message>>,
+    val followerToLeadIndex: Map<Int, Int>
+)
+
 data class ActionMessageState(
     val message: ChatModels.Message,
     val isOwn: Boolean

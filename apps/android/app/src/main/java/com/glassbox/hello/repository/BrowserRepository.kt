@@ -1,7 +1,7 @@
 package com.glassbox.hello.repository
 
 import android.content.Context
-import android.util.Log
+import com.glassbox.hello.debug.AppLog as Log
 import androidx.room.withTransaction
 import com.glassbox.hello.database.AppDatabase
 import com.glassbox.hello.database.entities.CacheEntity

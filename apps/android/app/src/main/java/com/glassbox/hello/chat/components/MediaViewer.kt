@@ -13,7 +13,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.window.Dialog
-import coil.compose.SubcomposeAsyncImage
+import coil.compose.AsyncImage
 import coil.decode.SvgDecoder
 import coil.request.ImageRequest
 import com.glassbox.hello.ui.components.HelloIconButton
@@ -29,11 +29,14 @@ fun MediaViewer(state: MediaViewerState, onDismiss: () -> Unit) {
                 .background(Color.Black),
             contentAlignment = Alignment.Center
         ) {
-            SubcomposeAsyncImage(
+            AsyncImage(
                 model = ImageRequest.Builder(androidx.compose.ui.platform.LocalContext.current)
                     .data(state.url)
                     .decoderFactory(SvgDecoder.Factory())
-                    .crossfade(true)
+                    .crossfade(false)
+                    .allowHardware(true)
+                    .memoryCacheKey(state.url)
+                    .diskCacheKey(state.url)
                     .build(),
                 contentDescription = state.label,
                 modifier = Modifier.fillMaxSize(),

@@ -8,11 +8,16 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.navigationBarsIgnoringVisibility
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.tappableElement
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.shadow
 import androidx.compose.material.icons.Icons
@@ -30,6 +35,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
@@ -44,6 +50,7 @@ import com.glassbox.hello.ui.theme.HelloMotion
 import com.glassbox.hello.ui.theme.HelloShapes
 import com.glassbox.hello.ui.theme.HelloSpacing
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ChatComposer(
     text: String,
@@ -67,6 +74,15 @@ fun ChatComposer(
         animationSpec = HelloMotion.SpringSnappy,
         label = "composerActionScale"
     )
+    val density = LocalDensity.current
+    val bottomSystemInset = with(density) {
+        maxOf(
+            WindowInsets.navigationBars.getBottom(this),
+            WindowInsets.navigationBarsIgnoringVisibility.getBottom(this),
+            WindowInsets.tappableElement.getBottom(this)
+        ).toDp()
+    }
+    val protectedBottomPadding = if (bottomSystemInset > 0.dp) maxOf(bottomSystemInset, 56.dp) else 0.dp
     Box(
         modifier = modifier
             .fillMaxWidth()
@@ -83,7 +99,7 @@ fun ChatComposer(
                 start = HelloDimens.SpaceL,
                 end = HelloDimens.SpaceL,
                 top = HelloDimens.SpaceXs,
-                bottom = HelloDimens.SpaceS
+                bottom = HelloDimens.SpaceS + protectedBottomPadding
             )
     ) {
         Column(modifier = Modifier.animateContentSize()) {

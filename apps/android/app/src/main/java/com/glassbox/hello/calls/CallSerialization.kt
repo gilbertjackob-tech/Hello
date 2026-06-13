@@ -36,12 +36,50 @@ internal fun CallSignal.toJson(): JSONObject = JSONObject().apply {
 }
 
 internal fun JSONObject.toCallSignal(): CallSignal? {
-    val callId = optString("callId", optString("id", ""))
-    val chatId = optString("chatId", "")
-    val callerId = optString("callerId", optString("fromUserId", ""))
-    val calleeId = optString("calleeId", optString("toUserId", ""))
-    val fromUserId = optString("fromUserId", callerId)
-    val toUserId = optString("toUserId", calleeId)
+    return toCallSignal(currentSignal = null, currentUserId = null)
+}
+
+internal fun JSONObject.toCallSignal(
+    currentSignal: CallSignal? = null,
+    currentUserId: String? = null
+): CallSignal? {
+    val currentUser = normalizedJsonString(currentUserId)
+    val fallbackCallId = currentSignal?.callId.orEmpty()
+    val fallbackChatId = currentSignal?.chatId.orEmpty()
+    val fallbackCallerId = currentSignal?.callerId.orEmpty()
+    val fallbackCalleeId = currentSignal?.calleeId.orEmpty()
+    val fallbackRemoteUserId = when {
+        currentSignal == null -> ""
+        currentUser.isBlank() -> ""
+        fallbackCallerId == currentUser -> fallbackCalleeId
+        fallbackCalleeId == currentUser -> fallbackCallerId
+        else -> ""
+    }
+
+    val callId = normalizedJsonString(optString("callId", optString("id", optString("roomId", fallbackCallId))))
+    val chatId = normalizedJsonString(optString("chatId", fallbackChatId))
+    val callerId = normalizedJsonString(optString("callerId", optString("fromUserId", fallbackCallerId))).ifBlank { fallbackCallerId }
+    val calleeId = normalizedJsonString(optString("calleeId", optString("toUserId", fallbackCalleeId))).ifBlank { fallbackCalleeId }
+    val fromUserId = normalizedJsonString(
+        optString(
+            "fromUserId",
+            callerId.ifBlank {
+                fallbackRemoteUserId.ifBlank { fallbackCallerId }
+            }
+        )
+    ).ifBlank {
+        fallbackRemoteUserId.ifBlank { callerId.ifBlank { fallbackCallerId } }
+    }
+    val toUserId = normalizedJsonString(
+        optString(
+            "toUserId",
+            calleeId.ifBlank {
+                currentUser.ifBlank { fallbackCalleeId }
+            }
+        )
+    ).ifBlank {
+        currentUser.ifBlank { calleeId.ifBlank { fallbackCalleeId } }
+    }
     if (callId.isBlank() || chatId.isBlank() || fromUserId.isBlank() || toUserId.isBlank()) return null
     val isVideo = optBoolean("isVideo", optString("type", "audio") == "video")
     val offer = optJSONObject("offer")
@@ -50,27 +88,27 @@ internal fun JSONObject.toCallSignal(): CallSignal? {
     return CallSignal(
         eventId = optString("eventId").ifBlank { null },
         callId = callId,
-        roomId = optString("roomId").ifBlank { null },
+        roomId = normalizedJsonString(optString("roomId")).ifBlank { null },
         chatId = chatId,
         fromUserId = fromUserId,
         toUserId = toUserId,
         callerId = callerId.ifBlank { fromUserId },
         calleeId = calleeId.ifBlank { toUserId },
-        callerName = optString("callerName", "Hello call"),
-        callerAvatar = optString("callerAvatar").ifBlank { null },
-        calleeName = optString("calleeName").ifBlank { null },
-        calleeAvatar = optString("calleeAvatar").ifBlank { null },
-        type = optString("type", if (isVideo) "video" else "audio"),
+        callerName = normalizedJsonString(optString("callerName", "Hello call")).ifBlank { "Hello call" },
+        callerAvatar = normalizedJsonString(optString("callerAvatar")).ifBlank { null },
+        calleeName = normalizedJsonString(optString("calleeName")).ifBlank { null },
+        calleeAvatar = normalizedJsonString(optString("calleeAvatar")).ifBlank { null },
+        type = normalizedJsonString(optString("type", if (isVideo) "video" else "audio")).ifBlank { if (isVideo) "video" else "audio" },
         isVideo = isVideo,
-        offerSdp = offer?.optString("sdp")?.ifBlank { null },
-        answerSdp = answer?.optString("sdp")?.ifBlank { null },
-        candidate = candidateObject?.optString("candidate")?.ifBlank { null },
-        sdpMid = candidateObject?.optString("sdpMid")?.ifBlank { null },
+        offerSdp = offer?.optString("sdp")?.let(::normalizedJsonString)?.ifBlank { null },
+        answerSdp = answer?.optString("sdp")?.let(::normalizedJsonString)?.ifBlank { null },
+        candidate = candidateObject?.optString("candidate")?.let(::normalizedJsonString)?.ifBlank { null },
+        sdpMid = candidateObject?.optString("sdpMid")?.let(::normalizedJsonString)?.ifBlank { null },
         sdpMLineIndex = candidateObject?.takeIf { it.has("sdpMLineIndex") }?.optInt("sdpMLineIndex"),
-        reason = optString("reason").ifBlank { null },
+        reason = normalizedJsonString(optString("reason")).ifBlank { null },
         timestamp = optNullableLong("timestamp"),
         attempt = optInt("attempt", 1),
-        event = optString("event").ifBlank { null }
+        event = normalizedJsonString(optString("event")).ifBlank { null }
     )
 }
 
@@ -156,7 +194,16 @@ internal fun JSONObject.toRoomSignal(): RoomSignal? {
 
 private fun JSONArray?.toStringList(): List<String> {
     if (this == null) return emptyList()
-    return (0 until length()).mapNotNull { index -> optString(index).ifBlank { null } }
+    return (0 until length()).mapNotNull { index -> normalizedJsonString(optString(index)).ifBlank { null } }
+}
+
+private fun normalizedJsonString(value: String?): String {
+    val normalized = value?.trim().orEmpty()
+    return when {
+        normalized.equals("null", ignoreCase = true) -> ""
+        normalized.equals("undefined", ignoreCase = true) -> ""
+        else -> normalized
+    }
 }
 
 private fun JSONArray?.toParticipants(): List<CallParticipant> {

@@ -4,7 +4,7 @@ import android.app.Activity
 import android.content.Intent
 import android.net.Uri
 import android.util.Base64
-import android.util.Log
+import com.glassbox.hello.debug.AppLog as Log
 import com.glassbox.hello.client.ApiClient
 import com.glassbox.hello.client.OAuthRequest
 import com.glassbox.hello.database.entities.ProfileEntity

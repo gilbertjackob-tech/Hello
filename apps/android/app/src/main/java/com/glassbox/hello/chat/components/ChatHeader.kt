@@ -92,6 +92,7 @@ fun ChatHeader(
         HelloIconButton(onClick = onAudioCall) {
             Icon(Icons.Default.Call, contentDescription = "Audio call", tint = HelloColors.Accent)
         }
+        Spacer(modifier = Modifier.width(HelloSpacing.Sm))
         HelloIconButton(onClick = onMore) {
             Icon(Icons.Default.MoreVert, contentDescription = "More", tint = HelloColors.Accent)
         }

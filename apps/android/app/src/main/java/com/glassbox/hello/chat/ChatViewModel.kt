@@ -1,7 +1,8 @@
 package com.glassbox.hello.chat
 
 import android.content.Context
-import android.util.Log
+import android.os.SystemClock
+import com.glassbox.hello.debug.AppLog as Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.glassbox.hello.chat.ChatModels.Chat
@@ -11,14 +12,17 @@ import com.glassbox.hello.chat.components.AttachmentDraft
 import com.glassbox.hello.chat.components.messagePreviewText
 import com.glassbox.hello.core.ResultState
 import com.glassbox.hello.network.HelloApiClient
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
 class ChatViewModel : ViewModel() {
     private val api = HelloApiClient()
     private var repository = ChatRepository(api)
+    private var configuredCloudContext: Context? = null
 
     private val _chatsState = MutableStateFlow<ResultState<List<Chat>>>(ResultState.Loading)
     val chatsState: StateFlow<ResultState<List<Chat>>> = _chatsState
@@ -56,8 +60,11 @@ class ChatViewModel : ViewModel() {
     }
 
     fun configureCloudChat(context: Context) {
-        Log.d(TAG, "configure_cloud_chat context=${context.applicationContext.javaClass.simpleName}")
-        repository = ChatRepository(api, CloudChatRepository(context.applicationContext))
+        val appContext = context.applicationContext
+        if (configuredCloudContext === appContext) return
+        Log.d(TAG, "configure_cloud_chat context=${appContext.javaClass.simpleName}")
+        repository = ChatRepository(api, CloudChatRepository(appContext))
+        configuredCloudContext = appContext
     }
 
     fun loadUsers(currentUserId: String, query: String? = null, cloudChatEnabled: Boolean = true) {
@@ -134,17 +141,20 @@ class ChatViewModel : ViewModel() {
         }
     }
 
-    fun loadChats(userId: String, cloudChatEnabled: Boolean = true) {
+    fun loadChats(userId: String, currentUserName: String? = null, cloudChatEnabled: Boolean = true) {
+        val startedAt = SystemClock.elapsedRealtime()
         val hasCached = _chatsState.value is ResultState.Success
-        val cachedCloudChats = repository.cachedChats(userId, cloudChatEnabled)
-            .dedupeDirectChats(userId)
-            .filter { it.isProfessionalInboxItem(userId) }
+        val cachedCloudChats = normalizeVisibleChats(
+            repository.cachedChats(userId, cloudChatEnabled),
+            userId
+        )
         Log.d(
             TAG,
-            "vm_load_chats_start userId=$userId cloudChatEnabled=$cloudChatEnabled hadVisibleState=$hasCached cachedVisibleCount=${cachedCloudChats.size} cachedIds=${cachedCloudChats.take(8).joinToString(",") { it.id }}"
+            "vm_load_chats_start userId=$userId currentUserName=${currentUserName.orEmpty()} cloudChatEnabled=$cloudChatEnabled hadVisibleState=$hasCached cachedVisibleCount=${cachedCloudChats.size} cachedIds=${cachedCloudChats.take(8).joinToString(",") { it.id }}"
         )
         if (cachedCloudChats.isNotEmpty()) {
             _chatsState.value = ResultState.Success(cachedCloudChats)
+            Log.d(TAG, "vm_load_chats_cached_visible userId=$userId count=${cachedCloudChats.size} elapsedMs=${SystemClock.elapsedRealtime() - startedAt}")
         }
         val hasVisibleChats = hasCached || cachedCloudChats.isNotEmpty()
         if (!hasVisibleChats) {
@@ -153,15 +163,22 @@ class ChatViewModel : ViewModel() {
             _chatsRefreshing.value = true
         }
         viewModelScope.launch {
-            val result = repository.fetchChats(userId, cloudChatEnabled)
+            val result = withContext(Dispatchers.IO) {
+                repository.fetchChats(userId, currentUserName, cloudChatEnabled)
+            }
             if (result.isSuccess) {
-                val chats = result.getOrNull()
+                val currentVisibleChats = (_chatsState.value as? ResultState.Success<List<Chat>>)
+                    ?.data
                     .orEmpty()
-                    .dedupeDirectChats(userId)
-                    .filter { it.isProfessionalInboxItem(userId) }
+                val chats = withContext(Dispatchers.Default) {
+                    normalizeVisibleChats(
+                        currentVisibleChats + result.getOrNull().orEmpty(),
+                        userId
+                    )
+                }
                 Log.d(
                     TAG,
-                    "vm_load_chats_success userId=$userId cloudChatEnabled=$cloudChatEnabled visibleCount=${chats.size} ids=${chats.take(8).joinToString(",") { it.id }} previews=${chats.take(4).joinToString(" | ") { "${it.id}:${it.lastMessage.orEmpty().take(30)}" }}"
+                    "vm_load_chats_success userId=$userId cloudChatEnabled=$cloudChatEnabled visibleCount=${chats.size} elapsedMs=${SystemClock.elapsedRealtime() - startedAt} ids=${chats.take(8).joinToString(",") { it.id }} previews=${chats.take(4).joinToString(" | ") { "${it.id}:${it.lastMessage.orEmpty().take(30)}" }}"
                 )
                 _chatsState.value = ResultState.Success(
                     chats
@@ -181,10 +198,17 @@ class ChatViewModel : ViewModel() {
     }
 
     fun loadMessages(chatId: String, cloudChatEnabled: Boolean = true) {
+        val startedAt = SystemClock.elapsedRealtime()
         _messagesPaginationOffset.value = 0
         _hasMoreOlderMessages.value = true
-        val hasCached = _messagesState.value is ResultState.Success
-        if (!hasCached) {
+        val cachedMessages = normalizeMessages(repository.cachedMessages(chatId, cloudChatEnabled))
+        if (cachedMessages.isNotEmpty()) {
+            _messagesState.value = ResultState.Success(cachedMessages)
+            _messagesPaginationOffset.value = cachedMessages.size
+            Log.d(TAG, "vm_load_messages_cached chatId=$chatId count=${cachedMessages.size} elapsedMs=${SystemClock.elapsedRealtime() - startedAt}")
+        }
+        val hasVisibleMessages = _messagesState.value is ResultState.Success
+        if (!hasVisibleMessages) {
             _messagesState.value = ResultState.Loading
         } else {
             _messagesRefreshing.value = true
@@ -192,12 +216,20 @@ class ChatViewModel : ViewModel() {
         viewModelScope.launch {
             val result = repository.fetchMessages(chatId, limit = MESSAGE_PAGE_SIZE, offset = 0, cloudChatEnabled = cloudChatEnabled)
             if (result.isSuccess) {
-                val messages = (result.getOrNull() ?: emptyList()).sortedBy { it.timestamp }.distinctBy { it.id }
+                val remoteMessages = result.getOrNull().orEmpty()
+                val currentMessages = (_messagesState.value as? ResultState.Success<List<Message>>)
+                    ?.data
+                    .orEmpty()
+                val messages = withContext(Dispatchers.Default) { mergeMessages(currentMessages, remoteMessages) }
                 _messagesState.value = ResultState.Success(messages)
-                _hasMoreOlderMessages.value = messages.size >= MESSAGE_PAGE_SIZE
+                _hasMoreOlderMessages.value = remoteMessages.size >= MESSAGE_PAGE_SIZE
                 _messagesPaginationOffset.value = messages.size
-            } else if (!hasCached) {
+                Log.d(TAG, "vm_load_messages_remote chatId=$chatId remoteCount=${remoteMessages.size} visibleCount=${messages.size} elapsedMs=${SystemClock.elapsedRealtime() - startedAt}")
+            } else if (!hasVisibleMessages) {
                 _messagesState.value = ResultState.Error(result.exceptionOrNull()?.message ?: "Failed to load messages")
+                Log.w(TAG, "vm_load_messages_error chatId=$chatId elapsedMs=${SystemClock.elapsedRealtime() - startedAt} error=${result.exceptionOrNull()?.message ?: "Failed to load messages"}")
+            } else {
+                Log.w(TAG, "vm_load_messages_refresh_error chatId=$chatId elapsedMs=${SystemClock.elapsedRealtime() - startedAt} error=${result.exceptionOrNull()?.message ?: "Failed to load messages"}")
             }
             _messagesRefreshing.value = false
         }
@@ -218,18 +250,24 @@ class ChatViewModel : ViewModel() {
                 cloudChatEnabled = cloudChatEnabled
             )
             if (result.isSuccess) {
-                val newMessages = (result.getOrNull() ?: emptyList()).sortedBy { it.timestamp }.distinctBy { it.id }
+                val fetchedMessages = result.getOrNull().orEmpty()
+                val newMessages = withContext(Dispatchers.Default) {
+                    normalizeMessages(fetchedMessages)
+                }
                 val current = _messagesState.value
                 val currentMessages = if (current is ResultState.Success) current.data else emptyList()
-                val unseenMessages = newMessages.filter { incoming -> currentMessages.none { it.id == incoming.id } }
-                val allMessages = if (current is ResultState.Success) {
-                    (unseenMessages + current.data).distinctBy { it.id }.sortedBy { it.timestamp }
-                } else {
-                    unseenMessages
+                val currentIds = currentMessages.asSequence().map { it.id }.toHashSet()
+                val unseenMessages = newMessages.filterNot { it.id in currentIds }
+                val allMessages = withContext(Dispatchers.Default) {
+                    if (current is ResultState.Success) {
+                        mergeMessages(current.data, newMessages)
+                    } else {
+                        unseenMessages
+                    }
                 }
                 _messagesState.value = ResultState.Success(allMessages)
-                _hasMoreOlderMessages.value = unseenMessages.isNotEmpty() && newMessages.size >= MESSAGE_PAGE_SIZE
-                _messagesPaginationOffset.value += newMessages.size
+                _hasMoreOlderMessages.value = fetchedMessages.size >= MESSAGE_PAGE_SIZE
+                _messagesPaginationOffset.value += fetchedMessages.size
             }
             _isLoadingOlderMessages.value = false
         }
@@ -732,10 +770,8 @@ class ChatViewModel : ViewModel() {
             existing.id == chat.id ||
                 (!existing.isGroup && !chat.isGroup && existing.directDedupeKey(currentUserId) == chat.directDedupeKey(currentUserId))
         } + chat)
-            .dedupeDirectChats(currentUserId)
-            .filter { it.isProfessionalInboxItem(currentUserId) }
-            .sortedByDescending { it.lastMessageTime ?: 0L }
-        _chatsState.value = ResultState.Success(next)
+        val normalized = normalizeVisibleChats(next, currentUserId)
+        _chatsState.value = ResultState.Success(normalized)
     }
 
     private fun upsertChatFromMessage(
@@ -853,6 +889,29 @@ class ChatViewModel : ViewModel() {
 
     private fun normalizedSortKey(value: String?): String =
         value?.trim()?.lowercase().orEmpty()
+
+    private fun normalizeVisibleChats(chats: List<Chat>, currentUserId: String): List<Chat> {
+        if (chats.isEmpty()) return emptyList()
+        return chats
+            .dedupeDirectChats(currentUserId)
+            .filter { it.isProfessionalInboxItem(currentUserId) }
+    }
+
+    private fun normalizeMessages(messages: List<Message>): List<Message> {
+        if (messages.isEmpty()) return emptyList()
+        return messages
+            .distinctBy { it.id }
+            .sortedBy { it.timestamp }
+    }
+
+    private fun mergeMessages(currentMessages: List<Message>, incomingMessages: List<Message>): List<Message> {
+        if (currentMessages.isEmpty()) return normalizeMessages(incomingMessages)
+        if (incomingMessages.isEmpty()) return currentMessages
+        val mergedById = LinkedHashMap<String, Message>(currentMessages.size + incomingMessages.size)
+        currentMessages.forEach { mergedById[it.id] = it }
+        incomingMessages.forEach { mergedById[it.id] = it }
+        return mergedById.values.sortedBy { it.timestamp }
+    }
 
     private fun User.mergePresence(incoming: User): User {
         return copy(

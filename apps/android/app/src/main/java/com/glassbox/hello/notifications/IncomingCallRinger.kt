@@ -4,7 +4,7 @@ import android.content.Context
 import android.media.AudioAttributes
 import android.media.MediaPlayer
 import android.media.RingtoneManager
-import android.util.Log
+import com.glassbox.hello.debug.AppLog as Log
 
 object IncomingCallRinger {
     private const val TAG = "IncomingCallRinger"

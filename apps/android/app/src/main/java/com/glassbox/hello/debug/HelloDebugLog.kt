@@ -1,6 +1,6 @@
 package com.glassbox.hello.debug
 
-import android.util.Log
+import com.glassbox.hello.debug.AppLog as Log
 
 object HelloDebugLog {
     private const val TAG = "HelloDebug"

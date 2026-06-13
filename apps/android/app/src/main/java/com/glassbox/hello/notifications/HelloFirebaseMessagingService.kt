@@ -1,6 +1,6 @@
 package com.glassbox.hello.notifications
 
-import android.util.Log
+import com.glassbox.hello.debug.AppLog as Log
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 import org.json.JSONObject

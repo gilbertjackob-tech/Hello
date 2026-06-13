@@ -1,6 +1,6 @@
 package com.glassbox.hello.auth
 
-import android.util.Log
+import com.glassbox.hello.debug.AppLog as Log
 import com.glassbox.hello.client.ApiClient
 import com.glassbox.hello.security.SecureDataStore
 import com.glassbox.hello.utils.Constants

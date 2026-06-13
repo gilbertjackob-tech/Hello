@@ -377,6 +377,8 @@ export function CallOverlay({ currentUser }: CallOverlayProps) {
   const pendingAcksRef = useRef<Map<string, { event: string; callId: string; sentAt: number }>>(new Map());
   const seenCallEventIdsRef = useRef<Set<string>>(new Set());
   const peerUserIdRef = useRef<string | null>(null);
+  const pendingAcceptedIncomingCallIdRef = useRef<string | null>(null);
+  const answeringOfferCallIdsRef = useRef<Set<string>>(new Set());
   const connectedAtRef = useRef<number | null>(null);
   const activeCallRef = useRef<CallData | null>(null);
   const incomingCallRef = useRef<CallData | null>(null);
@@ -661,7 +663,10 @@ export function CallOverlay({ currentUser }: CallOverlayProps) {
     setRemoteStream(null);
     setScreenStream(null);
     peerUserIdRef.current = null;
+    pendingAcceptedIncomingCallIdRef.current = null;
     connectedAtRef.current = null;
+    activeCallRef.current = null;
+    incomingCallRef.current = null;
     setIncomingCall(null);
     setActiveCall(null);
     setCallDuration(0);
@@ -688,6 +693,7 @@ export function CallOverlay({ currentUser }: CallOverlayProps) {
     pendingIceCandidatesRef.current.clear();
     pendingOffersRef.current.clear();
     pendingAnswersRef.current.clear();
+    answeringOfferCallIdsRef.current.clear();
   };
 
   const queueIceCandidate = (
@@ -881,7 +887,7 @@ export function CallOverlay({ currentUser }: CallOverlayProps) {
             });
           }
         }
-      }, event === "call:ice-candidate" ? 1800 : 1200);
+      }, event === "call:ice-candidate" ? 1800 : 3000);
     }
   };
 
@@ -969,6 +975,12 @@ export function CallOverlay({ currentUser }: CallOverlayProps) {
 
   function diagnoseCallFailure(pc?: RTCPeerConnection | null) {
     const debug = callDebugRef.current;
+    if (connectedAtRef.current) {
+      return {
+        reason: "network_lost",
+        message: "Call connection was lost after connecting.",
+      };
+    }
     if (!debug.answerReceived && !debug.answerSent) {
       return {
         reason: "answer_missing",
@@ -1006,7 +1018,7 @@ export function CallOverlay({ currentUser }: CallOverlayProps) {
       };
     }
     return {
-      reason: connectedAtRef.current ? "network_lost" : "connection_failed",
+      reason: "connection_failed",
       message: "Call failed.",
     };
   }
@@ -1039,6 +1051,61 @@ export function CallOverlay({ currentUser }: CallOverlayProps) {
     const offer = call.offer || offerData?.offer;
     const fromUserId = offerData?.fromUserId || call.callerId;
     return offer && fromUserId ? { offer, fromUserId } : null;
+  };
+
+  const answerIncomingOffer = async (
+    call: CallData,
+    offerData: { offer: RTCSessionDescriptionInit; fromUserId: string },
+  ) => {
+    const pc = pcRef.current;
+    if (!pc) {
+      addCallDebug("WEB: incoming offer arrived before peer connection was ready", {
+        callId: call.callId,
+      });
+      return;
+    }
+    if (!offerData.offer?.sdp) throw new Error("Incoming call offer is not ready");
+    if (answeringOfferCallIdsRef.current.has(call.callId)) {
+      addCallDebug("WEB: answer already in progress for incoming offer", {
+        callId: call.callId,
+      });
+      return;
+    }
+    if (pc.signalingState === "stable" && pc.localDescription?.type === "answer") {
+      addCallDebug("WEB: incoming offer already answered", {
+        callId: call.callId,
+      });
+      pendingAcceptedIncomingCallIdRef.current = null;
+      return;
+    }
+    const acceptSignal = buildSignal(call, offerData.fromUserId);
+    if (!acceptSignal) throw new Error("Could not build accept signal");
+    answeringOfferCallIdsRef.current.add(call.callId);
+    try {
+      await pc.setRemoteDescription(new RTCSessionDescription(offerData.offer));
+      updateCallDebug({ remoteDescriptionSet: true });
+      addCallDebug("WEB: setRemoteDescription offer success", {
+        callId: call.callId,
+        hasOfferSdp: !!offerData.offer.sdp,
+      });
+      await flushQueuedIceCandidates(call.callId);
+      const answer = await pc.createAnswer();
+      addCallDebug("WEB: createAnswer success", { callId: call.callId, hasSdp: !!answer.sdp });
+      await pc.setLocalDescription(answer);
+      updateCallDebug({ localDescriptionSet: true });
+      addCallDebug("WEB: setLocalDescription answer success", { callId: call.callId });
+      const committedAnswer = pc.localDescription?.toJSON() as RTCSessionDescriptionInit | undefined;
+      if (!committedAnswer?.sdp) throw new Error("Could not create a valid call answer");
+      addCallDebug("WEB: emitting committed answer", {
+        callId: call.callId,
+        type: committedAnswer.type,
+        sdpLength: committedAnswer.sdp.length,
+      });
+      emitSignal("call:answer", { ...acceptSignal, answer: committedAnswer });
+      pendingAcceptedIncomingCallIdRef.current = null;
+    } finally {
+      answeringOfferCallIdsRef.current.delete(call.callId);
+    }
   };
 
   const getVideoConstraints = (quality: "auto" | "720p" | "1080p" | "2k"): MediaTrackConstraints | boolean => {
@@ -1750,20 +1817,12 @@ export function CallOverlay({ currentUser }: CallOverlayProps) {
       if (!shouldProcessSignal("call:start", data)) return;
       if (data.toUserId && data.toUserId !== currentUser.id) return;
       if (data.callerId === currentUser.id) return;
-      beginCallDebug({
-        callId: data.callId,
-        direction: "incoming",
-        localUserId: currentUser.id,
-        remoteUserId: data.callerId,
-        type: data.type || (data.isVideo ? "video" : "audio"),
-        startReceived: true,
-      });
-      addCallDebug("WEB: received call:start", {
-        callId: data.callId,
-        fromUserId: data.fromUserId,
-      });
 
-      if (activeCallRef.current || incomingCallRef.current) {
+      const isSameCall =
+        activeCallRef.current?.callId === data.callId ||
+        incomingCallRef.current?.callId === data.callId;
+
+      if (!isSameCall && (activeCallRef.current || incomingCallRef.current)) {
         emitSignal("call:busy", {
           callId: data.callId,
           chatId: data.chatId,
@@ -1777,6 +1836,24 @@ export function CallOverlay({ currentUser }: CallOverlayProps) {
         return;
       }
 
+      if (isSameCall) {
+        addCallDebug("WEB: ignored duplicate call:start", { callId: data.callId });
+        return;
+      }
+
+      beginCallDebug({
+        callId: data.callId,
+        direction: "incoming",
+        localUserId: currentUser.id,
+        remoteUserId: data.callerId,
+        type: data.type || (data.isVideo ? "video" : "audio"),
+        startReceived: true,
+      });
+      addCallDebug("WEB: received call:start", {
+        callId: data.callId,
+        fromUserId: data.fromUserId,
+      });
+
       const pendingOffer = pendingOffersRef.current.get(data.callId);
       const call = {
         ...pendingOffer,
@@ -1789,6 +1866,7 @@ export function CallOverlay({ currentUser }: CallOverlayProps) {
         status: "incoming_ringing" as CallStatus,
       };
       peerUserIdRef.current = data.callerId;
+      incomingCallRef.current = call;
       setIncomingCall(call);
       setCallStatus("incoming_ringing");
       emitSignal("call:ringing", {
@@ -1832,7 +1910,7 @@ export function CallOverlay({ currentUser }: CallOverlayProps) {
       };
       setIncomingCall((prev) => {
         if (prev?.callId === data.callId) {
-          return {
+          const next = {
             ...prev,
             callerName: data.callerName || prev.callerName,
             callerAvatar: data.callerAvatar || prev.callerAvatar,
@@ -1840,6 +1918,8 @@ export function CallOverlay({ currentUser }: CallOverlayProps) {
             calleeAvatar: data.calleeAvatar || prev.calleeAvatar,
             offer: data.offer,
           };
+          incomingCallRef.current = next;
+          return next;
         }
         if (prev || activeCallRef.current) return prev;
         peerUserIdRef.current = data.callerId;
@@ -1862,12 +1942,48 @@ export function CallOverlay({ currentUser }: CallOverlayProps) {
           callId: data.callId,
         });
         setCallStatus("incoming_ringing");
+        incomingCallRef.current = mergedIncomingCall;
         return mergedIncomingCall;
       });
+
+      const activeCall = activeCallRef.current;
+      if (
+        activeCall?.callId === data.callId &&
+        pendingAcceptedIncomingCallIdRef.current === data.callId
+      ) {
+        const activeIncomingCall: CallData = {
+          ...activeCall,
+          callerName: data.callerName || activeCall.callerName,
+          callerAvatar: data.callerAvatar || activeCall.callerAvatar,
+          calleeName: data.calleeName || activeCall.calleeName,
+          calleeAvatar: data.calleeAvatar || activeCall.calleeAvatar,
+          offer: data.offer,
+        };
+        void answerIncomingOffer(activeIncomingCall, {
+          offer: data.offer,
+          fromUserId: data.fromUserId || data.callerId || activeCall.callerId,
+        }).catch((err) => {
+          console.error(err);
+          updateCallDebug({
+            lastError: `incoming_answer_failed: ${err instanceof Error ? err.message : String(err)}`,
+          });
+          if (CALL_DEBUG_UI) setShowCallDebug(true);
+          const signal = buildSignal(activeIncomingCall, data.fromUserId || data.callerId || activeCall.callerId);
+          if (signal) emitSignal("call:failed", { ...signal, reason: "failed" });
+          finishAfterStatus("failed", "Call failed");
+        });
+      }
     };
 
     const handleCallAnswer = async (data: SignalPayload) => {
       if (!shouldProcessSignal("call:answer", data)) return;
+      if (!isCurrentCallEvent(data)) {
+        addCallDebug("WEB: ignored stale answer", {
+          callId: data.callId,
+          currentCallId: activeCallRef.current?.callId,
+        });
+        return;
+      }
       if (!data.callId || data.toUserId !== currentUser.id || !data.answer?.sdp) {
         console.warn("[CALL_TRACE] dropped invalid answer", { side: "web", callId: data.callId, eventId: data.eventId });
         updateCallDebug({ lastError: "invalid_answer" });
@@ -1918,6 +2034,13 @@ export function CallOverlay({ currentUser }: CallOverlayProps) {
 
     const handleIceCandidate = async (data: SignalPayload) => {
       if (!shouldProcessSignal("call:ice-candidate", data)) return;
+      if (!isCurrentCallEvent(data)) {
+        addCallDebug("WEB: ignored stale ICE", {
+          callId: data.callId,
+          currentCallId: activeCallRef.current?.callId,
+        });
+        return;
+      }
       if (data.toUserId !== currentUser.id || !data.candidate?.candidate) {
         console.warn("[CALL_TRACE] dropped invalid ICE", { side: "web", callId: data.callId, eventId: data.eventId });
         updateCallDebug({ lastError: "invalid_ice_candidate" });
@@ -1956,28 +2079,38 @@ export function CallOverlay({ currentUser }: CallOverlayProps) {
 
     const handleRinging = (data: SignalPayload) => {
       if (!shouldProcessSignal("call:ringing", data)) return;
+      if (!isCurrentCallEvent(data)) return;
       if (data.toUserId !== currentUser.id) return;
       addCallDebug("WEB: received call:ringing", { callId: data.callId });
-      setCallStatus("outgoing_ringing");
+      if (["outgoing_calling", "trying_to_reach", "idle"].includes(callStatusRef.current)) {
+        setCallStatus("outgoing_ringing");
+      }
     };
 
     const handleAccepted = (data: SignalPayload) => {
       if (!shouldProcessSignal("call:accepted", data)) return;
+      if (!isCurrentCallEvent(data)) return;
       if (data.toUserId !== currentUser.id) return;
       addCallDebug("WEB: received call:accepted", { callId: data.callId });
-      setCallStatus("connecting");
+      if (["outgoing_calling", "trying_to_reach", "outgoing_ringing", "idle"].includes(callStatusRef.current)) {
+        setCallStatus("connecting");
+      }
     };
 
     const handleConnected = (data: SignalPayload) => {
       if (!shouldProcessSignal("call:connected", data)) return;
+      if (!isCurrentCallEvent(data)) return;
       if (data.toUserId !== currentUser.id) return;
       if (!connectedAtRef.current) connectedAtRef.current = Date.now();
       addCallDebug("WEB: received call:connected", { callId: data.callId });
-      setCallStatus("connected");
+      if (callStatusRef.current !== "connected") {
+        setCallStatus("connected");
+      }
     };
 
     const handleReconnecting = (data: SignalPayload) => {
       if (!shouldProcessSignal("call:reconnecting", data)) return;
+      if (!isCurrentCallEvent(data)) return;
       if (data.toUserId !== currentUser.id) return;
       setCallStatus("reconnecting");
     };
@@ -2085,6 +2218,7 @@ export function CallOverlay({ currentUser }: CallOverlayProps) {
         addCallDebug("WEB: create call log success", { callId });
         const call: CallData = { ...baseCall, callId, status: "outgoing_calling" };
         peerUserIdRef.current = calleeId;
+        activeCallRef.current = call;
         setActiveCall(call);
         setIsMinimized(false);
         setCallStatus("outgoing_calling");
@@ -2139,9 +2273,10 @@ export function CallOverlay({ currentUser }: CallOverlayProps) {
         addCallDebug("WEB: setLocalDescription offer success");
 
         const signal = buildSignal(call, calleeId);
-        if (!signal || !offer.sdp) throw new Error("Could not create a valid call offer");
+        const committedOffer = pc.localDescription?.toJSON() as RTCSessionDescriptionInit | undefined;
+        if (!signal || !committedOffer?.sdp) throw new Error("Could not create a valid call offer");
         emitSignal("call:start", signal);
-        emitSignal("call:offer", { ...signal, offer });
+        emitSignal("call:offer", { ...signal, offer: committedOffer });
         void flushQueuedAnswer(callId);
         startNoAnswerTimeout(call);
       } catch (err) {
@@ -2485,31 +2620,31 @@ export function CallOverlay({ currentUser }: CallOverlayProps) {
     }
 
     const offerData = getIncomingOffer(incomingCall);
-    if (!offerData) {
-      setHasError("Preparing call. Please wait...");
-      window.setTimeout(() => setHasError(""), 3000);
-      return;
-    }
-
     clearTimers();
-    peerUserIdRef.current = offerData.fromUserId;
+    peerUserIdRef.current = offerData?.fromUserId || incomingCall.callerId;
+    pendingAcceptedIncomingCallIdRef.current = incomingCall.callId;
     beginCallDebug({
       callId: incomingCall.callId,
       direction: "incoming",
       localUserId: currentUser.id,
-      remoteUserId: offerData.fromUserId,
+      remoteUserId: offerData?.fromUserId || incomingCall.callerId,
       type: incomingCall.isVideo ? "video" : "audio",
       startReceived: true,
-      offerReceived: true,
+      offerReceived: !!offerData,
     });
     addCallDebug("WEB: accept clicked", { callId: incomingCall.callId });
     setActiveCall(incomingCall);
+    activeCallRef.current = incomingCall;
     setIncomingCall(null);
+    incomingCallRef.current = null;
     setIsMinimized(false);
     setCallStatus("connecting");
 
     try {
-      const acceptSignal = buildSignal(incomingCall, offerData.fromUserId);
+      const acceptSignal = buildSignal(
+        incomingCall,
+        offerData?.fromUserId || incomingCall.callerId,
+      );
       if (!acceptSignal) throw new Error("Could not build accept signal");
       emitSignal("call:accepted", acceptSignal);
 
@@ -2548,27 +2683,24 @@ export function CallOverlay({ currentUser }: CallOverlayProps) {
       });
 
       attachPeerHandlers(pc, incomingCall);
-
-      await pc.setRemoteDescription(new RTCSessionDescription(offerData.offer));
-      updateCallDebug({ remoteDescriptionSet: true });
-      addCallDebug("WEB: setRemoteDescription offer success", {
-        hasOfferSdp: !!offerData.offer.sdp,
-      });
-      await flushQueuedIceCandidates(incomingCall.callId);
-      const answer = await pc.createAnswer();
-      addCallDebug("WEB: createAnswer success", { hasSdp: !!answer.sdp });
-      await pc.setLocalDescription(answer);
-      updateCallDebug({ localDescriptionSet: true });
-      addCallDebug("WEB: setLocalDescription answer success");
-      if (!answer.sdp) throw new Error("Could not create a valid call answer");
-      emitSignal("call:answer", { ...acceptSignal, answer });
+        const latestOffer = getIncomingOffer(incomingCall) || offerData;
+        if (latestOffer) {
+          await answerIncomingOffer(incomingCall, latestOffer);
+        } else {
+        addCallDebug("WEB: accept waiting for remote offer", {
+          callId: incomingCall.callId,
+        });
+      }
     } catch (err) {
       console.error(err);
       updateCallDebug({
         lastError: `incoming_answer_failed: ${err instanceof Error ? err.message : String(err)}`,
       });
       if (CALL_DEBUG_UI) setShowCallDebug(true);
-      const signal = buildSignal(incomingCall, offerData.fromUserId);
+      const signal = buildSignal(
+        incomingCall,
+        offerData?.fromUserId || incomingCall.callerId,
+      );
       if (signal) emitSignal("call:failed", { ...signal, reason: "failed" });
       finishAfterStatus("failed", "Call failed");
     }
@@ -3324,13 +3456,12 @@ export function CallOverlay({ currentUser }: CallOverlayProps) {
             </button>
             <button
               onClick={acceptCall}
-              disabled={!hasIncomingOffer}
-              title={hasIncomingOffer ? "Accept call" : "Preparing call..."}
+              title={hasIncomingOffer ? "Accept call" : "Accept and wait for caller media"}
               className={cn(
                 "w-14 h-14 rounded-full flex items-center justify-center text-white transition-all shadow-lg",
                 hasIncomingOffer
                   ? "bg-emerald-500 hover:bg-emerald-600 hover:scale-105 hover:shadow-emerald-500/50 animate-pulse"
-                  : "bg-slate-600 cursor-not-allowed opacity-60",
+                  : "bg-emerald-600 hover:bg-emerald-700 hover:scale-105 opacity-90",
               )}
             >
               {incomingCall.isVideo ? <VideoIcon className="w-6 h-6" /> : <Phone className="w-6 h-6" />}

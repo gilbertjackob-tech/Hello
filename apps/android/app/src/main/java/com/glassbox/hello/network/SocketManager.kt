@@ -3,7 +3,7 @@ package com.glassbox.hello.network
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
-import android.util.Log
+import com.glassbox.hello.debug.AppLog as Log
 import com.glassbox.hello.auth.CloudSessionManager
 import com.glassbox.hello.calls.CallSocket
 import com.glassbox.hello.chat.CloudChatPayloadParser
@@ -500,7 +500,7 @@ class SocketManager private constructor() : CallSocket {
         if (cloudConnected) emitCloud("call:room-ice-candidate", payload) else socket?.emit("call:room-ice-candidate", payload)
     }
 
-    fun disconnect() {
+    override fun disconnect() {
         val (existing, chatToLeave) = synchronized(socketLock) {
             isConnecting = false
             val existingSocket = socket

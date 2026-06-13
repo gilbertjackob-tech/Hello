@@ -1,6 +1,8 @@
 package com.glassbox.hello.chat.components
 
 import android.content.Context
+import android.os.SystemClock
+import com.glassbox.hello.debug.AppLog as Log
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -71,6 +73,29 @@ fun ChatMessageList(
     onJumpToLatest: () -> Unit
 ) {
     val isNearBottom = rememberNearBottom(listState)
+    val unreadStartIndex = remember(messages, currentUserId, unreadCount) {
+        messages.withIndex()
+            .filter { (_, message) -> unreadCount > 0 && message.senderId != currentUserId }
+            .let { candidates ->
+                if (candidates.isEmpty()) {
+                    null
+                } else {
+                    val position = (candidates.size - unreadCount).coerceAtLeast(0)
+                    candidates.getOrNull(position)?.index
+                }
+            }
+    }
+    val timelineGroupings = remember(messages, currentUserId, chatIsGroup, unreadCount) {
+        val startedAt = SystemClock.elapsedRealtime()
+        val groupings = messages.indices.map { index ->
+            buildTimelineGrouping(messages, index, currentUserId, chatIsGroup, unreadStartIndex)
+        }
+        Log.d("HelloInbox", "message_grouping_precompute count=${messages.size} elapsedMs=${SystemClock.elapsedRealtime() - startedAt}")
+        groupings
+    }
+    val imageClusterTimeline = remember(messages) {
+        buildImageClusterTimeline(messages)
+    }
     Box(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
             state = listState,
@@ -83,12 +108,28 @@ fun ChatMessageList(
                     OlderMessagesRow(isLoading = isLoadingOlderMessages)
                 }
             }
-            itemsIndexed(messages, key = { _, message -> message.id }) { index, message ->
-                val grouping = buildTimelineGrouping(messages, index, currentUserId, chatIsGroup, unreadCount)
+            itemsIndexed(
+                items = messages,
+                key = { _, message -> message.id },
+                contentType = { index, message ->
+                    when {
+                        imageClusterTimeline.followerToLeadIndex.containsKey(index) -> "cluster-follower"
+                        imageClusterTimeline.clustersByLeadIndex.containsKey(index) -> "image-cluster"
+                        message.callInfo != null || message.messageType == "call_log" -> "call"
+                        attachmentKind(message) != null -> attachmentKind(message) ?: "attachment"
+                        else -> "text"
+                    }
+                }
+            ) { index, message ->
+                if (imageClusterTimeline.followerToLeadIndex.containsKey(index)) return@itemsIndexed
+                val grouping = timelineGroupings[index]
+                val imageCluster = imageClusterTimeline.clustersByLeadIndex[index]
+                val showUnreadDivider = grouping.showUnreadDivider ||
+                    imageClusterTimeline.followerToLeadIndex[unreadStartIndex] == index
                 if (grouping.showDayDivider) {
                     DateDivider(label = grouping.dayLabel.orEmpty())
                 }
-                if (grouping.showUnreadDivider) {
+                if (showUnreadDivider) {
                     UnreadDivider()
                 }
                 ChatMessageBubble(
@@ -104,6 +145,7 @@ fun ChatMessageList(
                     outgoingBubbleColor = outgoingBubbleColor,
                     incomingBubbleColor = incomingBubbleColor,
                     bubbleOpacity = bubbleOpacity,
+                    imageCluster = imageCluster,
                     showSenderName = grouping.showSenderName,
                     compactWithPrevious = grouping.compactWithPrevious,
                     compactWithNext = grouping.compactWithNext

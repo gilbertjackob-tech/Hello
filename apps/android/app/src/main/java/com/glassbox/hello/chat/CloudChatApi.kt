@@ -1,7 +1,7 @@
 package com.glassbox.hello.chat
 
 import android.content.Context
-import android.util.Log
+import com.glassbox.hello.debug.AppLog as Log
 import com.glassbox.hello.auth.CloudSessionManager
 import com.glassbox.hello.core.AppConfig
 import com.google.gson.Gson
@@ -573,7 +573,14 @@ class CloudChatApi(context: Context? = null) {
         )
     }
 
-    private fun rawString(value: String?): String = value?.trim().orEmpty()
+    private fun rawString(value: String?): String {
+        val normalized = value?.trim().orEmpty()
+        return when {
+            normalized.equals("null", ignoreCase = true) -> ""
+            normalized.equals("undefined", ignoreCase = true) -> ""
+            else -> normalized
+        }
+    }
 
     private fun JsonElement.asJsonObjectOrNull(): JsonObject? = takeIf { isJsonObject }?.asJsonObject
 
@@ -815,7 +822,14 @@ object CloudChatPayloadParser {
         )
     }
 
-    private fun rawString(value: String?): String = value?.trim().orEmpty()
+    private fun rawString(value: String?): String {
+        val normalized = value?.trim().orEmpty()
+        return when {
+            normalized.equals("null", ignoreCase = true) -> ""
+            normalized.equals("undefined", ignoreCase = true) -> ""
+            else -> normalized
+        }
+    }
 
     private fun JsonElement.asJsonObjectOrNull(): JsonObject? = takeIf { isJsonObject }?.asJsonObject
 

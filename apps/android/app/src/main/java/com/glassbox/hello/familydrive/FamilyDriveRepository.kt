@@ -95,6 +95,14 @@ class FamilyDriveRepository(
         }
     }
 
+    suspend fun uploadCircleAvatar(circleId: String, userId: String, fileName: String, mimeType: String, bytes: ByteArray): Result<DriveCircle> {
+        return api.uploadDriveCircleAvatar(circleId, userId, fileName, mimeType, bytes).also { result ->
+            result.getOrNull()?.let { circle ->
+                mirrorDriveMetadataToFirestore("circles", circle.id, circle)
+            }
+        }
+    }
+
     suspend fun leaveCircle(circleId: String, userId: String): Result<Unit> {
         return api.leaveDriveCircle(circleId, userId)
     }

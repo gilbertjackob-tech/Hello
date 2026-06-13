@@ -41,6 +41,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -55,7 +56,6 @@ import androidx.compose.material.icons.filled.CallEnd
 import androidx.compose.material.icons.filled.CropFree
 import androidx.compose.material.icons.filled.FlipCameraAndroid
 import androidx.compose.material.icons.filled.Fullscreen
-import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.PhoneDisabled
@@ -467,7 +467,6 @@ fun ActiveCallScreen(
     onEnd: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    var focusLocalVideo by remember { mutableStateOf(false) }
     CallThemeBackdrop(
         modifier = modifier
             .fillMaxSize()
@@ -478,8 +477,8 @@ fun ActiveCallScreen(
                 avatarUrl = avatarUrl,
                 mediaPhase = mediaPhase,
                 cameraOff = cameraOff,
-                focusLocalVideo = focusLocalVideo,
-                onToggleFocus = { focusLocalVideo = !focusLocalVideo },
+                focusLocalVideo = false,
+                onToggleFocus = {},
                 visualLook = visualLook,
                 onAttachLocalRenderer = onAttachLocalRenderer,
                 onAttachRemoteRenderer = onAttachRemoteRenderer
@@ -525,12 +524,6 @@ fun ActiveCallScreen(
                         active = !cameraOff,
                         icon = if (cameraOff) Icons.Default.VideocamOff else Icons.Default.Videocam,
                         label = if (cameraOff) "Camera off" else "Camera"
-                    )
-                    CallControlButton(
-                        onClick = { focusLocalVideo = !focusLocalVideo },
-                        active = focusLocalVideo,
-                        icon = if (focusLocalVideo) Icons.Default.FullscreenExit else Icons.Default.Fullscreen,
-                        label = if (focusLocalVideo) "Remote focus" else "Self focus"
                     )
                     CallControlButton(
                         onClick = onSwitchCamera,
@@ -801,7 +794,8 @@ private fun CallBottomDock(
                     )
                 )
             )
-            .padding(horizontal = HelloSpacing.Lg, vertical = HelloSpacing.Xl),
+            .navigationBarsPadding()
+            .padding(horizontal = HelloSpacing.Lg, vertical = HelloSpacing.Lg),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(HelloSpacing.Md)
     ) {
@@ -812,16 +806,27 @@ private fun CallBottomDock(
         if (videoSettingsOpen && settingsPanel != null) {
             settingsPanel()
         }
-        Row(
+        CallGlassPanel(
             modifier = Modifier
-                .widthIn(max = 420.dp)
-                .fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterHorizontally),
-            verticalAlignment = Alignment.CenterVertically
+                .widthIn(max = 480.dp)
+                .fillMaxWidth()
         ) {
-            controls()
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                controls()
+                Box(
+                    modifier = Modifier.width(72.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    endCall()
+                }
+            }
         }
-        endCall()
     }
 }
 
@@ -1020,7 +1025,7 @@ private fun RowScope.CallControlButton(
 
 @Composable
 private fun EndCallButton(onClick: () -> Unit) {
-    RoundCallButton(onClick = onClick, danger = true, size = 84.dp) {
+    RoundCallButton(onClick = onClick, danger = true, size = 64.dp) {
         Icon(Icons.Default.CallEnd, contentDescription = "Drop call", tint = HelloColors.AuthText)
     }
 }
@@ -1108,26 +1113,57 @@ private fun CallSelectorRow(
     options: List<Pair<String, () -> Unit>>
 ) {
     Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(6.dp)
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         Text(
-            text = "$title: $selectedLabel",
+            text = title,
             color = HelloColors.DarkTextMuted,
-            fontWeight = FontWeight.Medium
+            fontWeight = FontWeight.SemiBold
         )
         FlowRow(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             options.forEach { (label, onClick) ->
-                HelloPill(
-                    text = label,
-                    active = label == selectedLabel,
-                    modifier = Modifier.clickable(onClick = onClick)
+                CallSettingChip(
+                    label = label,
+                    selected = label == selectedLabel,
+                    onClick = onClick
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun CallSettingChip(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    val shape = RoundedCornerShape(18.dp)
+    val background = if (selected) HelloColors.DarkAccent.copy(alpha = 0.24f) else Color.Transparent
+    val borderColor = if (selected) HelloColors.DarkAccent.copy(alpha = 0.86f) else HelloColors.GlassBorder.copy(alpha = 0.55f)
+    val textColor = if (selected) HelloColors.DarkText else HelloColors.DarkTextMuted
+    Box(
+        modifier = Modifier
+            .widthIn(min = 76.dp)
+            .height(38.dp)
+            .clip(shape)
+            .background(background)
+            .border(1.dp, borderColor, shape)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = label,
+            color = textColor,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.SemiBold,
+            textAlign = TextAlign.Center
+        )
     }
 }
 
@@ -1143,8 +1179,16 @@ private fun VideoCallSettingsPanel(
         modifier = Modifier
             .fillMaxWidth()
             .clip(HelloShapes.Lg)
-            .background(HelloColors.DarkPanelStrong.copy(alpha = 0.92f))
-            .padding(HelloSpacing.Md),
+            .background(
+                Brush.verticalGradient(
+                    listOf(
+                        HelloColors.DarkPanelStrong.copy(alpha = 0.96f),
+                        HelloColors.DarkPanel.copy(alpha = 0.92f)
+                    )
+                )
+            )
+            .border(1.dp, HelloColors.GlassBorder.copy(alpha = 0.58f), HelloShapes.Lg)
+            .padding(horizontal = HelloSpacing.Md, vertical = HelloSpacing.Sm),
         verticalArrangement = Arrangement.spacedBy(HelloSpacing.Md),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
@@ -1154,7 +1198,7 @@ private fun VideoCallSettingsPanel(
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text("Video settings", color = HelloColors.DarkText, fontWeight = FontWeight.Bold)
-                Text("Resolution and filter", color = HelloColors.DarkTextMuted)
+                Text("${videoQuality.label} quality - ${visualLook.label} look", color = HelloColors.DarkTextMuted)
             }
             TextButton(onClick = onClose) {
                 Text("Close", color = HelloColors.DarkAccent)

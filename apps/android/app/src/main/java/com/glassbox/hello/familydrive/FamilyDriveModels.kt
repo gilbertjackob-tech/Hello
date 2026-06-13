@@ -50,6 +50,7 @@ data class DriveCircle(
     val id: String,
     val name: String,
     val ownerUserId: String? = null,
+    val avatarUrl: String? = null,
     val memberCount: Int = 0,
     val members: List<DriveCircleMember> = emptyList(),
     val createdAt: Long = 0L,
@@ -58,7 +59,7 @@ data class DriveCircle(
 
 data class DriveCircleMember(
     val userId: String,
-    val role: String = "Can only see",
+    val role: String = "Viewer",
     val name: String? = null,
     val username: String? = null,
     val avatar: String? = null

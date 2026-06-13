@@ -2,6 +2,7 @@ package com.glassbox.hello.familydrive
 
 import android.content.Context
 import android.net.Uri
+import android.provider.OpenableColumns
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.glassbox.hello.debug.HelloDebugLog
@@ -338,6 +339,35 @@ class FamilyDriveViewModel : ViewModel() {
                     onCreated(circle)
                 },
                 onFailure = { error -> _state.update { it.copy(error = error.message ?: "Circle could not be created") } }
+            )
+        }
+    }
+
+    fun uploadCircleAvatar(context: Context, circleId: String, userId: String, uri: Uri) {
+        if (circleId.isBlank() || userId.isBlank()) return
+        viewModelScope.launch {
+            runCatching {
+                val resolver = context.applicationContext.contentResolver
+                val mimeType = resolver.getType(uri) ?: "image/jpeg"
+                val fileName = resolver.query(uri, null, null, null, null)?.use { cursor ->
+                    val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                    if (cursor.moveToFirst() && nameIndex >= 0) cursor.getString(nameIndex) else null
+                } ?: "circle-profile.jpg"
+                val bytes = resolver.openInputStream(uri)?.use { it.readBytes() }
+                    ?: throw IllegalArgumentException("Could not read selected image")
+                repository.uploadCircleAvatar(circleId, userId, fileName, mimeType, bytes).getOrThrow()
+            }.fold(
+                onSuccess = { circle ->
+                    _state.update { current ->
+                        current.copy(
+                            circles = current.circles.map { if (it.id == circle.id) circle else it },
+                            infoMessage = "Circle profile picture updated."
+                        )
+                    }
+                },
+                onFailure = { error ->
+                    _state.update { it.copy(error = error.message ?: "Circle profile picture could not be updated") }
+                }
             )
         }
     }

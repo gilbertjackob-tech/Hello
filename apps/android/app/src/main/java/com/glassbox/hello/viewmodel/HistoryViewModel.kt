@@ -1,7 +1,7 @@
 package com.glassbox.hello.viewmodel
 
 import android.content.Context
-import android.util.Log
+import com.glassbox.hello.debug.AppLog as Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope

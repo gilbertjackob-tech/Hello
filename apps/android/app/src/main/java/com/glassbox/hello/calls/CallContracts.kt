@@ -10,6 +10,7 @@ interface CallSocket {
     var onConnectedChanged: ((Boolean) -> Unit)?
 
     fun connect(user: User)
+    fun disconnect()
     fun startCall(payload: JSONObject)
     fun ringing(payload: JSONObject)
     fun acceptCall(payload: JSONObject)

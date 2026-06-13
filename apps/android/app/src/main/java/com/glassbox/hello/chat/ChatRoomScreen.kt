@@ -21,11 +21,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.only
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
-import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -40,8 +39,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -90,6 +91,7 @@ import com.glassbox.hello.ui.theme.rememberChatTheme
 import com.glassbox.hello.ui.utils.AnimationUtils
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.collect
 import org.json.JSONObject
 import java.io.File
 import androidx.activity.result.PickVisualMediaRequest
@@ -150,12 +152,15 @@ fun ChatRoomScreen(
     var recordingElapsedSeconds by remember { mutableStateOf(0L) }
     var typingNames by remember(chat.id) { mutableStateOf<List<String>>(emptyList()) }
     var hasAutoScrolledInitial by remember(chat.id) { mutableStateOf(false) }
-    var lastVisibleMessageCount by remember(chat.id) { mutableStateOf(0) }
     var mediaViewerState by remember { mutableStateOf<MediaViewerState?>(null) }
 
-    val visibleMessages = when (messagesState) {
-        is ResultState.Success -> (messagesState as ResultState.Success<List<Message>>).data.visibleForUser(currentUserId)
-        else -> emptyList()
+    val visibleMessages by remember(messagesState, currentUserId) {
+        derivedStateOf {
+            when (messagesState) {
+                is ResultState.Success -> (messagesState as ResultState.Success<List<Message>>).data.visibleForUser(currentUserId)
+                else -> emptyList()
+            }
+        }
     }
 
     val title = chat.displayName(currentUserId)
@@ -209,29 +214,30 @@ fun ChatRoomScreen(
         socketManager.typing(chat.id, currentUserId, currentUserName, isTyping = false)
     }
 
-    LaunchedEffect(listState.firstVisibleItemIndex, hasMoreOlderMessages, hasAutoScrolledInitial, isLoadingOlderMessages) {
-        if (hasAutoScrolledInitial && hasMoreOlderMessages && !isLoadingOlderMessages && listState.firstVisibleItemIndex <= 1) {
-            viewModel.loadOlderMessages(chat.id, cloudChatEnabled = settingsState.cloudChatEnabled)
+    LaunchedEffect(chat.id, settingsState.cloudChatEnabled) {
+        snapshotFlow {
+            Triple(listState.firstVisibleItemIndex, hasMoreOlderMessages, isLoadingOlderMessages)
+        }.collect { (firstVisibleIndex, hasOlder, loadingOlder) ->
+            if (hasAutoScrolledInitial && hasOlder && !loadingOlder && firstVisibleIndex <= 1) {
+                viewModel.loadOlderMessages(chat.id, cloudChatEnabled = settingsState.cloudChatEnabled)
+            }
         }
     }
 
-    LaunchedEffect(visibleMessages.size, isNearBottom) {
+    val lastVisibleMessage = visibleMessages.lastOrNull()
+
+    LaunchedEffect(chat.id, lastVisibleMessage?.id, isNearBottom) {
         HelloDebugLog.d("ChatRoom", "visibleMessages chatId=${chat.id} count=${visibleMessages.size} nearBottom=$isNearBottom")
         if (visibleMessages.isNotEmpty()) {
             socketManager.markMessagesRead(chat.id, currentUserId)
             viewModel.clearUnreadForChat(chat.id, currentUserId, settingsState.cloudChatEnabled)
-            val shouldScroll = !hasAutoScrolledInitial ||
-                isNearBottom ||
-                (visibleMessages.size > lastVisibleMessageCount && visibleMessages.lastOrNull()?.senderId == currentUserId)
-            if (shouldScroll) {
-                if (!hasAutoScrolledInitial) {
-                    listState.scrollToItem(visibleMessages.lastIndex)
-                    hasAutoScrolledInitial = true
-                } else {
-                    listState.animateScrollToItem(visibleMessages.lastIndex)
-                }
+            val shouldStickToBottom = isNearBottom || lastVisibleMessage?.senderId == currentUserId
+            if (!hasAutoScrolledInitial) {
+                listState.scrollToItem(visibleMessages.lastIndex)
+                hasAutoScrolledInitial = true
+            } else if (shouldStickToBottom) {
+                listState.scrollToItem(visibleMessages.lastIndex)
             }
-            lastVisibleMessageCount = visibleMessages.size
         }
     }
 
@@ -581,7 +587,14 @@ fun ChatRoomScreen(
         val typingListener: (JSONObject) -> Unit = { payload ->
             if (payload.optString("chatId") == chat.id) {
                 val userId = payload.optString("userId")
-                val name = payload.optString("senderName", payload.optString("userName", "Someone")).ifBlank { "Someone" }
+                val name = payload.optString("senderName", payload.optString("userName", "Someone"))
+                    .trim()
+                    .takeUnless {
+                        it.isBlank() ||
+                            it.equals("null", ignoreCase = true) ||
+                            it.equals("undefined", ignoreCase = true)
+                    }
+                    ?: "Someone"
                 if (userId != currentUserId && name != currentUserName) {
                     scope.launch {
                         typingNames = if (payload.optBoolean("isTyping", true)) {
@@ -624,7 +637,7 @@ fun ChatRoomScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))
+                .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom))
         ) {
             ChatHeader(
                 title = title,
@@ -690,7 +703,7 @@ fun ChatRoomScreen(
                                     onJumpToLatest = {
                                         scope.launch {
                                             if (visibleMessages.isNotEmpty()) {
-                                                listState.animateScrollToItem(visibleMessages.lastIndex)
+                                                listState.scrollToItem(visibleMessages.lastIndex)
                                             }
                                         }
                                     }

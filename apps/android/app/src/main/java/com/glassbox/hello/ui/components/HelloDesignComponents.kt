@@ -5,6 +5,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -54,7 +55,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.text.input.ImeAction
-import coil.compose.SubcomposeAsyncImage
+import coil.compose.AsyncImage
 import coil.decode.SvgDecoder
 import coil.request.ImageRequest
 import androidx.compose.ui.platform.LocalContext
@@ -356,17 +357,19 @@ fun HelloAvatar(
         ) {
             val resolved = UrlResolver.resolve(imageUrl)
             if (resolved != null) {
-                SubcomposeAsyncImage(
+                AvatarInitial(name = name, dark = dark)
+                AsyncImage(
                     model = ImageRequest.Builder(LocalContext.current)
                         .data(resolved)
                         .decoderFactory(SvgDecoder.Factory())
-                        .crossfade(true)
+                        .crossfade(false)
+                        .allowHardware(true)
+                        .memoryCacheKey(resolved)
+                        .diskCacheKey(resolved)
                         .build(),
                     contentDescription = "$name avatar",
                     modifier = Modifier.fillMaxSize(),
                     contentScale = ContentScale.Crop,
-                    error = { AvatarInitial(name = name, dark = dark) },
-                    loading = { AvatarInitial(name = name, dark = dark) }
                 )
             } else {
                 AvatarInitial(name = name, dark = dark)
@@ -412,7 +415,9 @@ fun HelloChatCard(
     active: Boolean = false,
     dark: Boolean = true,
     avatarUrl: String? = null,
-    online: Boolean = false
+    online: Boolean = false,
+    onClick: () -> Unit = {},
+    onLongClick: (() -> Unit)? = null
 ) {
     val cute = HelloThemeRuntime.activePalette.value.id == "cute"
     val pressScale by animateFloatAsState(
@@ -423,6 +428,10 @@ fun HelloChatCard(
     GlassCard(
         modifier = modifier
             .fillMaxWidth()
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onLongClick
+            )
             .scale(pressScale),
         cornerRadius = HelloDimens.CornerL,
         bgAlpha = if (cute) HelloColors.PanelStrong else if (dark) HelloColors.GlassBg else HelloColors.PanelStrong,

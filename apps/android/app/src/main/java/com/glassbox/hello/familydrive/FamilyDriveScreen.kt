@@ -34,6 +34,7 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -100,6 +101,8 @@ import java.util.Locale
 
 private enum class DriveMode {
     Home,
+    Circles,
+    Events,
     AllPhotos,
     Trash
 }
@@ -189,6 +192,7 @@ fun FamilyDriveScreen(
     var selectedAudienceIds by remember { mutableStateOf(setOf<String>()) }
     var customPeopleIds by remember { mutableStateOf(setOf<String>()) }
     var sortAssignments by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+    var avatarCircleForUpload by remember { mutableStateOf<DriveCircle?>(null) }
     var activeSortAudienceId by remember { mutableStateOf("only_me") }
     var deleteSecurityAnswer by remember { mutableStateOf("") }
     val viewerItems = if (viewerTrashMode) state.trashItems else state.items
@@ -229,6 +233,15 @@ fun FamilyDriveScreen(
             uploadStep = DriveUploadStep.SelectPhotos
         }
     }
+    val avatarPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri ->
+        val circle = avatarCircleForUpload
+        if (uri != null && circle != null) {
+            viewModel.uploadCircleAvatar(context, circle.id, currentUserId, uri)
+        }
+        avatarCircleForUpload = null
+    }
     val openPicker = {
         mediaPicker.launch(arrayOf("image/*", "video/*"))
     }
@@ -245,10 +258,11 @@ fun FamilyDriveScreen(
     LaunchedEffect(mode) {
         selectedIds = emptySet()
         viewerIndex = null
-        if (mode == DriveMode.Trash) {
-            viewModel.refreshTrash(currentUserId, state.activeCircleId, state.activeEventId)
-        } else {
-            viewModel.refresh(currentUserId, state.activeCircleId, state.activeEventId)
+        when (mode) {
+            DriveMode.Trash -> viewModel.refreshTrash(currentUserId, state.activeCircleId, null)
+            DriveMode.Home, DriveMode.AllPhotos -> viewModel.refresh(currentUserId, state.activeCircleId, state.activeEventId)
+            DriveMode.Circles -> viewModel.refreshDriveSetup(context, currentUserId, state.activeCircleId)
+            DriveMode.Events -> viewModel.loadEvents(currentUserId, state.activeCircleId)
         }
     }
 
@@ -279,12 +293,35 @@ fun FamilyDriveScreen(
         )
     }
 
+    fun openCirclePhotos(circle: DriveCircle) {
+        editingCircle = null
+        selectedEventId = null
+        selectedEventName = ""
+        viewModel.setScope(currentUserId, circle.id, null)
+        viewModel.loadEvents(currentUserId, circle.id)
+        viewModel.refresh(currentUserId, circle.id, null)
+        mode = DriveMode.AllPhotos
+    }
+
+    fun openCircleEvents(circle: DriveCircle) {
+        editingCircle = null
+        selectedEventId = null
+        selectedEventName = ""
+        viewModel.setScope(currentUserId, circle.id, null)
+        viewModel.loadEvents(currentUserId, circle.id)
+        mode = DriveMode.Events
+    }
+
     BackHandler(enabled = uploadStep != null || pendingAction != null || viewerIndex != null || selectedIds.isNotEmpty() || mode != DriveMode.Home) {
         when {
             uploadStep != null -> closeUploadFlow()
             pendingAction != null -> pendingAction = null
             viewerIndex != null -> viewerIndex = null
             selectedIds.isNotEmpty() -> selectedIds = emptySet()
+            mode == DriveMode.Events -> mode = DriveMode.Home
+            mode == DriveMode.Circles && editingCircle != null -> {
+                editingCircle = null
+            }
             mode != DriveMode.Home -> mode = DriveMode.Home
         }
     }
@@ -295,8 +332,92 @@ fun FamilyDriveScreen(
                 state = state,
                 onUploadClick = openPicker,
                 onOpenAllPhotos = { mode = DriveMode.AllPhotos },
-                onOpenCircles = { uploadStep = DriveUploadStep.Circles },
-                onOpenTrash = { mode = DriveMode.Trash },
+                onOpenCircles = {
+                    editingCircle = null
+                    mode = DriveMode.Circles
+                },
+                onOpenTrash = {
+                    viewModel.setScope(currentUserId, state.activeCircleId, null)
+                    selectedEventId = null
+                    selectedEventName = ""
+                    mode = DriveMode.Trash
+                },
+                modifier = Modifier.fillMaxSize()
+            )
+            DriveMode.Circles -> {
+                if (editingCircle == null) {
+                    CircleManagementStep(
+                        activeUserId = currentUserId,
+                        circles = state.circles,
+                        onBack = { mode = DriveMode.Home },
+                        onCreateCircle = {
+                            editingCircle = null
+                            mode = DriveMode.Circles
+                            uploadStep = DriveUploadStep.EditCircle
+                        },
+                        onOpenCircle = { circle -> openCirclePhotos(circle) },
+                        onManageCircle = { circle ->
+                            editingCircle = circle
+                            mode = DriveMode.Circles
+                            uploadStep = DriveUploadStep.EditCircle
+                        },
+                        onUploadCircleAvatar = { circle ->
+                            avatarCircleForUpload = circle
+                            avatarPicker.launch("image/*")
+                        },
+                        onDeleteOrLeaveCircle = { circle ->
+                            val isOwner = circle.ownerUserId.isNullOrBlank() || circle.ownerUserId == currentUserId
+                            if (isOwner) {
+                                viewModel.deleteCircle(circle.id, currentUserId) {
+                                    if (editingCircle?.id == circle.id) editingCircle = null
+                                }
+                            } else {
+                                viewModel.startDeletePoll(currentUserId, "circle", circle.id, circle.id)
+                            }
+                        }
+                    )
+                }
+            }
+            DriveMode.Events -> DriveEventManagementScreen(
+                state = state,
+                onBack = { mode = DriveMode.Home },
+                onOpenCircleChooser = {
+                    editingCircle = null
+                    mode = DriveMode.Circles
+                },
+                onChooseEvent = { event ->
+                    selectedEventId = event.id
+                    selectedEventName = event.name
+                    viewModel.setScope(currentUserId, state.activeCircleId, event.id)
+                    viewModel.refresh(currentUserId, state.activeCircleId, event.id)
+                    mode = DriveMode.AllPhotos
+                },
+                onCreateEvent = { name ->
+                    val circleId = state.activeCircleId
+                    if (!circleId.isNullOrBlank()) {
+                        viewModel.createEvent(name, currentUserId, circleId) { event ->
+                            selectedEventId = event.id
+                            selectedEventName = event.name
+                        }
+                    }
+                },
+                onRenameEvent = { eventId, name ->
+                    viewModel.renameEvent(eventId, currentUserId, name) { event ->
+                        if (selectedEventId == event.id) selectedEventName = event.name
+                    }
+                },
+                onDeleteEvent = { eventId ->
+                    viewModel.deleteEvent(eventId, currentUserId) {
+                        if (selectedEventId == eventId) {
+                            selectedEventId = null
+                            selectedEventName = ""
+                        }
+                    }
+                },
+                onOpenCircleMedia = {
+                    val activeCircle = state.circles.firstOrNull { it.id == state.activeCircleId }
+                    if (activeCircle != null) openCirclePhotos(activeCircle) else mode = DriveMode.AllPhotos
+                },
                 modifier = Modifier.fillMaxSize()
             )
             DriveMode.AllPhotos -> DriveLibraryContent(
@@ -304,6 +425,8 @@ fun FamilyDriveScreen(
                 state = state,
                 selectedIds = selectedIds,
                 favoriteIds = state.favoriteIds,
+                activeCircleId = state.activeCircleId,
+                activeEventId = state.activeEventId,
                 onBack = { mode = DriveMode.Home },
                 onRefresh = { viewModel.refresh(currentUserId, state.activeCircleId, state.activeEventId) },
                 onRetryPending = { viewModel.retryPending(context, currentUserId) },
@@ -328,10 +451,12 @@ fun FamilyDriveScreen(
                 state = state,
                 selectedIds = selectedIds,
                 favoriteIds = state.favoriteIds,
+                activeCircleId = state.activeCircleId,
+                activeEventId = null,
                 onBack = { mode = DriveMode.Home },
-                onRefresh = { viewModel.refreshTrash(currentUserId, state.activeCircleId, state.activeEventId) },
+                onRefresh = { viewModel.refreshTrash(currentUserId, state.activeCircleId, null) },
                 onRetryPending = {},
-                onLoadMore = { viewModel.loadMoreTrash(currentUserId, state.activeCircleId, state.activeEventId) },
+                onLoadMore = { viewModel.loadMoreTrash(currentUserId, state.activeCircleId, null) },
                 onOpenItem = { item ->
                     viewerTrashMode = true
                     viewerIndex = state.trashItems.indexOfFirst { it.id == item.id }.coerceAtLeast(0)
@@ -438,24 +563,26 @@ fun FamilyDriveScreen(
                 },
                 onOpenPending = { uploadStep = DriveUploadStep.PendingUploads },
                 onOpenEvent = { uploadStep = DriveUploadStep.EventView },
-                onOpenCircles = { uploadStep = DriveUploadStep.Circles },
+                onOpenCircles = {
+                    editingCircle = null
+                    mode = DriveMode.Circles
+                    uploadStep = null
+                },
                 onEditCircle = {
                     editingCircle = null
                     uploadStep = DriveUploadStep.EditCircle
                 },
                 onOpenCircle = { circle ->
-                    editingCircle = null
-                    selectedEventId = null
-                    selectedEventName = ""
-                    viewModel.setScope(currentUserId, circle.id, null)
-                    viewModel.loadEvents(currentUserId, circle.id)
-                    viewModel.refresh(currentUserId, circle.id, null)
-                    mode = DriveMode.AllPhotos
+                    openCirclePhotos(circle)
                     uploadStep = null
                 },
                 onManageCircle = { circle ->
                     editingCircle = circle
                     uploadStep = DriveUploadStep.EditCircle
+                },
+                onUploadCircleAvatar = { circle ->
+                    avatarCircleForUpload = circle
+                    avatarPicker.launch("image/*")
                 },
                 editingCircle = editingCircle,
                 onCreateCircle = { circleId, name, members ->
@@ -609,6 +736,7 @@ private fun DriveUploadFlow(
     onEditCircle: () -> Unit,
     onOpenCircle: (DriveCircle) -> Unit,
     onManageCircle: (DriveCircle) -> Unit,
+    onUploadCircleAvatar: (DriveCircle) -> Unit,
     editingCircle: DriveCircle?,
     onCreateCircle: (String?, String, List<DriveCircleMember>) -> Unit,
     onDeleteCircle: (DriveCircle) -> Unit,
@@ -643,8 +771,17 @@ private fun DriveUploadFlow(
             DriveUploadStep.UploadSummary -> UploadSummaryStep(media, selectedEventName, state.circles, selectedAudienceIds, customPeopleIds, sortAssignments, state, onBack, onSubmit)
             DriveUploadStep.PendingUploads -> PendingUploadsStep(state, onBack, onRetryPending, onOpenEvent, onSuccess)
             DriveUploadStep.EventView -> UploadEventPreviewStep(media, selectedEventName, state.circles, sortAssignments, onBack, onOpenCircles)
-            DriveUploadStep.Circles -> CircleManagementStep(state.circles, onBack, onEditCircle, onOpenCircle, onManageCircle)
-            DriveUploadStep.EditCircle -> EditCircleStep(state.chatContacts, editingCircle, activeUserId = activeUserId, onBack, onCreateCircle, onDeleteCircle, onLeaveCircle)
+            DriveUploadStep.Circles -> CircleManagementStep(
+                activeUserId = activeUserId,
+                circles = state.circles,
+                onBack = onBack,
+                onCreateCircle = onEditCircle,
+                onOpenCircle = onOpenCircle,
+                onManageCircle = onManageCircle,
+                onUploadCircleAvatar = onUploadCircleAvatar,
+                onDeleteOrLeaveCircle = onManageCircle
+            )
+            DriveUploadStep.EditCircle -> EditCircleStep(state.chatContacts, editingCircle, activeUserId = activeUserId, onBack, onCreateCircle, onDeleteCircle, onLeaveCircle, onUploadCircleAvatar)
             DriveUploadStep.Success -> UploadSuccessStep(onOpenEvent, onClose)
         }
         TextButton(onClick = onClose, modifier = Modifier.align(Alignment.TopEnd).height(48.dp)) {
@@ -718,14 +855,17 @@ private fun ChooseEventStep(
     onChoose: (DriveEvent) -> Unit,
     onCreateEvent: (String) -> Unit,
     onRenameEvent: (String, String) -> Unit,
-    onDeleteEvent: (String) -> Unit
+    onDeleteEvent: (String) -> Unit,
+    showHeader: Boolean = true
 ) {
     var eventName by remember { mutableStateOf("") }
     var editingEventId by remember { mutableStateOf<String?>(null) }
     var editingName by remember { mutableStateOf("") }
     Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-        FlowHeader("Choose Event", "Where should these memories go?", onBack)
-        Spacer(modifier = Modifier.height(HelloSpacing.Md))
+        if (showHeader) {
+            FlowHeader("Choose Event", "Where should these memories go?", onBack)
+            Spacer(modifier = Modifier.height(HelloSpacing.Md))
+        }
         HelloPanel(modifier = Modifier.fillMaxWidth().padding(bottom = HelloSpacing.Md), strong = true, shape = HelloShapes.Lg) {
             Column(modifier = Modifier.padding(HelloSpacing.Md)) {
                 OutlinedTextField(
@@ -1187,11 +1327,14 @@ private fun UploadEventPreviewStep(media: List<SelectedDriveMedia>, eventName: S
 
 @Composable
 private fun CircleManagementStep(
+    activeUserId: String,
     circles: List<DriveCircle>,
     onBack: () -> Unit,
     onCreateCircle: () -> Unit,
     onOpenCircle: (DriveCircle) -> Unit,
-    onManageCircle: (DriveCircle) -> Unit
+    onManageCircle: (DriveCircle) -> Unit,
+    onUploadCircleAvatar: (DriveCircle) -> Unit,
+    onDeleteOrLeaveCircle: (DriveCircle) -> Unit
 ) {
     Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         FlowHeader("My Circles", "Saved sharing groups", onBack)
@@ -1200,9 +1343,12 @@ private fun CircleManagementStep(
         } else {
             circles.forEach { circle ->
                 CircleManagementCard(
+                    activeUserId = activeUserId,
                     circle = circle,
                     onOpenCircle = { onOpenCircle(circle) },
-                    onManageCircle = { onManageCircle(circle) }
+                    onManageCircle = { onManageCircle(circle) },
+                    onUploadCircleAvatar = { onUploadCircleAvatar(circle) },
+                    onDeleteOrLeaveCircle = { onDeleteOrLeaveCircle(circle) }
                 )
             }
         }
@@ -1214,11 +1360,15 @@ private fun CircleManagementStep(
 
 @Composable
 private fun CircleManagementCard(
+    activeUserId: String,
     circle: DriveCircle,
     onOpenCircle: () -> Unit,
-    onManageCircle: () -> Unit
+    onManageCircle: () -> Unit,
+    onUploadCircleAvatar: () -> Unit,
+    onDeleteOrLeaveCircle: () -> Unit
 ) {
     var menuExpanded by remember(circle.id) { mutableStateOf(false) }
+    val isOwner = circle.ownerUserId.isNullOrBlank() || circle.ownerUserId == activeUserId
     HelloPanel(
         modifier = Modifier
             .fillMaxWidth()
@@ -1235,7 +1385,19 @@ private fun CircleManagementCard(
                     .background(HelloColors.DarkAccent.copy(alpha = 0.18f)),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(Icons.Default.Image, contentDescription = null, tint = HelloColors.DarkAccent)
+                if (!circle.avatarUrl.isNullOrBlank()) {
+                    SubcomposeAsyncImage(
+                        model = ImageRequest.Builder(LocalContext.current)
+                            .data(UrlResolver.resolve(circle.avatarUrl))
+                            .crossfade(true)
+                            .build(),
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                } else {
+                    Icon(Icons.Default.Image, contentDescription = null, tint = HelloColors.DarkAccent)
+                }
             }
             Spacer(modifier = Modifier.width(HelloSpacing.Md))
             Column(modifier = Modifier.weight(1f)) {
@@ -1248,7 +1410,7 @@ private fun CircleManagementCard(
                 }
                 DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
                     DropdownMenuItem(
-                        text = { Text("Open photos") },
+                        text = { Text("Open Drive") },
                         onClick = {
                             menuExpanded = false
                             onOpenCircle()
@@ -1259,6 +1421,22 @@ private fun CircleManagementCard(
                         onClick = {
                             menuExpanded = false
                             onManageCircle()
+                        }
+                    )
+                    if (isOwner) {
+                        DropdownMenuItem(
+                            text = { Text("Profile picture") },
+                            onClick = {
+                                menuExpanded = false
+                                onUploadCircleAvatar()
+                            }
+                        )
+                    }
+                    DropdownMenuItem(
+                        text = { Text(if (isOwner) "Delete circle" else "Request delete") },
+                        onClick = {
+                            menuExpanded = false
+                            onDeleteOrLeaveCircle()
                         }
                     )
                 }
@@ -1276,7 +1454,8 @@ private fun EditCircleStep(
     onBack: () -> Unit,
     onSave: (String?, String, List<DriveCircleMember>) -> Unit,
     onDeleteCircle: (DriveCircle) -> Unit,
-    onLeaveCircle: (DriveCircle) -> Unit
+    onLeaveCircle: (DriveCircle) -> Unit,
+    onUploadCircleAvatar: (DriveCircle) -> Unit
 ) {
     var circleName by remember(existingCircle?.id) { mutableStateOf(existingCircle?.name.orEmpty()) }
     var selectedIds by remember(existingCircle?.id) {
@@ -1290,12 +1469,41 @@ private fun EditCircleStep(
         )
     }
     var role by remember(existingCircle?.id) {
-        mutableStateOf(existingCircle?.members.orEmpty().firstOrNull { it.userId != existingCircle?.ownerUserId }?.role?.let(::normalizeDriveRole) ?: "Can only see")
+        mutableStateOf(existingCircle?.members.orEmpty().firstOrNull { it.userId != existingCircle?.ownerUserId }?.role?.let(::normalizeDriveRole) ?: "Viewer")
     }
     Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         FlowHeader(if (existingCircle == null) "Create Circle" else "Manage Circle", "Simple permissions for family sharing", onBack)
         HelloPanel(modifier = Modifier.fillMaxWidth().padding(vertical = HelloSpacing.Md), strong = true, shape = HelloShapes.Lg) {
-            Column(modifier = Modifier.padding(HelloSpacing.Md)) {
+            Column(modifier = Modifier.padding(HelloSpacing.Md), verticalArrangement = Arrangement.spacedBy(HelloSpacing.Sm)) {
+                if (existingCircle != null) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(56.dp)
+                                .clip(CircleShape)
+                                .background(HelloColors.DarkAccent.copy(alpha = 0.18f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (!existingCircle.avatarUrl.isNullOrBlank()) {
+                                SubcomposeAsyncImage(
+                                    model = ImageRequest.Builder(LocalContext.current)
+                                        .data(UrlResolver.resolve(existingCircle.avatarUrl))
+                                        .crossfade(true)
+                                        .build(),
+                                    contentDescription = null,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            } else {
+                                Icon(Icons.Default.Image, contentDescription = null, tint = HelloColors.DarkAccent)
+                            }
+                        }
+                        Spacer(modifier = Modifier.width(HelloSpacing.Md))
+                        TextButton(onClick = { onUploadCircleAvatar(existingCircle) }) {
+                            Text("Upload profile picture", color = HelloColors.DarkAccent, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
                 OutlinedTextField(
                     value = circleName,
                     onValueChange = { circleName = it },
@@ -1337,7 +1545,7 @@ private fun EditCircleStep(
                 }
             }
         }
-        listOf("Can manage", "Can add", "Can only see").forEach { label ->
+        listOf("Admin", "Contributor", "Viewer").forEach { label ->
             AudienceChoiceCard(
                 DriveAudienceOption(
                     label,
@@ -1412,6 +1620,60 @@ private fun UploadSuccessStep(onOpenEvent: () -> Unit, onClose: () -> Unit) {
             TextButton(onClick = onClose, modifier = Modifier.fillMaxWidth().height(48.dp)) {
                 Text("Back to Home", color = HelloColors.DarkAccent, fontWeight = FontWeight.Bold)
             }
+        }
+    }
+}
+
+@Composable
+private fun DriveEventManagementScreen(
+    state: FamilyDriveUiState,
+    onBack: () -> Unit,
+    onOpenCircleChooser: () -> Unit,
+    onChooseEvent: (DriveEvent) -> Unit,
+    onCreateEvent: (String) -> Unit,
+    onRenameEvent: (String, String) -> Unit,
+    onDeleteEvent: (String) -> Unit,
+    onOpenCircleMedia: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val activeCircleName = state.circles.firstOrNull { it.id == state.activeCircleId }?.name
+        ?: state.circles.firstOrNull()?.name
+        ?: "No circle selected"
+    Column(
+        modifier = modifier
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = HelloSpacing.ScreenPadding)
+            .padding(top = HelloSpacing.Md, bottom = HelloSpacing.Lg)
+    ) {
+        FlowHeader("Events", "Manage folders inside one circle", onBack)
+        Spacer(modifier = Modifier.height(HelloSpacing.Md))
+        HelloPanel(modifier = Modifier.fillMaxWidth().padding(bottom = HelloSpacing.Md), strong = true, shape = HelloShapes.Lg) {
+            Column(modifier = Modifier.padding(HelloSpacing.Md), verticalArrangement = Arrangement.spacedBy(HelloSpacing.Sm)) {
+                Text("Current circle", color = HelloColors.TextSecondary, style = MaterialTheme.typography.labelMedium)
+                Text(activeCircleName, color = HelloColors.AccentStrong, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(onClick = onOpenCircleChooser, modifier = Modifier.weight(1f).height(44.dp)) {
+                        Text("Change circle", color = HelloColors.DarkAccent, fontWeight = FontWeight.Bold)
+                    }
+                    TextButton(onClick = onOpenCircleMedia, modifier = Modifier.weight(1f).height(44.dp)) {
+                        Text("Open media", color = HelloColors.DarkAccent, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+        if (state.activeCircleId.isNullOrBlank()) {
+            EmptyInlineState("No circle selected", "Open the Circles page first, then manage the events inside that circle.")
+        } else {
+            ChooseEventStep(
+                events = state.events,
+                selectedEventName = state.activeEventId?.let { activeId -> state.events.firstOrNull { it.id == activeId }?.name }.orEmpty(),
+                onBack = onBack,
+                onChoose = onChooseEvent,
+                onCreateEvent = onCreateEvent,
+                onRenameEvent = onRenameEvent,
+                onDeleteEvent = onDeleteEvent,
+                showHeader = false
+            )
         }
     }
 }
@@ -1532,6 +1794,7 @@ private fun DriveHomeContent(
 ) {
     Column(
         modifier = modifier
+            .verticalScroll(rememberScrollState())
             .padding(horizontal = HelloSpacing.ScreenPadding)
             .padding(top = HelloSpacing.Xl, bottom = HelloSpacing.Lg)
     ) {
@@ -1567,39 +1830,24 @@ private fun DriveHomeContent(
         }
         Spacer(modifier = Modifier.height(30.dp))
         DriveHomeCard(
-            icon = Icons.Default.Image,
-            title = "My Circles",
-            subtitle = if (state.isLoading) "Loading..." else "${state.circles.size} circles",
-            onClick = onOpenCircles
-        )
-        if (state.circles.isNotEmpty()) {
-            Spacer(modifier = Modifier.height(12.dp))
-            HelloPanel(modifier = Modifier.fillMaxWidth(), strong = false, shape = HelloShapes.Lg) {
-                Column(modifier = Modifier.padding(HelloSpacing.Md), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("Shared groups", color = HelloColors.AccentStrong, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Black)
-                    state.circles.take(4).forEach { circle ->
-                        EventChoiceCard(circle.name, buildCircleManagementSubtitle(circle), selected = circle.id == state.activeCircleId) {
-                            onOpenCircles()
-                        }
-                    }
-                    TextButton(onClick = onOpenCircles, modifier = Modifier.fillMaxWidth().height(44.dp)) {
-                        Text("Manage Circles", color = HelloColors.DarkAccent, fontWeight = FontWeight.Bold)
-                    }
-                }
-            }
-        }
-        Spacer(modifier = Modifier.height(12.dp))
-        DriveHomeCard(
             icon = Icons.Default.Cloud,
-            title = "Circle Media",
-            subtitle = if (state.activeCircleId.isNullOrBlank()) "Open your shared media library" else "Viewing ${audienceTitle(state.activeCircleId, state.circles)}",
-            onClick = onOpenAllPhotos
+            title = "Circles",
+            subtitle = if (state.isLoading) {
+                "Loading your shared groups..."
+            } else {
+                "${state.circles.size} shared groups. Open boxed circles, then enter a circle Drive to upload, mark, manage roles, and handle delete requests."
+            },
+            onClick = onOpenCircles
         )
         Spacer(modifier = Modifier.height(12.dp))
         DriveHomeCard(
             icon = Icons.Default.Delete,
             title = "Trash",
-            subtitle = "${state.trashTotal} recoverable items",
+            subtitle = if (state.activeCircleId.isNullOrBlank()) {
+                "Deleted circle items stay here until you permanently remove them from PC trash."
+            } else {
+                "Trash for ${audienceTitle(state.activeCircleId, state.circles)}. Delete here again to remove from PC trash permanently."
+            },
             onClick = onOpenTrash
         )
         Spacer(modifier = Modifier.weight(1f))
@@ -1660,6 +1908,8 @@ private fun DriveLibraryContent(
     state: FamilyDriveUiState,
     selectedIds: Set<String>,
     favoriteIds: Set<String>,
+    activeCircleId: String?,
+    activeEventId: String?,
     onBack: () -> Unit,
     onRefresh: () -> Unit,
     onRetryPending: () -> Unit,
@@ -1676,10 +1926,21 @@ private fun DriveLibraryContent(
 ) {
     val trashMode = mode == DriveMode.Trash
     val gridState = rememberLazyGridState()
-    val pendingCount = state.pendingItems.count { it.status != PendingDriveStatus.SYNCED }
-    val gridItems = remember(mode, state.items, state.trashItems, state.pendingItems) {
+    val visiblePendingItems = remember(state.pendingItems, activeCircleId, activeEventId, trashMode) {
+        if (trashMode) {
+            emptyList()
+        } else {
+            state.pendingItems.filter { pending ->
+                val matchesCircle = activeCircleId.isNullOrBlank() || pending.selectedCircleIds.isEmpty() || activeCircleId in pending.selectedCircleIds
+                val matchesEvent = activeEventId.isNullOrBlank() || pending.eventId.isNullOrBlank() || pending.eventId == activeEventId
+                matchesCircle && matchesEvent
+            }
+        }
+    }
+    val pendingCount = visiblePendingItems.size
+    val gridItems = remember(mode, state.items, state.trashItems, visiblePendingItems) {
         val synced = if (trashMode) state.trashItems else state.items
-        val pending = if (trashMode) emptyList() else state.pendingItems.map { DriveGridItem.Pending(it) }
+        val pending = if (trashMode) emptyList() else visiblePendingItems.map { DriveGridItem.Pending(it) }
         (pending + synced.map { DriveGridItem.Synced(it) }).sortedByDescending { it.createdAt }
     }
     val groupedItems = remember(gridItems) { gridItems.groupBy { it.monthLabel } }
@@ -1732,7 +1993,7 @@ private fun DriveLibraryContent(
         Spacer(modifier = Modifier.height(HelloSpacing.Sm))
         Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text(
-                text = if (trashMode) "Shared trash - restore accidental deletes" else if (pendingCount > 0) "Circle media - $pendingCount waiting for PC" else "Circle media",
+                text = if (trashMode) "Shared trash - restore accidental deletes" else if (pendingCount > 0) "Circle Drive - $pendingCount waiting for PC" else "Circle Drive",
                 color = HelloColors.DarkTextMuted,
                 style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.weight(1f)
@@ -1755,8 +2016,8 @@ private fun DriveLibraryContent(
                 state = gridState,
                 modifier = Modifier.weight(1f).fillMaxWidth(),
                 contentPadding = PaddingValues(bottom = 116.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 groupedItems.forEach { (monthLabel, itemsInMonth) ->
                     item(span = { GridItemSpan(maxLineSpan) }) {
@@ -1768,35 +2029,39 @@ private fun DriveLibraryContent(
                             onSelectMonth = { onSelectMonth(itemsInMonth) }
                         )
                     }
-                    items(itemsInMonth, key = { it.id }) { gridItem ->
-                        DriveMediaCard(
-                            item = gridItem,
-                            trashMode = trashMode,
-                            isSelected = gridItem is DriveGridItem.Synced && gridItem.item.id in selectedIds,
-                            selectionMode = selectionMode,
-                            isFavorite = gridItem is DriveGridItem.Synced && favoriteIds.contains(gridItem.item.id),
-                            isRetrying = gridItem is DriveGridItem.Pending && state.retryingPendingId in setOf(gridItem.item.id, "all"),
-                            onToggleFavorite = {
-                                if (gridItem is DriveGridItem.Synced) onToggleFavorite(gridItem.item.id)
-                            },
-                            onRetryPending = {
-                                if (gridItem is DriveGridItem.Pending) onRetryPendingItem(gridItem.item.id)
-                            },
-                            onRemovePending = {
-                                if (gridItem is DriveGridItem.Pending) onRemovePendingItem(gridItem.item)
-                            },
-                            onClick = {
-                                when (gridItem) {
-                                    is DriveGridItem.Synced -> {
-                                        if (selectionMode) onToggleSelection(gridItem.item.id) else onOpenItem(gridItem.item)
+                    itemsInMonth.forEachIndexed { index, gridItem ->
+                        val collageStyle = driveCollageStyleFor(gridItem.id, gridItem.isVideoItem(), index)
+                        item(key = gridItem.id, span = { GridItemSpan(collageStyle.span) }) {
+                            DriveMediaCard(
+                                item = gridItem,
+                                collageStyle = collageStyle,
+                                trashMode = trashMode,
+                                isSelected = gridItem is DriveGridItem.Synced && gridItem.item.id in selectedIds,
+                                selectionMode = selectionMode,
+                                isFavorite = gridItem is DriveGridItem.Synced && favoriteIds.contains(gridItem.item.id),
+                                isRetrying = gridItem is DriveGridItem.Pending && state.retryingPendingId in setOf(gridItem.item.id, "all"),
+                                onToggleFavorite = {
+                                    if (gridItem is DriveGridItem.Synced) onToggleFavorite(gridItem.item.id)
+                                },
+                                onRetryPending = {
+                                    if (gridItem is DriveGridItem.Pending) onRetryPendingItem(gridItem.item.id)
+                                },
+                                onRemovePending = {
+                                    if (gridItem is DriveGridItem.Pending) onRemovePendingItem(gridItem.item)
+                                },
+                                onClick = {
+                                    when (gridItem) {
+                                        is DriveGridItem.Synced -> {
+                                            if (selectionMode) onToggleSelection(gridItem.item.id) else onOpenItem(gridItem.item)
+                                        }
+                                        is DriveGridItem.Pending -> onOpenPending(gridItem.item)
                                     }
-                                    is DriveGridItem.Pending -> onOpenPending(gridItem.item)
+                                },
+                                onLongClick = {
+                                    if (gridItem is DriveGridItem.Synced) onToggleSelection(gridItem.item.id)
                                 }
-                            },
-                            onLongClick = {
-                                if (gridItem is DriveGridItem.Synced) onToggleSelection(gridItem.item.id)
-                            }
-                        )
+                            )
+                        }
                     }
                 }
                 if (loadingMore) {
@@ -1888,10 +2153,36 @@ private fun MonthHeader(
     }
 }
 
+private data class DriveCollageStyle(
+    val span: Int,
+    val aspectRatio: Float,
+    val shape: RoundedCornerShape
+)
+
+private fun DriveGridItem.isVideoItem(): Boolean = when (this) {
+    is DriveGridItem.Synced -> item.isVideo
+    is DriveGridItem.Pending -> item.isVideo
+}
+
+private fun driveCollageStyleFor(itemId: String, isVideo: Boolean, index: Int): DriveCollageStyle {
+    val patterns = listOf(
+        DriveCollageStyle(span = 2, aspectRatio = 1.48f, shape = RoundedCornerShape(topStart = 34.dp, topEnd = 34.dp, bottomStart = 24.dp, bottomEnd = 24.dp)),
+        DriveCollageStyle(span = 1, aspectRatio = 0.82f, shape = RoundedCornerShape(topStart = 28.dp, topEnd = 22.dp, bottomStart = 28.dp, bottomEnd = 18.dp)),
+        DriveCollageStyle(span = 1, aspectRatio = 1.16f, shape = RoundedCornerShape(topStart = 22.dp, topEnd = 30.dp, bottomStart = 20.dp, bottomEnd = 30.dp)),
+        DriveCollageStyle(span = 2, aspectRatio = 1.08f, shape = RoundedCornerShape(topStart = 26.dp, topEnd = 20.dp, bottomStart = 34.dp, bottomEnd = 28.dp)),
+        DriveCollageStyle(span = 1, aspectRatio = 1.28f, shape = RoundedCornerShape(topStart = 20.dp, topEnd = 28.dp, bottomStart = 18.dp, bottomEnd = 32.dp)),
+        DriveCollageStyle(span = 1, aspectRatio = 0.94f, shape = RoundedCornerShape(topStart = 32.dp, topEnd = 20.dp, bottomStart = 24.dp, bottomEnd = 32.dp))
+    )
+    val stableIndex = (itemId.sumOf { it.code } + index) % patterns.size
+    val base = patterns[stableIndex]
+    return if (isVideo) base.copy(aspectRatio = 1f) else base
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun DriveMediaCard(
     item: DriveGridItem,
+    collageStyle: DriveCollageStyle,
     trashMode: Boolean,
     isSelected: Boolean,
     selectionMode: Boolean,
@@ -1904,10 +2195,7 @@ private fun DriveMediaCard(
     onLongClick: () -> Unit
 ) {
     val context = LocalContext.current
-    val isVideo = when (item) {
-        is DriveGridItem.Synced -> item.item.isVideo
-        is DriveGridItem.Pending -> item.item.isVideo
-    }
+    val isVideo = item.isVideoItem()
     val imageData = when (item) {
         is DriveGridItem.Synced -> UrlResolver.resolve(item.item.thumbnailUrl ?: item.item.url)
         is DriveGridItem.Pending -> Uri.parse(item.item.localUri)
@@ -1918,9 +2206,10 @@ private fun DriveMediaCard(
     }
     Box(
         modifier = Modifier
-            .aspectRatio(1f)
-            .clip(HelloShapes.Md)
+            .aspectRatio(collageStyle.aspectRatio)
+            .clip(collageStyle.shape)
             .background(HelloColors.DarkPanelStrong)
+            .border(width = 1.dp, color = Color.White.copy(alpha = 0.58f), shape = collageStyle.shape)
             .combinedClickable(
                 role = Role.Button,
                 onClick = onClick,
@@ -1931,49 +2220,49 @@ private fun DriveMediaCard(
                 role = Role.Button
             }
     ) {
-        if (isVideo) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Icon(Icons.Default.PlayArrow, contentDescription = "Video", tint = HelloColors.DarkAccent, modifier = Modifier.size(36.dp))
-            }
-        } else {
-            SubcomposeAsyncImage(
-                model = ImageRequest.Builder(context)
-                    .data(imageData)
-                    .crossfade(false)
-                    .allowHardware(true)
-                    .memoryCacheKey(item.id)
-                    .diskCacheKey(item.id)
-                    .build(),
-                contentDescription = displayName,
-                modifier = Modifier.fillMaxSize(),
-                contentScale = ContentScale.Crop,
-                loading = {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator(color = HelloColors.DarkAccent, modifier = Modifier.size(22.dp))
-                    }
-                },
-                error = {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Icon(Icons.Default.Image, contentDescription = null, tint = HelloColors.DarkTextMuted)
-                    }
+        SubcomposeAsyncImage(
+            model = ImageRequest.Builder(context)
+                .data(imageData)
+                .crossfade(false)
+                .allowHardware(true)
+                .memoryCacheKey(item.id)
+                .diskCacheKey(item.id)
+                .build(),
+            contentDescription = displayName,
+            modifier = Modifier.fillMaxSize(),
+            contentScale = ContentScale.Crop,
+            loading = {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(color = HelloColors.DarkAccent, modifier = Modifier.size(22.dp))
                 }
-            )
-        }
+            },
+            error = {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Icon(Icons.Default.Image, contentDescription = null, tint = HelloColors.DarkTextMuted)
+                }
+            }
+        )
         if (selectionMode && item is DriveGridItem.Synced) {
             SelectionMark(selected = isSelected, modifier = Modifier.align(Alignment.TopStart).padding(5.dp))
         }
         if (isVideo) {
-            Text(
-                "Video",
-                color = Color.White,
-                style = MaterialTheme.typography.labelSmall,
+            Row(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
                     .padding(5.dp)
-                    .clip(CircleShape)
+                    .clip(RoundedCornerShape(999.dp))
                     .background(Color.Black.copy(alpha = 0.55f))
-                    .padding(horizontal = 6.dp, vertical = 3.dp)
-            )
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(
+                    "Video",
+                    color = Color.White,
+                    style = MaterialTheme.typography.labelSmall
+                )
+            }
         }
         when (item) {
             is DriveGridItem.Synced -> {
@@ -2032,7 +2321,7 @@ private fun PendingUploadBadge(
             if (isRetrying || item.status == PendingDriveStatus.UPLOADING) {
                 CircularProgressIndicator(color = HelloColors.DarkAccent, strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
             } else {
-                Icon(Icons.Default.CloudUpload, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+                Icon(Icons.Default.Refresh, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
             }
         }
         Spacer(modifier = Modifier.height(3.dp))
@@ -2045,10 +2334,10 @@ private fun PendingUploadBadge(
         ) {
             Text(
                 text = when (item.status) {
-                    PendingDriveStatus.FAILED_RETRYABLE -> "Retry"
-                    PendingDriveStatus.UPLOADING -> "Syncing"
+                    PendingDriveStatus.FAILED_RETRYABLE -> "Stored local"
+                    PendingDriveStatus.UPLOADING -> "Uploading"
                     PendingDriveStatus.SYNCED -> "Saved"
-                    else -> "Pending"
+                    else -> "Stored local"
                 },
                 color = Color.White,
                 style = MaterialTheme.typography.labelSmall,
@@ -2438,16 +2727,16 @@ private fun buildCircleManagementSubtitle(circle: DriveCircle): String {
 private fun normalizeDriveRole(role: String?): String {
     val value = role?.trim().orEmpty().lowercase(Locale.US)
     return when {
-        value == "owner" || value.contains("manage") -> "Can manage"
-        value.contains("add") || value.contains("contribute") || value == "member" -> "Can add"
-        else -> "Can only see"
+        value == "owner" || value == "admin" || value.contains("manage") -> "Admin"
+        value.contains("add") || value.contains("contribute") || value == "member" -> "Contributor"
+        else -> "Viewer"
     }
 }
 
 private fun driveRoleStorageValue(label: String): String {
     return when (label.trim().lowercase(Locale.US)) {
-        "can manage" -> "manage"
-        "can add" -> "add"
+        "admin", "can manage" -> "manage"
+        "contributor", "can add" -> "add"
         else -> "view"
     }
 }

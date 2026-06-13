@@ -115,6 +115,16 @@ class DrivePcApiClient : DrivePcApi {
         parseDriveCircle(response) ?: throw Exception("Create circle response was empty")
     }
 
+    override suspend fun uploadDriveCircleAvatar(circleId: String, userId: String, fileName: String, mimeType: String, bytes: ByteArray): Result<DriveCircle> = safePcCall {
+        val body = MultipartBody.Builder()
+            .setType(MultipartBody.FORM)
+            .addFormDataPart("userId", userId)
+            .addFormDataPart("file", fileName, bytes.toRequestBody(mimeType.toMediaType()))
+            .build()
+        val response = request(Request.Builder().url("$driveBaseUrl/drive/circles/${encodePathValue(circleId)}/avatar").post(body).build())
+        parseDriveCircle(response) ?: throw Exception("Circle profile picture response was empty")
+    }
+
     override suspend fun leaveDriveCircle(circleId: String, userId: String): Result<Unit> = safePcCall {
         val body = gson.toJson(mapOf("userId" to userId)).toRequestBody("application/json".toMediaType())
         request(Request.Builder().url("$driveBaseUrl/drive/circles/${encodePathValue(circleId)}/leave").post(body).build())
@@ -298,7 +308,7 @@ class DrivePcApiClient : DrivePcApi {
             if (userId.isBlank()) return@mapNotNull null
             DriveCircleMember(
                 userId = userId,
-                role = member.string("role").ifBlank { "Can only see" },
+                role = member.string("role").ifBlank { "Viewer" },
                 name = member.stringOrNull("name"),
                 username = member.stringOrNull("username"),
                 avatar = member.stringOrNull("avatar")
@@ -308,6 +318,7 @@ class DrivePcApiClient : DrivePcApi {
             id = id,
             name = name,
             ownerUserId = map.stringOrNull("ownerUserId"),
+            avatarUrl = map.stringOrNull("avatarUrl"),
             memberCount = map.int("memberCount").coerceAtLeast(members.size),
             members = members,
             createdAt = map.long("createdAt"),

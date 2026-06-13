@@ -1,7 +1,7 @@
 package com.glassbox.hello.notifications
 
 import android.content.Context
-import android.util.Log
+import com.glassbox.hello.debug.AppLog as Log
 import com.glassbox.hello.auth.CloudSessionManager
 import com.glassbox.hello.core.AppConfig
 import com.google.firebase.messaging.FirebaseMessaging

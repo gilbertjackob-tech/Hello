@@ -43,9 +43,9 @@ class ChatRepository(
         return api.createChat(name, isGroup = true, members = members)
     }
 
-    suspend fun fetchChats(userId: String, cloudChatEnabled: Boolean = true): Result<List<Chat>> {
+    suspend fun fetchChats(userId: String, currentUserName: String? = null, cloudChatEnabled: Boolean = true): Result<List<Chat>> {
         if (cloudChatEnabled && cloudRepository != null) {
-            return cloudRepository.fetchChats(userId)
+            return cloudRepository.fetchChats(userId, currentUserName)
         }
         return api.fetchChats(userId)
     }
@@ -53,6 +53,13 @@ class ChatRepository(
     fun cachedChats(userId: String, cloudChatEnabled: Boolean = true): List<Chat> {
         if (cloudChatEnabled && cloudRepository != null) {
             return cloudRepository.cachedChats(userId)
+        }
+        return emptyList()
+    }
+
+    fun cachedMessages(chatId: String, cloudChatEnabled: Boolean = true): List<Message> {
+        if (cloudChatEnabled && cloudRepository != null) {
+            return cloudRepository.cachedMessages(chatId)
         }
         return emptyList()
     }

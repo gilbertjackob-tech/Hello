@@ -1,7 +1,7 @@
 package com.glassbox.hello.database.dao
 
 import android.database.sqlite.SQLiteException
-import android.util.Log
+import com.glassbox.hello.debug.AppLog as Log
 import androidx.room.Dao
 import androidx.room.Delete
 import androidx.room.Insert

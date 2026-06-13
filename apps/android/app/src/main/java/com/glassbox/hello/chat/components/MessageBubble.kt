@@ -78,6 +78,7 @@ fun ChatMessageBubble(
     outgoingBubbleColor: Color,
     incomingBubbleColor: Color,
     bubbleOpacity: Float,
+    imageCluster: List<ChatModels.Message>? = null,
     modifier: Modifier = Modifier,
     showSenderName: Boolean = false,
     compactWithPrevious: Boolean = false,
@@ -110,6 +111,19 @@ fun ChatMessageBubble(
         else -> HelloColors.BubbleInBorder
     }
     val bubbleShape = messageBubbleShape(isOwn, compactWithPrevious, compactWithNext)
+    val bubbleShadow = when {
+        isStickerMessage(message.text) -> 0.dp
+        compactWithPrevious || compactWithNext -> 0.dp
+        else -> 3.dp
+    }
+    val contentScaleModifier = if (OptimisticMessageManager.isTempId(message.id)) {
+        Modifier.graphicsLayer(
+            scaleX = bubbleScale,
+            scaleY = bubbleScale
+        )
+    } else {
+        Modifier
+    }
 
     AnimatedVisibility(
         visible = true,
@@ -156,7 +170,7 @@ fun ChatMessageBubble(
                         Box(
                             modifier = Modifier
                                 .offset { IntOffset(swipeOffset.roundToInt(), 0) }
-                                .shadow(if (isStickerMessage(message.text)) 0.dp else 8.dp, bubbleShape, ambientColor = HelloColors.Accent.copy(alpha = 0.18f))
+                                .shadow(bubbleShadow, bubbleShape, ambientColor = HelloColors.Accent.copy(alpha = 0.12f))
                                 .clip(bubbleShape)
                                 .background(bubbleColor)
                                 .border(1.2.dp, bubbleBorder, bubbleShape)
@@ -192,12 +206,7 @@ fun ChatMessageBubble(
                                 }
                                 .padding(horizontal = 12.dp, vertical = 10.dp)
                         ) {
-                            Column(
-                                modifier = Modifier.graphicsLayer(
-                                    scaleX = bubbleScale,
-                                    scaleY = bubbleScale
-                                )
-                            ) {
+                            Column(modifier = contentScaleModifier) {
                                 MessageBadges(message = message, currentUserId = currentUserId)
                                 ReplyPreview(message = message, isOwn = isOwn)
                                 MessageBody(
@@ -206,7 +215,8 @@ fun ChatMessageBubble(
                                     textColor = contentColor,
                                     onOpenAttachment = onOpenAttachment,
                                     onOpenImage = onOpenImage,
-                                    onDownloadAttachment = onDownloadAttachment
+                                    onDownloadAttachment = onDownloadAttachment,
+                                    imageCluster = imageCluster
                                 )
                                 MessageMeta(
                                     message = message,
@@ -290,7 +300,8 @@ private fun MessageBody(
     textColor: Color,
     onOpenAttachment: (String) -> Unit,
     onOpenImage: (String, String) -> Unit,
-    onDownloadAttachment: (String, String?) -> Unit
+    onDownloadAttachment: (String, String?) -> Unit,
+    imageCluster: List<ChatModels.Message>? = null
 ) {
     if (message.isDeleted == true) {
         Text(
@@ -324,7 +335,13 @@ private fun MessageBody(
 
     val resolved = normalizeAttachmentUrl(message.attachmentUrl)
     val attachmentKind = attachmentKind(message)
-    if (!resolved.isNullOrBlank()) {
+    if (!imageCluster.isNullOrEmpty()) {
+        ImageCollageCard(
+            messages = imageCluster,
+            onOpenImage = onOpenImage,
+            onDownload = onDownloadAttachment
+        )
+    } else if (!resolved.isNullOrBlank()) {
         when (attachmentKind) {
             "image" -> ImageCard(message, resolved, onOpenImage, onDownloadAttachment)
             "audio" -> AudioCard(message, resolved, onDownloadAttachment)
@@ -339,7 +356,7 @@ private fun MessageBody(
         !message.text.startsWith("Contact:", ignoreCase = true) &&
         !(isUrlOnly(message.text) && message.attachmentUrl.isNullOrBlank())
     if (shouldShowText) {
-        if (resolved != null) Spacer(modifier = Modifier.size(7.dp))
+        if (resolved != null || !imageCluster.isNullOrEmpty()) Spacer(modifier = Modifier.size(7.dp))
         Text(
             text = message.text,
             color = textColor,

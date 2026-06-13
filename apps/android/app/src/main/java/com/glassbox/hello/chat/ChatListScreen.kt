@@ -1,6 +1,6 @@
 package com.glassbox.hello.chat
 
-import android.util.Log
+import com.glassbox.hello.debug.AppLog as Log
 import androidx.compose.foundation.background
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
@@ -42,6 +42,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -91,6 +92,7 @@ import com.glassbox.hello.ui.theme.HelloDimens
 import com.glassbox.hello.ui.theme.HelloShapes
 import com.glassbox.hello.ui.theme.HelloSpacing
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
@@ -101,9 +103,7 @@ private enum class ChatFilter(val label: String) {
     All("All"),
     Unread("Unread"),
     Groups("Groups"),
-    Calls("Calls"),
-    Files("Files"),
-    Pinned("Pinned")
+    Calls("Calls")
 }
 
 private const val INBOX_DEBUG_TAG = "HelloInbox"
@@ -126,14 +126,13 @@ fun ChatListScreen(
     val settingsState by rememberHelloSettingsState(context)
     val cloudChatEnabled = settingsState.cloudChatEnabled
     val cloudSessionManager = remember { CloudSessionManager(context) }
-    val cloudSessionUser = cloudSessionManager.cachedUser()
-    val cloudTokenPresent = !cloudSessionManager.token().isNullOrBlank()
+    val cloudSessionUser = remember(currentUserId) { cloudSessionManager.cachedUser() }
+    val cloudTokenPresent = remember(currentUserId) { !cloudSessionManager.token().isNullOrBlank() }
     val socketManager = remember { SocketManager.getInstance() }
 
     var showNewChat by remember { mutableStateOf(false) }
     var showGroupChat by remember { mutableStateOf(false) }
     var showMoreMenu by remember { mutableStateOf(false) }
-    var showNetworkDiagnostics by remember { mutableStateOf(false) }
     var showSharedContentChooser by remember { mutableStateOf(false) }
     var sharedContentMode by remember { mutableStateOf<SharedContentMode?>(null) }
     var userSearchQuery by remember { mutableStateOf("") }
@@ -142,20 +141,28 @@ fun ChatListScreen(
     var selectedMemberIds by remember { mutableStateOf(setOf<String>()) }
     var searchQuery by remember { mutableStateOf("") }
     var selectedFilter by remember { mutableStateOf(ChatFilter.All) }
+    var pinnedChatIds by remember(currentUserId) { mutableStateOf(ChatInboxPrefs.pinnedChatIds(context)) }
+    var mutedChatIds by remember(currentUserId) { mutableStateOf(ChatInboxPrefs.mutedChatIds(context)) }
+    var actionChat by remember { mutableStateOf<Chat?>(null) }
     var vpnEnabled by remember { mutableStateOf(false) }
     var vpnChecking by remember { mutableStateOf(false) }
     var vpnDetail by remember { mutableStateOf("PC Drive not checked yet") }
     var cloudChatOnline by remember { mutableStateOf(false) }
     var cloudChatDetail by remember { mutableStateOf("Cloud Chat not checked yet") }
+    var realtimeRefreshTick by remember { mutableStateOf(0) }
 
-    LaunchedEffect(currentUserId, cloudChatEnabled) {
+    LaunchedEffect(currentUserId, currentUserName, cloudChatEnabled) {
         Log.d(
             INBOX_DEBUG_TAG,
             "screen_init userId=$currentUserId userName=$currentUserName cloudChatEnabled=$cloudChatEnabled cloudTokenPresent=$cloudTokenPresent cloudSessionUserId=${cloudSessionUser?.id.orEmpty()} cloudSessionUserName=${cloudSessionUser?.name.orEmpty()}"
         )
         viewModel.configureCloudChat(context)
-        viewModel.loadChats(currentUserId, cloudChatEnabled = cloudChatEnabled)
+        viewModel.loadChats(currentUserId, currentUserName, cloudChatEnabled = cloudChatEnabled)
+    }
+
+    LaunchedEffect(currentUserId, cloudChatEnabled) {
         vpnChecking = true
+        delay(1200)
         val cloudProbe = withContext(Dispatchers.IO) { checkCloudChatNetwork() }
         val pcProbe = withContext(Dispatchers.IO) { checkHelloNetwork() }
         cloudChatOnline = cloudProbe.status == NetworkStatus.Connected || cloudProbe.status == NetworkStatus.HelloApiReachable
@@ -165,6 +172,13 @@ fun ChatListScreen(
         vpnChecking = false
     }
 
+    LaunchedEffect(realtimeRefreshTick, currentUserId, currentUserName, cloudChatEnabled) {
+        if (realtimeRefreshTick == 0) return@LaunchedEffect
+        delay(900)
+        Log.d(INBOX_DEBUG_TAG, "socket_safety_refresh tick=$realtimeRefreshTick userId=$currentUserId")
+        viewModel.loadChats(currentUserId, currentUserName, cloudChatEnabled = cloudChatEnabled)
+    }
+
     DisposableEffect(currentUserId, currentUserName, cloudChatEnabled) {
         val chatListener: (Chat) -> Unit = { chat ->
             Log.d(
@@ -172,7 +186,7 @@ fun ChatListScreen(
                 "socket_chat_updated currentUserId=$currentUserId chatId=${chat.id} directKey=${chat.directKey.orEmpty()} memberCount=${chat.memberIds().size} lastMessage=${chat.lastMessage.orEmpty().take(60)}"
             )
             viewModel.upsertChatFromSocket(chat, currentUserId)
-            viewModel.loadChats(currentUserId, cloudChatEnabled = cloudChatEnabled)
+            realtimeRefreshTick += 1
         }
         val messageListener: (com.glassbox.hello.chat.ChatModels.Message) -> Unit = { message ->
             Log.d(
@@ -180,7 +194,7 @@ fun ChatListScreen(
                 "socket_message currentUserId=$currentUserId chatId=${message.chatId} senderId=${message.senderId} text=${message.text.take(60)}"
             )
             viewModel.appendFromSocket(message, currentUserId = currentUserId)
-            viewModel.loadChats(currentUserId, cloudChatEnabled = cloudChatEnabled)
+            realtimeRefreshTick += 1
         }
         val presenceListener: (org.json.JSONObject) -> Unit = presenceListener@{
             val payloadUserId = it.optString("userId").ifBlank { it.optString("id") }
@@ -227,7 +241,7 @@ fun ChatListScreen(
             showNewChat = false
             showGroupChat = false
             viewModel.resetCreateChatState()
-            viewModel.loadChats(currentUserId, cloudChatEnabled = cloudChatEnabled)
+            viewModel.loadChats(currentUserId, currentUserName, cloudChatEnabled = cloudChatEnabled)
             onChatSelected(state.data)
         }
     }
@@ -242,16 +256,10 @@ fun ChatListScreen(
             vpnEnabled = pcProbe.status == NetworkStatus.Connected || pcProbe.status == NetworkStatus.HelloApiReachable
             vpnDetail = pcProbe.detail
             vpnChecking = false
-            if (showNetworkDiagnostics) {
-                showNetworkDiagnostics = true
-            }
         }
     }
 
-    fun openNetworkDiagnostics() {
-        showNetworkDiagnostics = true
-        refreshNetworkStatus()
-    }
+    fun openNetworkDiagnostics() {}
 
     AppBackground(modifier = modifier.fillMaxSize()) {
         Column(
@@ -294,7 +302,7 @@ fun ChatListScreen(
                 }
                 HelloIconButton(onClick = {
                     refreshNetworkStatus()
-                    viewModel.loadChats(currentUserId, cloudChatEnabled = cloudChatEnabled)
+                    viewModel.loadChats(currentUserId, currentUserName, cloudChatEnabled = cloudChatEnabled)
                 }) {
                     Icon(Icons.Default.Refresh, contentDescription = "Refresh", tint = HelloColors.TextSecondary)
                 }
@@ -328,14 +336,6 @@ fun ChatListScreen(
                             onClick = {
                                 showMoreMenu = false
                                 onOpenSettings()
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Network diagnostics") },
-                            leadingIcon = { Icon(Icons.Default.Refresh, contentDescription = null) },
-                            onClick = {
-                                showMoreMenu = false
-                                openNetworkDiagnostics()
                             }
                         )
                     }
@@ -399,30 +399,35 @@ fun ChatListScreen(
                 }
                 is ResultState.Error -> ErrorView(
                     message = (chatsState as ResultState.Error).message,
-                    onRetry = { viewModel.loadChats(currentUserId, cloudChatEnabled = cloudChatEnabled) },
+                    onRetry = { viewModel.loadChats(currentUserId, currentUserName, cloudChatEnabled = cloudChatEnabled) },
                     modifier = Modifier.weight(1f).padding(horizontal = HelloDimens.SpaceL)
                 )
                 is ResultState.Success -> {
-                    val chats = (chatsState as ResultState.Success<List<Chat>>)
-                        .data
-                        .dedupeDirectChats(currentUserId)
-                        .sortedByDescending { it.lastMessageTime ?: 0L }
-                        .filter { chat ->
-                            val title = chat.displayName(currentUserId)
-                            val preview = chat.lastMessage.orEmpty()
-                            val matchesSearch = searchQuery.isBlank() ||
-                                title.contains(searchQuery, ignoreCase = true) ||
-                                preview.contains(searchQuery, ignoreCase = true)
-                            val matchesFilter = when (selectedFilter) {
-                                ChatFilter.All -> true
-                                ChatFilter.Unread -> (chat.unreadCount ?: 0) > 0
-                                ChatFilter.Groups -> chat.isGroup
-                                ChatFilter.Calls -> false
-                                ChatFilter.Files -> chat.lastMessage?.contains("file", ignoreCase = true) == true
-                                ChatFilter.Pinned -> false
-                            }
-                            matchesSearch && matchesFilter
+                    val chatSource = (chatsState as ResultState.Success<List<Chat>>).data
+                    val chats by remember(chatSource, currentUserId, pinnedChatIds, searchQuery, selectedFilter) {
+                        derivedStateOf {
+                            chatSource
+                                .dedupeDirectChats(currentUserId)
+                                .sortedWith(
+                                    compareByDescending<Chat> { it.id in pinnedChatIds }
+                                        .thenByDescending { it.lastMessageTime ?: 0L }
+                                )
+                                .filter { chat ->
+                                    val title = chat.displayName(currentUserId)
+                                    val preview = chat.lastMessage.orEmpty()
+                                    val matchesSearch = searchQuery.isBlank() ||
+                                        title.contains(searchQuery, ignoreCase = true) ||
+                                        preview.contains(searchQuery, ignoreCase = true)
+                                    val matchesFilter = when (selectedFilter) {
+                                        ChatFilter.All -> true
+                                        ChatFilter.Unread -> (chat.unreadCount ?: 0) > 0
+                                        ChatFilter.Groups -> chat.isGroup
+                                        ChatFilter.Calls -> isCallChat(chat)
+                                    }
+                                    matchesSearch && matchesFilter
+                                }
                         }
+                    }
 
                     if (chats.isEmpty()) {
                         HelloEmptyState(
@@ -450,7 +455,11 @@ fun ChatListScreen(
                             ),
                             verticalArrangement = Arrangement.spacedBy(HelloDimens.SpaceS)
                         ) {
-                            items(chats, key = { it.id }) { chat ->
+                            items(
+                                items = chats,
+                                key = { it.id },
+                                contentType = { "chat-row" }
+                            ) { chat ->
                                 val title = chat.displayName(currentUserId)
                                 val other = chat.otherParticipant(currentUserId)
                                 HelloChatCard(
@@ -460,10 +469,11 @@ fun ChatListScreen(
                                         SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(it))
                                     }.orEmpty(),
                                     unreadCount = chat.unreadCount ?: 0,
-                                    modifier = Modifier.clickable { onChatSelected(chat) },
                                     active = (chat.unreadCount ?: 0) > 0,
                                     avatarUrl = other?.avatar ?: chat.avatar,
-                                    online = other?.online == true
+                                    online = other?.online == true,
+                                    onClick = { onChatSelected(chat) },
+                                    onLongClick = { actionChat = chat }
                                 )
                             }
                         }
@@ -518,14 +528,43 @@ fun ChatListScreen(
             )
         }
 
-        if (showNetworkDiagnostics) {
-            NetworkDiagnosticsDialog(
-                checking = vpnChecking,
-                enabled = vpnEnabled,
-                detail = vpnDetail,
-                cloudDetail = cloudChatDetail,
-                onRetry = { refreshNetworkStatus() },
-                onDismiss = { showNetworkDiagnostics = false }
+        actionChat?.let { chat ->
+            ChatInboxActionsDialog(
+                title = chat.displayName(currentUserId),
+                pinned = chat.id in pinnedChatIds,
+                muted = chat.id in mutedChatIds,
+                onDismiss = { actionChat = null },
+                onTogglePin = {
+                    val nextPinned = pinnedChatIds.toMutableSet()
+                    if (chat.id in nextPinned) {
+                        nextPinned.remove(chat.id)
+                    } else {
+                        nextPinned.add(chat.id)
+                    }
+                    pinnedChatIds = nextPinned.toSet()
+                    ChatInboxPrefs.setPinned(context, chat.id, chat.id in nextPinned)
+                },
+                onToggleMute = {
+                    val nextMuted = mutedChatIds.toMutableSet()
+                    if (chat.id in nextMuted) {
+                        nextMuted.remove(chat.id)
+                    } else {
+                        nextMuted.add(chat.id)
+                    }
+                    mutedChatIds = nextMuted.toSet()
+                    ChatInboxPrefs.setMuted(context, chat.id, chat.id in nextMuted)
+                    actionChat = null
+                },
+                onClearChat = {
+                    viewModel.clearChat(chat.id, currentUserId, cloudChatEnabled = cloudChatEnabled)
+                    viewModel.loadChats(currentUserId, currentUserName, cloudChatEnabled = cloudChatEnabled)
+                    actionChat = null
+                },
+                onDeleteChat = {
+                    viewModel.deleteChat(chat.id, currentUserId, cloudChatEnabled = cloudChatEnabled)
+                    viewModel.loadChats(currentUserId, currentUserName, cloudChatEnabled = cloudChatEnabled)
+                    actionChat = null
+                }
             )
         }
 
@@ -875,6 +914,46 @@ private fun GroupChatDialog(
 }
 
 @Composable
+private fun ChatInboxActionsDialog(
+    title: String,
+    pinned: Boolean,
+    muted: Boolean,
+    onDismiss: () -> Unit,
+    onTogglePin: () -> Unit,
+    onToggleMute: () -> Unit,
+    onClearChat: () -> Unit,
+    onDeleteChat: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = HelloColors.DarkPanelStrong,
+        title = { Text(title, color = HelloColors.DarkText, fontWeight = FontWeight.Bold) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(HelloSpacing.Sm)) {
+                TextButton(onClick = onTogglePin) {
+                    Text(if (pinned) "Unpin chat" else "Pin chat", color = HelloColors.DarkAccent)
+                }
+                TextButton(onClick = onToggleMute) {
+                    Text(if (muted) "Unmute chat" else "Mute chat", color = HelloColors.DarkAccent)
+                }
+                TextButton(onClick = onClearChat) {
+                    Text("Clear chat", color = HelloColors.DarkAccent)
+                }
+                TextButton(onClick = onDeleteChat) {
+                    Text("Delete chat", color = HelloColors.DarkDanger)
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Close", color = HelloColors.DarkTextMuted)
+            }
+        }
+    )
+}
+
+@Composable
 private fun NetworkDiagnosticsDialog(
     checking: Boolean,
     enabled: Boolean,
@@ -964,4 +1043,9 @@ private fun User.profileSubtitle(): String {
         !phone.isNullOrBlank() -> phone
         else -> "Hello contact"
     }
+}
+
+private fun isCallChat(chat: Chat): Boolean {
+    val preview = chat.lastMessage.orEmpty().lowercase(Locale.US)
+    return "call" in preview || "missed" in preview || "video" in preview || "audio" in preview
 }

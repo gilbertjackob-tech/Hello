@@ -2,7 +2,7 @@ package com.glassbox.hello.client
 
 import android.content.Context
 import android.content.SharedPreferences
-import android.util.Log
+import com.glassbox.hello.debug.AppLog as Log
 import com.glassbox.hello.BuildConfig
 import com.glassbox.hello.core.AppConfig
 import com.google.gson.Gson

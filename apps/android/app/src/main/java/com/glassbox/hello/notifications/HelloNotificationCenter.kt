@@ -13,19 +13,19 @@ import android.media.AudioAttributes
 import android.media.RingtoneManager
 import android.net.Uri
 import android.os.Build
-import android.util.Log
+import com.glassbox.hello.debug.AppLog as Log
 import android.view.View
 import android.widget.RemoteViews
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
-import androidx.core.app.Person
+import androidx.core.app.RemoteInput
 import androidx.core.content.ContextCompat
-import androidx.core.graphics.drawable.IconCompat
 import com.glassbox.hello.MainActivity
 import com.glassbox.hello.R
 import com.glassbox.hello.auth.CloudSessionManager
 import com.glassbox.hello.calls.CallSignal
 import com.glassbox.hello.chat.ChatModels
+import com.glassbox.hello.chat.ChatInboxPrefs
 import com.glassbox.hello.network.SocketManager
 import java.net.HttpURLConnection
 import java.net.URL
@@ -209,12 +209,13 @@ object HelloNotificationCenter {
         val context = appContext ?: return
         val userId = currentUserId ?: return
         if (message.senderId == userId || message.chatId == openChatId) return
+        if (ChatInboxPrefs.isMuted(context, message.chatId)) return
         val body = notificationBodyFor(message)
         val payload = HelloPushPayload(
             type = "message",
             channel = NotificationPrefs.CHANNEL_MESSAGES,
             priority = "high",
-            senderName = message.senderName.ifBlank { "New message" },
+            senderName = normalizedLabel(message.senderName, "New message"),
             senderAvatar = message.senderAvatar,
             groupName = null,
             previewText = body,
@@ -233,7 +234,7 @@ object HelloNotificationCenter {
             type = raw.optString("type", "system"),
             channel = normalizeChannel(raw.optString("channel")),
             priority = raw.optString("priority", "default"),
-            senderName = raw.optString("senderName", "Hello"),
+            senderName = normalizedLabel(raw.optString("senderName"), "Hello"),
             senderAvatar = raw.optString("senderAvatar")
                 .ifBlank { raw.optString("callerAvatar") }
                 .ifBlank { raw.optString("avatarUrl") }
@@ -257,6 +258,9 @@ object HelloNotificationCenter {
     private fun renderNotification(context: Context, payload: HelloPushPayload, forceSystemNotification: Boolean = false) {
         if (!categoryEnabled(context, payload.channel)) return
         if (isQuietHoursBlocked(context, payload.channel)) return
+        val mutedChatId = payload.chatId?.takeIf { it.isNotBlank() }
+            ?: payload.targetType?.takeIf { it == "chat" }?.let { payload.targetId?.takeIf { id -> id.isNotBlank() } }
+        if (mutedChatId != null && ChatInboxPrefs.isMuted(context, mutedChatId)) return
         if (payload.targetType == "chat" && payload.targetId == openChatId) return
         if (isDuplicate(context, payload)) return
 
@@ -307,10 +311,16 @@ object HelloNotificationCenter {
             launchIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
+        val systemTitle = if (isCall) {
+            if (payload.isVideo) "Incoming video call" else "Incoming voice call"
+        } else {
+            title
+        }
+        val systemBody = if (isCall) title else body
         val builder = NotificationCompat.Builder(context, notificationChannelFor(payload))
             .setSmallIcon(if (isCall) R.drawable.ic_stat_call else R.drawable.ic_stat_message)
-            .setContentTitle(title)
-            .setContentText(body)
+            .setContentTitle(systemTitle)
+            .setContentText(systemBody)
             .setContentIntent(pendingIntent)
             .setAutoCancel(true)
             .setPriority(priorityFor(payload.priority))
@@ -326,7 +336,6 @@ object HelloNotificationCenter {
                 notificationIntent(context, payload, null),
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
-            val caller = personFor(payload.senderName, payload.senderAvatar, avatarBitmap)
             val declineIntent = PendingIntent.getActivity(
                 context,
                 (payload.collapseKey + "_decline").hashCode(),
@@ -346,6 +355,7 @@ object HelloNotificationCenter {
                 .setAutoCancel(false)
                 .setTimeoutAfter(45_000L)
                 .setColorized(true)
+                .setCustomContentView(buildCallRemoteViews(context, visualTheme, title, body, avatarBitmap, declineIntent, acceptIntent, false))
                 .setCustomBigContentView(buildCallRemoteViews(context, visualTheme, title, body, avatarBitmap, declineIntent, acceptIntent, true))
                 .setCustomHeadsUpContentView(buildCallRemoteViews(context, visualTheme, title, body, avatarBitmap, declineIntent, acceptIntent, true))
             if (!canUseFullScreenIntent(context)) {
@@ -353,6 +363,9 @@ object HelloNotificationCenter {
             }
         } else if (payload.channel == NotificationPrefs.CHANNEL_MESSAGES || payload.channel == NotificationPrefs.CHANNEL_MENTIONS) {
             avatarBitmap?.let { builder.setLargeIcon(it) }
+            if (!payload.chatId.isNullOrBlank()) {
+                builder.addAction(buildReplyAction(context, payload))
+            }
             builder
                 .setCustomContentView(buildMessageRemoteViews(context, visualTheme, title, body, avatarBitmap, payload.groupName, false))
                 .setCustomBigContentView(buildMessageRemoteViews(context, visualTheme, title, body, avatarBitmap, payload.groupName, true))
@@ -400,7 +413,7 @@ object HelloNotificationCenter {
             toUserId = calleeId,
             callerId = callerId,
             calleeId = calleeId,
-            callerName = payload.senderName.ifBlank { "Hello" },
+            callerName = normalizedLabel(payload.senderName, "Hello"),
             callerAvatar = payload.senderAvatar,
             calleeName = payload.groupName,
             calleeAvatar = null,
@@ -459,21 +472,21 @@ object HelloNotificationCenter {
             toUserId = toUserId,
             callerId = callerId,
             calleeId = calleeId,
-            callerName = raw.optString("callerName", raw.optString("senderName", "Hello call")),
-            callerAvatar = raw.optString("callerAvatar").ifBlank { null },
-            calleeName = raw.optString("calleeName").ifBlank { null },
-            calleeAvatar = raw.optString("calleeAvatar").ifBlank { null },
-            type = raw.optString("type", if (raw.optBoolean("isVideo", false)) "video" else "audio"),
+            callerName = normalizedLabel(raw.optString("callerName", raw.optString("senderName", "Hello call")), "Hello call"),
+            callerAvatar = normalizedLabel(raw.optString("callerAvatar"), "").ifBlank { null },
+            calleeName = normalizedLabel(raw.optString("calleeName"), "").ifBlank { null },
+            calleeAvatar = normalizedLabel(raw.optString("calleeAvatar"), "").ifBlank { null },
+            type = normalizedLabel(raw.optString("type", if (raw.optBoolean("isVideo", false)) "video" else "audio"), if (raw.optBoolean("isVideo", false)) "video" else "audio"),
             isVideo = raw.optBoolean("isVideo", raw.optString("type") == "video"),
-            offerSdp = offer?.optString("sdp")?.ifBlank { null },
-            answerSdp = answer?.optString("sdp")?.ifBlank { null },
-            candidate = candidate?.optString("candidate")?.ifBlank { null },
-            sdpMid = candidate?.optString("sdpMid")?.ifBlank { null },
+            offerSdp = offer?.optString("sdp")?.let { normalizedLabel(it, "") }?.ifBlank { null },
+            answerSdp = answer?.optString("sdp")?.let { normalizedLabel(it, "") }?.ifBlank { null },
+            candidate = candidate?.optString("candidate")?.let { normalizedLabel(it, "") }?.ifBlank { null },
+            sdpMid = candidate?.optString("sdpMid")?.let { normalizedLabel(it, "") }?.ifBlank { null },
             sdpMLineIndex = candidate?.takeIf { it.has("sdpMLineIndex") }?.optInt("sdpMLineIndex"),
-            reason = raw.optString("reason").ifBlank { null },
+            reason = normalizedLabel(raw.optString("reason"), "").ifBlank { null },
             timestamp = if (raw.has("timestamp") && !raw.isNull("timestamp")) raw.optLong("timestamp") else null,
             attempt = raw.optInt("attempt", 1),
-            event = raw.optString("event").ifBlank { null }
+            event = normalizedLabel(raw.optString("event"), "").ifBlank { null }
         )
     }
 
@@ -482,6 +495,16 @@ object HelloNotificationCenter {
             NotificationManagerCompat.from(context).canUseFullScreenIntent()
         } else {
             true
+        }
+    }
+
+    private fun normalizedLabel(value: String?, fallback: String): String {
+        val normalized = value?.trim().orEmpty()
+        return when {
+            normalized.isBlank() -> fallback
+            normalized.equals("null", ignoreCase = true) -> fallback
+            normalized.equals("undefined", ignoreCase = true) -> fallback
+            else -> normalized
         }
     }
 
@@ -577,6 +600,30 @@ object HelloNotificationCenter {
         }
     }
 
+    private fun buildReplyAction(context: Context, payload: HelloPushPayload): NotificationCompat.Action {
+        val replyIntent = PendingIntent.getBroadcast(
+            context,
+            (payload.collapseKey + "_reply").hashCode(),
+            Intent(context, ChatNotificationReplyReceiver::class.java).apply {
+                action = ChatNotificationReplyReceiver.ACTION_REPLY_MESSAGE
+                putExtra(ChatNotificationReplyReceiver.EXTRA_CHAT_ID, payload.chatId.orEmpty())
+                putExtra("senderName", payload.senderName)
+            },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val remoteInput = RemoteInput.Builder(ChatNotificationReplyReceiver.KEY_TEXT_REPLY)
+            .setLabel("Reply")
+            .build()
+        return NotificationCompat.Action.Builder(
+            R.drawable.ic_stat_message,
+            "Reply",
+            replyIntent
+        )
+            .addRemoteInput(remoteInput)
+            .setAllowGeneratedReplies(true)
+            .build()
+    }
+
     private fun buildCallRemoteViews(
         context: Context,
         theme: NotificationVisualTheme,
@@ -665,14 +712,6 @@ object HelloNotificationCenter {
                 setSound(soundUri, attrs)
             }
         }
-    }
-
-    private fun personFor(name: String, avatarUrl: String?, bitmap: Bitmap?): Person {
-        return Person.Builder()
-            .setName(name.ifBlank { "Hello user" })
-            .setUri(avatarUrl)
-            .apply { bitmap?.let { setIcon(IconCompat.createWithBitmap(it)) } }
-            .build()
     }
 
     private suspend fun loadNotificationBitmap(url: String?): Bitmap? = withContext(Dispatchers.IO) {

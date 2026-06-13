@@ -3,7 +3,7 @@ package com.glassbox.hello.calls
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
-import android.util.Log
+import com.glassbox.hello.debug.AppLog as Log
 import com.glassbox.hello.auth.CloudSessionManager
 import com.glassbox.hello.core.AppConfig
 import com.glassbox.hello.core.User
@@ -44,8 +44,18 @@ class CallSignalingClient(context: Context) : CallSocket {
         connectSocket(user, token, AppConfig.CHAT_CLOUD_BASE_URL, allowFallback = true)
     }
 
+    override fun disconnect() {
+        Log.d(TAG, "Disconnecting cloud call signaling userId=${currentUser?.id}")
+        connected = false
+        socket?.close(1000, "disconnect")
+        socket = null
+        currentUser = null
+        dispatchOnMain { onConnectedChanged?.invoke(false) }
+    }
+
     private fun connectSocket(user: User, token: String, origin: String, allowFallback: Boolean) {
         val wsUrl = cloudWebSocketUrl(origin, token)
+        Log.d(TAG, "Connecting cloud call signaling userId=${user.id} origin=$origin")
         val request = Request.Builder().url(wsUrl).build()
         socket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
@@ -71,6 +81,7 @@ class CallSignalingClient(context: Context) : CallSocket {
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                Log.d(TAG, "Cloud call signaling closed for ${user.id} origin=$origin code=$code reason=$reason")
                 connected = false
                 dispatchOnMain { onConnectedChanged?.invoke(false) }
             }
@@ -117,7 +128,20 @@ class CallSignalingClient(context: Context) : CallSocket {
         if (!payload.has("callId") && payload.has("roomId")) payload.put("callId", payload.optString("roomId"))
         payload.put("event", event)
         payload.put("eventId", payload.optString("eventId").ifBlank { "evt_${UUID.randomUUID().toString().replace("-", "")}" })
-        socket?.send(JSONObject().put("event", event).put("payload", payload).toString())
+        val activeSocket = socket
+        if (activeSocket == null) {
+            Log.w(TAG, "Skipping cloud call send event=$event callId=${payload.optString("callId")} reason=no_socket connected=$connected")
+            return
+        }
+        val envelope = JSONObject().put("event", event).put("payload", payload).toString()
+        val sent = activeSocket.send(envelope)
+        Log.d(
+            TAG,
+            "Cloud call send event=$event callId=${payload.optString("callId")} eventId=${payload.optString("eventId")} connected=$connected sent=$sent"
+        )
+        if (!sent) {
+            Log.w(TAG, "Cloud call send failed event=$event callId=${payload.optString("callId")} eventId=${payload.optString("eventId")}")
+        }
     }
 
     private fun encode(value: String): String = java.net.URLEncoder.encode(value, "UTF-8").replace("+", "%20")

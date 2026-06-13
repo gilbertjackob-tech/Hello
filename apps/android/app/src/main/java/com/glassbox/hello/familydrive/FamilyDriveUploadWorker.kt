@@ -12,11 +12,14 @@ import androidx.core.content.ContextCompat
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingWorkPolicy
+import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
+import java.util.concurrent.TimeUnit
 
 class FamilyDriveUploadWorker(
     context: Context,
@@ -41,10 +44,12 @@ class FamilyDriveUploadWorker(
         private const val CHANNEL_NAME = "Family Drive uploads"
         private const val NOTIFICATION_ID = 8026
         private const val UNIQUE_WORK_NAME = "family_drive_pending_uploads"
+        private const val UNIQUE_PERIODIC_WORK_NAME = "family_drive_pending_uploads_periodic"
         private const val KEY_UPLOADER_ID = "uploader_id"
 
         fun enqueue(context: Context, uploaderId: String) {
             if (uploaderId.isBlank()) return
+            val appContext = context.applicationContext
             val request = OneTimeWorkRequestBuilder<FamilyDriveUploadWorker>()
                 .setInputData(workDataOf(KEY_UPLOADER_ID to uploaderId))
                 .setConstraints(
@@ -54,10 +59,25 @@ class FamilyDriveUploadWorker(
                 )
                 .build()
 
-            WorkManager.getInstance(context.applicationContext).enqueueUniqueWork(
+            WorkManager.getInstance(appContext).enqueueUniqueWork(
                 UNIQUE_WORK_NAME,
                 ExistingWorkPolicy.KEEP,
                 request
+            )
+
+            val periodicRequest = PeriodicWorkRequestBuilder<FamilyDriveUploadWorker>(15, TimeUnit.MINUTES)
+                .setInputData(workDataOf(KEY_UPLOADER_ID to uploaderId))
+                .setConstraints(
+                    Constraints.Builder()
+                        .setRequiredNetworkType(NetworkType.CONNECTED)
+                        .build()
+                )
+                .build()
+
+            WorkManager.getInstance(appContext).enqueueUniquePeriodicWork(
+                UNIQUE_PERIODIC_WORK_NAME,
+                ExistingPeriodicWorkPolicy.KEEP,
+                periodicRequest
             )
         }
 

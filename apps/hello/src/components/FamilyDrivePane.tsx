@@ -301,6 +301,11 @@ export function FamilyDrivePane({ currentUser, visible }: FamilyDrivePaneProps) 
     );
   }, [contactSearch, contacts]);
 
+  const selectedContacts = useMemo(
+    () => contacts.filter((contact) => Boolean(selectedContactRoles[contact.id])),
+    [contacts, selectedContactRoles],
+  );
+
   if (!visible) return null;
 
   return (
@@ -322,30 +327,85 @@ export function FamilyDrivePane({ currentUser, visible }: FamilyDrivePaneProps) 
         </div>
       </div>
 
-      <div className="grid min-h-0 flex-1 gap-0 overflow-hidden md:grid-cols-[320px_minmax(0,1fr)]">
-        <aside className="min-h-0 overflow-y-auto border-r border-[var(--hello-border)] p-4 custom-scrollbar">
-          <div className="rounded-2xl border border-[var(--hello-border)] bg-white/70 p-4 shadow-sm">
-            <div className="mb-3 flex items-center gap-2 text-sm font-semibold">
-              <Users className="h-4 w-4" />
-              Create Circle
+      <div className="grid min-h-0 flex-1 gap-0 overflow-hidden md:grid-cols-[360px_minmax(0,1fr)]">
+        <aside className="min-h-0 overflow-y-auto border-r border-[var(--hello-border)] bg-[linear-gradient(180deg,rgba(255,255,255,0.65),rgba(255,255,255,0.35))] p-4 custom-scrollbar md:p-5">
+          <div className="rounded-[28px] border border-pink-200/80 bg-white/85 p-5 shadow-[0_18px_50px_rgba(166,63,111,0.10)] backdrop-blur">
+            <div className="mb-2 flex items-start justify-between gap-3">
+              <div>
+                <div className="flex items-center gap-2 text-sm font-semibold text-[var(--hello-text)]">
+                  <Users className="h-4 w-4" />
+                  Create Circle
+                </div>
+                <p className="mt-1 text-xs leading-5 text-[var(--hello-muted)]">
+                  Give the circle a name, choose people, and set permissions before saving.
+                </p>
+              </div>
+              <div className="rounded-full bg-pink-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-pink-500">
+                Draft
+              </div>
             </div>
-            <input
-              value={circleName}
-              onChange={(event) => setCircleName(event.target.value)}
-              placeholder="Circle name"
-              className="mb-3 w-full rounded-xl border border-[var(--hello-border)] bg-white px-3 py-2 text-sm outline-none"
-            />
-            <input
-              value={contactSearch}
-              onChange={(event) => setContactSearch(event.target.value)}
-              placeholder="Search members by name or user id"
-              className="mb-3 w-full rounded-xl border border-[var(--hello-border)] bg-white px-3 py-2 text-sm outline-none"
-            />
-            <div className="mb-3 max-h-40 space-y-2 overflow-auto rounded-xl border border-[var(--hello-border)] bg-white p-2">
+
+            <div className="space-y-3">
+              <div>
+                <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--hello-muted)]">
+                  Circle name
+                </label>
+                <input
+                  value={circleName}
+                  onChange={(event) => setCircleName(event.target.value)}
+                  placeholder="Family trip, Tests, School"
+                  className="w-full rounded-2xl border border-[var(--hello-border)] bg-white px-4 py-3 text-sm outline-none transition placeholder:text-[var(--hello-muted)] focus:border-pink-300 focus:ring-2 focus:ring-pink-100"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--hello-muted)]">
+                  Find people
+                </label>
+                <input
+                  value={contactSearch}
+                  onChange={(event) => setContactSearch(event.target.value)}
+                  placeholder="Search by name or user id"
+                  className="w-full rounded-2xl border border-[var(--hello-border)] bg-white px-4 py-3 text-sm outline-none transition placeholder:text-[var(--hello-muted)] focus:border-pink-300 focus:ring-2 focus:ring-pink-100"
+                />
+              </div>
+            </div>
+
+            <div className="mt-4 flex items-center justify-between gap-3">
+              <div className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--hello-muted)]">
+                Members
+              </div>
+              <div className="text-xs text-[var(--hello-muted)]">
+                {selectedContacts.length ? `${selectedContacts.length} selected` : "No members selected"}
+              </div>
+            </div>
+
+            {selectedContacts.length ? (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {selectedContacts.map((contact) => (
+                  <span
+                    key={contact.id}
+                    className="inline-flex items-center gap-2 rounded-full border border-pink-200 bg-pink-50 px-3 py-1.5 text-xs font-semibold text-pink-600"
+                  >
+                    <span className="max-w-[120px] truncate">{contact.name}</span>
+                    <span className="rounded-full bg-white px-2 py-0.5 text-[10px] uppercase tracking-[0.12em] text-pink-500">
+                      {selectedContactRoles[contact.id]}
+                    </span>
+                  </span>
+                ))}
+              </div>
+            ) : null}
+
+            <div className="mt-4 max-h-56 overflow-auto rounded-2xl border border-[var(--hello-border)] bg-white/95 p-3 custom-scrollbar">
               {filteredContacts.map((contact) => {
                 const checked = Boolean(selectedContactRoles[contact.id]);
                 return (
-                  <label key={contact.id} className="flex cursor-pointer items-center gap-3 rounded-lg px-2 py-2 hover:bg-pink-50">
+                  <label
+                    key={contact.id}
+                    className={`flex cursor-pointer items-center gap-3 rounded-2xl px-3 py-3 transition ${
+                      checked ? "border border-pink-200 bg-pink-50/80 shadow-sm" : "hover:bg-pink-50/60"
+                    }`}
+                  >
                     <input
                       type="checkbox"
                       checked={checked}
@@ -360,7 +420,7 @@ export function FamilyDrivePane({ currentUser, visible }: FamilyDrivePaneProps) 
                     />
                     <Avatar user={contact} />
                     <div className="min-w-0 flex-1">
-                      <div className="truncate text-sm font-semibold">{contact.name}</div>
+                      <div className="truncate text-sm font-semibold text-[var(--hello-text)]">{contact.name}</div>
                       <div className="truncate text-xs text-[var(--hello-muted)]">{contact.username ? `@${contact.username}` : contact.id}</div>
                     </div>
                     {checked ? (
@@ -373,7 +433,7 @@ export function FamilyDrivePane({ currentUser, visible }: FamilyDrivePaneProps) 
                           }))
                         }
                         onClick={(event) => event.stopPropagation()}
-                        className="rounded-full border border-[var(--hello-border)] bg-white px-3 py-1 text-xs font-semibold text-[var(--hello-text)] outline-none"
+                        className="min-w-[112px] rounded-full border border-[var(--hello-border)] bg-white px-3 py-1.5 text-xs font-semibold text-[var(--hello-text)] outline-none"
                       >
                         <option value="view">Can view</option>
                         <option value="add">Can add</option>
@@ -384,7 +444,7 @@ export function FamilyDrivePane({ currentUser, visible }: FamilyDrivePaneProps) 
                 );
               })}
               {!filteredContacts.length ? (
-                <div className="rounded-lg border border-dashed border-[var(--hello-border)] px-3 py-4 text-xs text-[var(--hello-muted)]">
+                <div className="rounded-2xl border border-dashed border-[var(--hello-border)] px-4 py-5 text-sm text-[var(--hello-muted)]">
                   No users found for this search.
                 </div>
               ) : null}
@@ -393,13 +453,13 @@ export function FamilyDrivePane({ currentUser, visible }: FamilyDrivePaneProps) 
               type="button"
               onClick={() => void handleCreateCircle()}
               disabled={!circleName.trim()}
-              className="w-full rounded-full bg-[var(--hello-accent)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+              className="mt-4 w-full rounded-full bg-[linear-gradient(135deg,var(--hello-accent),#ec4899)] px-4 py-3 text-sm font-semibold text-white shadow-[0_10px_24px_rgba(236,72,153,0.22)] transition hover:brightness-105 disabled:opacity-50"
             >
               Create Circle
             </button>
           </div>
 
-          <div className="mt-4 space-y-3">
+          <div className="mt-5 space-y-3">
             {circles.map((circle) => (
               <button
                 key={circle.id}
@@ -409,7 +469,7 @@ export function FamilyDrivePane({ currentUser, visible }: FamilyDrivePaneProps) 
                   setSelectedEventId(null);
                   setView("events");
                 }}
-                className={`w-full rounded-2xl border p-4 text-left shadow-sm transition ${
+                className={`w-full rounded-3xl border p-4 text-left shadow-sm transition ${
                   selectedCircleId === circle.id ? "border-pink-400 bg-pink-50" : "border-[var(--hello-border)] bg-white/80"
                 }`}
               >
@@ -451,7 +511,7 @@ export function FamilyDrivePane({ currentUser, visible }: FamilyDrivePaneProps) 
               </button>
             ))}
             {!loading && !circles.length ? (
-              <div className="rounded-2xl border border-dashed border-[var(--hello-border)] bg-white/60 p-4 text-sm text-[var(--hello-muted)]">
+              <div className="rounded-3xl border border-dashed border-[var(--hello-border)] bg-white/60 p-5 text-sm text-[var(--hello-muted)]">
                 No circles yet. Create one and add chat contacts.
               </div>
             ) : null}

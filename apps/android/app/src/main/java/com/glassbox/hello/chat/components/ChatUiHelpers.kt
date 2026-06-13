@@ -26,7 +26,6 @@ val ComposerEmojis = QuickReactions + listOf(
 fun List<ChatModels.Message>.visibleForUser(currentUserId: String): List<ChatModels.Message> {
     return asSequence()
         .filterNot { it.deletedFor.orEmpty().contains(currentUserId) }
-        .sortedBy { it.timestamp }
         .toList()
 }
 
@@ -35,7 +34,7 @@ fun buildTimelineGrouping(
     index: Int,
     currentUserId: String,
     chatIsGroup: Boolean,
-    unreadCount: Int
+    unreadStartIndex: Int?
 ): TimelineGrouping {
     val message = messages[index]
     val previous = messages.getOrNull(index - 1)
@@ -44,7 +43,6 @@ fun buildTimelineGrouping(
     val compactWithPrevious = previous != null && shouldGroupTogether(previous, message)
     val compactWithNext = next != null && shouldGroupTogether(message, next)
     val showSenderName = chatIsGroup && message.senderId != currentUserId && !compactWithPrevious
-    val unreadStartIndex = unreadBoundaryIndex(messages, currentUserId, unreadCount)
     return TimelineGrouping(
         showDayDivider = showDayDivider,
         dayLabel = if (showDayDivider) formatMessageDate(message.timestamp) else null,
@@ -53,6 +51,39 @@ fun buildTimelineGrouping(
         compactWithPrevious = compactWithPrevious,
         compactWithNext = compactWithNext
     )
+}
+
+fun buildImageClusterTimeline(messages: List<ChatModels.Message>): ImageClusterTimeline {
+    if (messages.size < 2) return ImageClusterTimeline(emptyMap(), emptyMap())
+    val clusters = mutableMapOf<Int, List<ChatModels.Message>>()
+    val followers = mutableMapOf<Int, Int>()
+    var index = 0
+    while (index < messages.lastIndex) {
+        val lead = messages[index]
+        if (!isCollageImageMessage(lead)) {
+            index++
+            continue
+        }
+        val cluster = mutableListOf(lead)
+        var nextIndex = index + 1
+        while (nextIndex < messages.size) {
+            val candidate = messages[nextIndex]
+            val previous = messages[nextIndex - 1]
+            if (!isCollageImageMessage(candidate) || !shouldGroupTogether(previous, candidate)) break
+            cluster += candidate
+            nextIndex++
+        }
+        if (cluster.size >= 2) {
+            clusters[index] = cluster.toList()
+            for (followerIndex in (index + 1) until nextIndex) {
+                followers[followerIndex] = index
+            }
+            index = nextIndex
+        } else {
+            index++
+        }
+    }
+    return ImageClusterTimeline(clustersByLeadIndex = clusters, followerToLeadIndex = followers)
 }
 
 fun normalizeAttachmentUrl(url: String?): String? {
@@ -175,6 +206,10 @@ private fun shouldGroupTogether(previous: ChatModels.Message, current: ChatModel
     return previous.senderId == current.senderId &&
         sameMessageDay(previous.timestamp, current.timestamp) &&
         current.timestamp - previous.timestamp < 5 * 60 * 1000
+}
+
+private fun isCollageImageMessage(message: ChatModels.Message): Boolean {
+    return attachmentKind(message) == "image" && !normalizeAttachmentUrl(message.attachmentUrl).isNullOrBlank()
 }
 
 private fun unreadBoundaryIndex(messages: List<ChatModels.Message>, currentUserId: String, unreadCount: Int): Int? {

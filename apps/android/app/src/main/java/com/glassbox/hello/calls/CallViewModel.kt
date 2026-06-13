@@ -1,7 +1,8 @@
 package com.glassbox.hello.calls
 
 import android.content.Context
-import android.util.Log
+import android.os.SystemClock
+import com.glassbox.hello.debug.AppLog as Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.glassbox.hello.chat.ChatModels
@@ -37,6 +38,7 @@ class CallViewModel(
     private var connectionTimeoutJob: Job? = null
     private var terminalResetJob: Job? = null
     private var historyRefreshJob: Job? = null
+    private var startCallJob: Job? = null
     private val pendingOffers = mutableMapOf<String, CallSignal>()
     private val seenCallEventIds = linkedSetOf<String>()
     private val startedCallIds = linkedSetOf<String>()
@@ -86,16 +88,7 @@ class CallViewModel(
                 socketManager.sendIceCandidate(it.toJson())
             }
         }
-        callEngine.onDebugEvent = { message ->
-            val patch = when {
-                message.startsWith("peerState=") -> _state.value.copy(debugPeerState = message.removePrefix("peerState="))
-                message.startsWith("iceState=") -> _state.value.copy(debugIceState = message.removePrefix("iceState="))
-                message.startsWith("cameraStatus=") -> _state.value.copy(debugCameraStatus = message.removePrefix("cameraStatus="))
-                else -> _state.value
-            }
-            _state.value = patch
-            addDebug("ANDROID_MEDIA: $message")
-        }
+        callEngine.onDebugEvent = null
         callEngine.onPhaseChanged = { phase ->
             val active = phase == CallMediaPhase.Connected
             _state.value = _state.value.copy(
@@ -131,6 +124,20 @@ class CallViewModel(
 
     fun connect(user: User) {
         currentUser = user
+        if (socketManager !is SocketManager) {
+            addDebug("ANDROID: switching signaling transport to local socket")
+            socketManager.disconnect()
+            socketManager = SocketManager.getInstance().also { localSocket ->
+                localSocket.onConnectedChanged = { connected ->
+                    _state.value = _state.value.copy(socketConnected = connected)
+                    if (!connected && _state.value.status in setOf(CallUiStatus.Outgoing, CallUiStatus.Connecting, CallUiStatus.Active)) {
+                        _state.value = _state.value.copy(mediaPhase = CallMediaPhase.Reconnecting, message = "Network reconnecting...")
+                    }
+                }
+                localSocket.onCallEvent = { event, payload -> handleSocketEvent(event, payload) }
+                localSocket.onSessionRevoked = { payload -> onSessionRevoked?.invoke(payload) }
+            }
+        }
         HelloDebugLog.d("Call", "connectLocal userId=${user.id}")
         socketManager.connect(user)
     }
@@ -140,6 +147,13 @@ class CallViewModel(
         appContext = context.applicationContext
         HelloDebugLog.d("Call", "connectCloud userId=${user.id}")
         repository = CloudCallRepository(context.applicationContext)
+        if (socketManager is CallSignalingClient) {
+            addDebug("ANDROID: reconnecting existing cloud signaling transport")
+            socketManager.disconnect()
+        } else {
+            addDebug("ANDROID: switching signaling transport to cloud socket")
+            socketManager.disconnect()
+        }
         socketManager = CallSignalingClient(context.applicationContext).also { cloudSocket ->
             cloudSocket.onConnectedChanged = { connected ->
                 _state.value = _state.value.copy(socketConnected = connected)
@@ -154,12 +168,7 @@ class CallViewModel(
     }
 
     private fun addDebug(message: String) {
-        Log.d(TAG, "[CALL_DEBUG] $message")
-        val current = _state.value
-        _state.value = current.copy(
-            debugLastEvent = message,
-            debugEvents = (current.debugEvents + "${java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())} $message").takeLast(80)
-        )
+        // Production builds keep call signaling behavior but do not collect or expose debug traces.
     }
 
     private fun parseCandidateType(candidate: String?): String? {
@@ -171,32 +180,27 @@ class CallViewModel(
         return parseCandidateType(candidate)?.lowercase() ?: "unknown"
     }
 
-    fun callDebugText(): String {
-        val state = _state.value
-        val signal = state.signal
-        return buildString {
-            appendLine("Call ID: ${signal?.callId ?: state.activeRoom?.id ?: "unknown"}")
-            appendLine("Direction: ${if (signal?.callerId == currentUser?.id) "outgoing" else "incoming"}")
-            appendLine("Type: ${signal?.type ?: state.activeRoom?.type ?: "unknown"}")
-            appendLine("Last received event: ${state.debugLastEvent ?: "none"}")
-            appendLine("Offer received: ${if (state.debugOfferReceived) "yes" else "no"}")
-            appendLine("Answer received: ${if (state.debugAnswerReceived) "yes" else "no"}")
-            appendLine("Answer sent: ${if (state.debugAnswerSent) "yes" else "no"}")
-            appendLine("ICE sent count: ${state.debugIceSentCount}")
-            appendLine("ICE received count: ${state.debugIceReceivedCount}")
-            appendLine("TURN configured: ${if (state.debugTurnConfigured) "yes" else "no"}")
-            appendLine("Force relay: ${if (state.debugForceRelay) "yes" else "no"}")
-            appendLine("Last ICE candidate type: ${state.debugCandidateType ?: "unknown"}")
-            appendLine("ICE config used: ${state.debugIceConfigUsed ?: "default STUN fallback"}")
-            appendLine("Peer state: ${state.debugPeerState ?: "unknown"}")
-            appendLine("ICE state: ${state.debugIceState ?: "unknown"}")
-            appendLine("Media phase: ${state.mediaPhase}")
-            appendLine("Last error: ${state.debugLastError ?: "none"}")
-            appendLine("Camera status: ${state.debugCameraStatus ?: "unknown"}")
-            appendLine()
-            appendLine("Events:")
-            state.debugEvents.forEach { appendLine(it) }
+    private suspend fun ensureSignalingReady(context: Context?, user: User): Boolean {
+        if (socketManager.isConnected()) return true
+        addDebug("ANDROID: signaling reconnect requested before call start")
+        if (context != null) {
+            connect(context, user)
+        } else {
+            connect(user)
         }
+        repeat(30) {
+            if (socketManager.isConnected()) {
+                addDebug("ANDROID: signaling connected after reconnect wait")
+                return true
+            }
+            delay(200)
+        }
+        addDebug("ANDROID: signaling still disconnected after reconnect wait")
+        return socketManager.isConnected()
+    }
+
+    fun callDebugText(): String {
+        return "Debug diagnostics are disabled."
     }
 
     fun loadHistory(userId: String) {
@@ -218,7 +222,9 @@ class CallViewModel(
     }
 
     fun startCall(context: Context?, chat: ChatModels.Chat, user: User, isVideo: Boolean) {
+        val startedAt = SystemClock.elapsedRealtime()
         HelloDebugLog.d("Call", "startCall chatId=${chat.id} userId=${user.id} isGroup=${chat.isGroup} isVideo=$isVideo")
+        Log.d(TAG, "call_start_requested chatId=${chat.id} isGroup=${chat.isGroup} isVideo=$isVideo")
         appContext = context?.applicationContext ?: appContext
         if (chat.isGroup) {
             startGroupCall(context, chat, user, isVideo)
@@ -229,8 +235,8 @@ class CallViewModel(
             terminal(CallUiStatus.Failed, "Select a direct chat before starting a call.", null)
             return
         }
-        if (!socketManager.isConnected()) {
-            terminal(CallUiStatus.Failed, "Socket is disconnected. Check Family Network and retry.", null)
+        if (startCallJob?.isActive == true) {
+            addDebug("ANDROID: ignored duplicate direct start while call setup is already running")
             return
         }
         if (isCallOccupying(_state.value.status)) {
@@ -238,8 +244,26 @@ class CallViewModel(
             return
         }
 
-        viewModelScope.launch {
+        _state.value = _state.value.copy(
+            status = CallUiStatus.Outgoing,
+            peerName = other.name,
+            peerAvatar = other.avatar,
+            message = "Starting call...",
+            socketConnected = socketManager.isConnected(),
+            mediaPhase = CallMediaPhase.Preparing
+        )
+
+        startCallJob = viewModelScope.launch {
+            if (!ensureSignalingReady(context, user)) {
+                terminal(
+                    CallUiStatus.Failed,
+                    "Call service is still connecting. Check your cloud chat session and retry.",
+                    null
+                )
+                return@launch
+            }
             val type = if (isVideo) "video" else "audio"
+            Log.d(TAG, "call_start_signaling_ready chatId=${chat.id} elapsedMs=${SystemClock.elapsedRealtime() - startedAt}")
             val result = repository.createDirectCall(
                 callerId = user.id,
                 calleeId = other.id,
@@ -274,6 +298,7 @@ class CallViewModel(
                 mediaPhase = CallMediaPhase.Preparing
             )
             addDebug("ANDROID: outgoing call created callId=$callId type=$type to=${other.id}")
+            Log.d(TAG, "call_start_created callId=$callId type=$type elapsedMs=${SystemClock.elapsedRealtime() - startedAt}")
             if (startedCallIds.add(signal.callId)) {
                 addDebug("ANDROID: emit call:start")
                 socketManager.startCall(signal.toJson())
@@ -286,6 +311,7 @@ class CallViewModel(
             prepareIceConfigSafely()
             runCatching {
                 callEngine.startOutgoing(context, isVideo)
+                Log.d(TAG, "call_start_media_bootstrap callId=$callId isVideo=$isVideo elapsedMs=${SystemClock.elapsedRealtime() - startedAt}")
             }.onFailure { error ->
                 _state.value = _state.value.copy(
                     debugLastError = error.message ?: "outgoing_start_failed",
@@ -295,12 +321,18 @@ class CallViewModel(
             }
             startMissedTimeout(signal)
             startConnectionTimeout(signal)
+        }.also { job ->
+            job.invokeOnCompletion {
+                if (startCallJob === job) {
+                    startCallJob = null
+                }
+            }
         }
     }
 
     private fun startGroupCall(context: Context?, chat: ChatModels.Chat, user: User, isVideo: Boolean) {
-        if (!socketManager.isConnected()) {
-            terminal(CallUiStatus.Failed, "Socket is disconnected. Check Family Network and retry.", null)
+        if (startCallJob?.isActive == true) {
+            addDebug("ANDROID: ignored duplicate group start while call setup is already running")
             return
         }
         if (isCallOccupying(_state.value.status)) {
@@ -319,8 +351,25 @@ class CallViewModel(
             return
         }
 
-        viewModelScope.launch {
+        _state.value = _state.value.copy(
+            status = CallUiStatus.Outgoing,
+            peerName = chat.name.ifBlank { "Group call" },
+            peerAvatar = null,
+            message = "Starting group call...",
+            socketConnected = socketManager.isConnected(),
+            mediaPhase = CallMediaPhase.Preparing
+        )
+
+        startCallJob = viewModelScope.launch {
             runCatching {
+                if (!ensureSignalingReady(context, user)) {
+                    terminal(
+                        CallUiStatus.Failed,
+                        "Call service is still connecting. Check your cloud chat session and retry.",
+                        null
+                    )
+                    return@launch
+                }
                 val type = "audio"
                 val room = repository.createGroupRoom(
                     chatId = chat.id,
@@ -355,13 +404,21 @@ class CallViewModel(
                 addDebug("ANDROID: group start failed error=${error.message}")
                 terminal(CallUiStatus.Failed, error.message ?: "Could not start group call", _state.value.signal)
             }
+        }.also { job ->
+            job.invokeOnCompletion {
+                if (startCallJob === job) {
+                    startCallJob = null
+                }
+            }
         }
     }
 
     fun acceptIncoming(context: Context?, forceAudio: Boolean = false) {
+        val startedAt = SystemClock.elapsedRealtime()
         val user = currentUser ?: return
         appContext = context?.applicationContext ?: appContext
         HelloDebugLog.d("Call", "acceptIncoming userId=${user.id} callId=${_state.value.signal?.callId ?: _state.value.activeRoom?.id} forceAudio=$forceAudio")
+        Log.d(TAG, "call_accept_requested callId=${_state.value.signal?.callId ?: _state.value.activeRoom?.id} forceAudio=$forceAudio")
         _state.value.activeRoom?.let {
             IncomingCallRinger.stop(it.id)
             acceptIncomingGroup(context, user, it)
@@ -386,6 +443,7 @@ class CallViewModel(
             prepareIceConfigSafely()
             runCatching {
                 socketManager.acceptCall(accept.toJson())
+                Log.d(TAG, "call_accept_signal_sent callId=${acceptedSignal.callId} elapsedMs=${SystemClock.elapsedRealtime() - startedAt}")
             }.onFailure { error ->
                 addDebug("ANDROID: accept signal failed error=${error.message}")
                 terminal(CallUiStatus.Failed, error.message ?: "Could not accept call", acceptedSignal)
@@ -396,6 +454,7 @@ class CallViewModel(
                 addDebug("ANDROID: waiting for offer after accept")
             } else {
                 startIncomingMedia(acceptedSignal)
+                Log.d(TAG, "call_accept_start_incoming_media callId=${acceptedSignal.callId} elapsedMs=${SystemClock.elapsedRealtime() - startedAt}")
             }
         }
     }
@@ -552,30 +611,45 @@ class CallViewModel(
     }
 
     fun toggleCamera() {
+        val startedAt = SystemClock.elapsedRealtime()
         val next = !_state.value.cameraOff
         callEngine.setCameraOff(next)
         _state.value = _state.value.copy(cameraOff = next)
+        Log.d(TAG, "camera_toggle cameraOff=$next elapsedMs=${SystemClock.elapsedRealtime() - startedAt}")
     }
 
     fun switchCamera() {
+        val startedAt = SystemClock.elapsedRealtime()
         callEngine.switchCamera()
+        Log.d(TAG, "camera_switch_requested elapsedMs=${SystemClock.elapsedRealtime() - startedAt}")
     }
 
     fun setVideoQuality(profile: VideoQualityProfile) {
-        callEngine.setPreferredVideoProfile(profile)
+        val startedAt = SystemClock.elapsedRealtime()
+        if (_state.value.selectedVideoQuality == profile) {
+            Log.d(TAG, "video_quality_skip profile=${profile.name} reason=already_selected")
+            return
+        }
         _state.value = _state.value.copy(selectedVideoQuality = profile)
+        callEngine.setPreferredVideoProfile(profile)
+        Log.d(TAG, "video_quality_apply profile=${profile.name} elapsedMs=${SystemClock.elapsedRealtime() - startedAt}")
     }
 
     fun setVisualLook(look: CallVisualLook) {
+        if (_state.value.selectedVisualLook == look) return
         _state.value = _state.value.copy(selectedVisualLook = look)
     }
 
     fun attachLocalRenderer(renderer: SurfaceViewRenderer) {
+        val startedAt = SystemClock.elapsedRealtime()
         callEngine.attachLocalRenderer(renderer)
+        Log.d(TAG, "local_renderer_attach_requested elapsedMs=${SystemClock.elapsedRealtime() - startedAt}")
     }
 
     fun attachRemoteRenderer(renderer: SurfaceViewRenderer) {
+        val startedAt = SystemClock.elapsedRealtime()
         callEngine.attachRemoteRenderer(renderer)
+        Log.d(TAG, "remote_renderer_attach_requested elapsedMs=${SystemClock.elapsedRealtime() - startedAt}")
     }
 
     private fun handleSocketEvent(event: String, payload: JSONObject) {
@@ -587,7 +661,13 @@ class CallViewModel(
             "call:start" -> payload.toCallSignalOrLog(event)?.let { handleIncomingStart(user, it) }
             "call:offer" -> payload.toCallSignalOrLog(event)?.let { handleOffer(it) }
             "call:answer" -> {
+                val startedAt = SystemClock.elapsedRealtime()
                 val signal = payload.toCallSignalOrLog(event) ?: return
+                val currentCallId = _state.value.signal?.callId
+                if (currentCallId != signal.callId) {
+                    addDebug("ANDROID: ignored stale answer currentCallId=${currentCallId ?: "none"} incomingCallId=${signal.callId}")
+                    return
+                }
                 if (_state.value.signal?.callId == signal.callId) {
                     missedTimeoutJob?.cancel()
                     _state.value = _state.value.copy(
@@ -597,13 +677,20 @@ class CallViewModel(
                         debugAnswerReceived = true
                     )
                     startConnectionTimeout(signal)
+                    Log.d(TAG, "call_answer_transition callId=${signal.callId} elapsedMs=${SystemClock.elapsedRealtime() - startedAt}")
                 }
                 signal.answerSdp?.let {
                     addDebug("ANDROID: acceptAnswer called")
                     callEngine.acceptAnswer(it)
+                    Log.d(TAG, "call_answer_sdp_applied callId=${signal.callId} elapsedMs=${SystemClock.elapsedRealtime() - startedAt}")
                 }
             }
             "call:ice-candidate" -> payload.toCallSignalOrLog(event)?.let { signal ->
+                val currentCallId = _state.value.signal?.callId
+                if (currentCallId != signal.callId) {
+                    addDebug("ANDROID: ignored stale ice currentCallId=${currentCallId ?: "none"} incomingCallId=${signal.callId}")
+                    return@let
+                }
                 signal.candidate?.let {
                     val nextIceReceived = _state.value.debugIceReceivedCount + 1
                     val candidateType = candidateTypeLabel(it)
@@ -616,31 +703,47 @@ class CallViewModel(
                 val signal = payload.toCallSignalOrLog(event) ?: return
                 if (_state.value.signal?.callId == signal.callId) {
                     _state.value = _state.value.copy(status = CallUiStatus.Outgoing, message = "Ringing...", mediaPhase = CallMediaPhase.Ringing)
+                } else {
+                    addDebug("ANDROID: ignored stale ringing currentCallId=${_state.value.signal?.callId ?: "none"} incomingCallId=${signal.callId}")
                 }
             }
             "call:accepted" -> {
+                val startedAt = SystemClock.elapsedRealtime()
                 val signal = payload.toCallSignalOrLog(event) ?: return
                 missedTimeoutJob?.cancel()
                 if (_state.value.signal?.callId == signal.callId) {
-                    _state.value = _state.value.copy(status = CallUiStatus.Connecting, message = "Connecting...", mediaPhase = CallMediaPhase.Connecting)
+                    val current = _state.value
+                    if (current.status != CallUiStatus.Connecting || current.mediaPhase != CallMediaPhase.Connecting || current.message != "Connecting...") {
+                        _state.value = current.copy(status = CallUiStatus.Connecting, message = "Connecting...", mediaPhase = CallMediaPhase.Connecting)
+                    }
                     startConnectionTimeout(signal)
+                    Log.d(TAG, "call_accepted_transition callId=${signal.callId} elapsedMs=${SystemClock.elapsedRealtime() - startedAt}")
+                } else {
+                    addDebug("ANDROID: ignored stale accepted currentCallId=${_state.value.signal?.callId ?: "none"} incomingCallId=${signal.callId}")
                 }
             }
             "call:connected" -> {
+                val startedAt = SystemClock.elapsedRealtime()
                 val signal = payload.toCallSignalOrLog(event) ?: return
                 missedTimeoutJob?.cancel()
                 connectionTimeoutJob?.cancel()
                 if (_state.value.signal?.callId == signal.callId) {
-                    _state.value = _state.value.copy(status = CallUiStatus.Active, message = "Connected", mediaPhase = CallMediaPhase.Connected, nativeMediaReady = true)
+                    val current = _state.value
+                    if (current.status != CallUiStatus.Active || current.mediaPhase != CallMediaPhase.Connected || !current.nativeMediaReady || current.message != "Connected") {
+                        _state.value = current.copy(status = CallUiStatus.Active, message = "Connected", mediaPhase = CallMediaPhase.Connected, nativeMediaReady = true)
+                    }
+                    Log.d(TAG, "call_connected_transition callId=${signal.callId} elapsedMs=${SystemClock.elapsedRealtime() - startedAt}")
                     startTimer()
+                } else {
+                    addDebug("ANDROID: ignored stale connected currentCallId=${_state.value.signal?.callId ?: "none"} incomingCallId=${signal.callId}")
                 }
             }
-            "call:busy" -> payload.toCallSignal()?.let { terminalIfCurrent(it, CallUiStatus.Busy, "User busy") }
-            "call:missed" -> payload.toCallSignal()?.let { terminalIfCurrent(it, CallUiStatus.Missed, "No answer") }
-            "call:unavailable" -> payload.toCallSignal()?.let { terminalIfCurrent(it, CallUiStatus.Unavailable, "User unavailable") }
-            "call:declined" -> payload.toCallSignal()?.let { terminalIfCurrent(it, CallUiStatus.Declined, "Call declined") }
-            "call:ended" -> payload.toCallSignal()?.let { terminalIfCurrent(it, CallUiStatus.Ended, "Call ended") }
-            "call:failed" -> payload.toCallSignal()?.let { signal ->
+            "call:busy" -> payload.toCallSignalOrLog(event)?.let { terminalIfCurrent(it, CallUiStatus.Busy, "User busy") }
+            "call:missed" -> payload.toCallSignalOrLog(event)?.let { terminalIfCurrent(it, CallUiStatus.Missed, "No answer") }
+            "call:unavailable" -> payload.toCallSignalOrLog(event)?.let { terminalIfCurrent(it, CallUiStatus.Unavailable, "User unavailable") }
+            "call:declined" -> payload.toCallSignalOrLog(event)?.let { terminalIfCurrent(it, CallUiStatus.Declined, "Call declined") }
+            "call:ended" -> payload.toCallSignalOrLog(event)?.let { terminalIfCurrent(it, CallUiStatus.Ended, "Call ended") }
+            "call:failed" -> payload.toCallSignalOrLog(event)?.let { signal ->
                 terminalIfCurrent(signal, CallUiStatus.Failed, payload.optString("reason", "Call failed"))
             }
             "call:history-updated" -> currentUser?.id?.let { scheduleHistoryRefresh(it) }
@@ -692,7 +795,7 @@ class CallViewModel(
     }
 
     private fun JSONObject.toCallSignalOrLog(event: String): CallSignal? {
-        val signal = toCallSignal()
+        val signal = toCallSignal(currentSignal = _state.value.signal, currentUserId = currentUser?.id)
         if (signal == null) {
             Log.w(TAG, "[CALL_TRACE] android malformed event=$event payload=$this")
             addDebug("ANDROID: malformed $event payload")
@@ -775,6 +878,11 @@ class CallViewModel(
         val current = _state.value.signal
         if (current?.callId != signal.callId) {
             pendingOffers[signal.callId] = signal
+            if (pendingOffers.size > 12) {
+                val keep = pendingOffers.entries.toList().takeLast(6)
+                pendingOffers.clear()
+                keep.forEach { entry -> pendingOffers[entry.key] = entry.value }
+            }
             addDebug("ANDROID: queued offer")
             return
         }
@@ -814,7 +922,12 @@ class CallViewModel(
     }
 
     private fun terminal(status: CallUiStatus, message: String, signal: CallSignal?) {
-        HelloDebugLog.w("Call", "terminal status=$status callId=${signal?.callId ?: _state.value.signal?.callId ?: _state.value.activeRoom?.id} message=${HelloDebugLog.snippet(message)}")
+        HelloDebugLog.w(
+            "Call",
+            "terminal status=$status previousStatus=${_state.value.status} callId=${signal?.callId ?: _state.value.signal?.callId ?: _state.value.activeRoom?.id} phase=${_state.value.mediaPhase} message=${HelloDebugLog.snippet(message)}"
+        )
+        startCallJob?.cancel()
+        startCallJob = null
         missedTimeoutJob?.cancel()
         connectionTimeoutJob?.cancel()
         terminalResetJob?.cancel()
@@ -1048,6 +1161,7 @@ class CallViewModel(
     }
 
     override fun onCleared() {
+        socketManager.disconnect()
         callEngine.dispose()
         stopTimer()
         IncomingCallRinger.stop(_state.value.signal?.callId ?: _state.value.activeRoom?.id)

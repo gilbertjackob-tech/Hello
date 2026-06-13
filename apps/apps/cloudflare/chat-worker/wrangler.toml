@@ -1,0 +1,34 @@
+name = "hello-chat-worker"
+main = "src/index.ts"
+compatibility_date = "2026-06-01"
+
+routes = [
+  { pattern = "chat.bookhelloctg.com", custom_domain = true }
+]
+
+[vars]
+ENABLE_DEBUG_BINDINGS = "false"
+
+# Keep Cloudflare Git Deploy root set to:
+# apps/cloudflare/chat-worker
+#
+# This Worker is for always-online chat/call API and temporary chat files.
+# Do not point Cloudflare Git Deploy at apps/hello; that is the local PC/Express backend.
+
+[[d1_databases]]
+binding = "DB"
+database_name = "hello_chat_db"
+database_id = "7ee40d96-ef90-4e4d-b28d-a6cb9ee47408"
+
+[[r2_buckets]]
+binding = "TEMP_FILES"
+bucket_name = "hello-chat-temp"
+
+[durable_objects]
+bindings = [
+  { name = "REALTIME_ROOM", class_name = "RealtimeRoom" }
+]
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RealtimeRoom"]
