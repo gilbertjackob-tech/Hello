@@ -1,9 +1,4 @@
 package com.glassbox.hello.chat.components
-
-import android.content.Context
-import android.os.SystemClock
-import com.glassbox.hello.debug.AppLog as Log
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -53,49 +48,22 @@ fun rememberNearBottom(listState: androidx.compose.foundation.lazy.LazyListState
 
 @Composable
 fun ChatMessageList(
-    messages: List<ChatModels.Message>,
+    rows: List<ChatRenderRow>,
     currentUserId: String,
-    chatIsGroup: Boolean,
     unreadCount: Int,
     typingNames: List<String>,
-    context: Context,
     listState: androidx.compose.foundation.lazy.LazyListState = rememberLazyListState(),
     hasMoreOlderMessages: Boolean,
     isLoadingOlderMessages: Boolean,
-    onReply: (ChatModels.Message) -> Unit,
     onOpenMessageMenu: (ChatModels.Message) -> Unit,
     onOpenAttachment: (String) -> Unit,
     onOpenImage: (String, String) -> Unit,
     onDownloadAttachment: (String, String?) -> Unit,
-    outgoingBubbleColor: Color,
-    incomingBubbleColor: Color,
     bubbleOpacity: Float,
     onJumpToLatest: () -> Unit
 ) {
     val isNearBottom = rememberNearBottom(listState)
-    val unreadStartIndex = remember(messages, currentUserId, unreadCount) {
-        messages.withIndex()
-            .filter { (_, message) -> unreadCount > 0 && message.senderId != currentUserId }
-            .let { candidates ->
-                if (candidates.isEmpty()) {
-                    null
-                } else {
-                    val position = (candidates.size - unreadCount).coerceAtLeast(0)
-                    candidates.getOrNull(position)?.index
-                }
-            }
-    }
-    val timelineGroupings = remember(messages, currentUserId, chatIsGroup, unreadCount) {
-        val startedAt = SystemClock.elapsedRealtime()
-        val groupings = messages.indices.map { index ->
-            buildTimelineGrouping(messages, index, currentUserId, chatIsGroup, unreadStartIndex)
-        }
-        Log.d("HelloInbox", "message_grouping_precompute count=${messages.size} elapsedMs=${SystemClock.elapsedRealtime() - startedAt}")
-        groupings
-    }
-    val imageClusterTimeline = remember(messages) {
-        buildImageClusterTimeline(messages)
-    }
+    val isScrolling = listState.isScrollInProgress
     Box(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
             state = listState,
@@ -109,66 +77,57 @@ fun ChatMessageList(
                 }
             }
             itemsIndexed(
-                items = messages,
-                key = { _, message -> message.id },
-                contentType = { index, message ->
-                    when {
-                        imageClusterTimeline.followerToLeadIndex.containsKey(index) -> "cluster-follower"
-                        imageClusterTimeline.clustersByLeadIndex.containsKey(index) -> "image-cluster"
-                        message.callInfo != null || message.messageType == "call_log" -> "call"
-                        attachmentKind(message) != null -> attachmentKind(message) ?: "attachment"
-                        else -> "text"
-                    }
+                items = rows,
+                key = { _, row -> row.key },
+                contentType = { _, row ->
+                    row.contentType
                 }
-            ) { index, message ->
-                if (imageClusterTimeline.followerToLeadIndex.containsKey(index)) return@itemsIndexed
-                val grouping = timelineGroupings[index]
-                val imageCluster = imageClusterTimeline.clustersByLeadIndex[index]
-                val showUnreadDivider = grouping.showUnreadDivider ||
-                    imageClusterTimeline.followerToLeadIndex[unreadStartIndex] == index
-                if (grouping.showDayDivider) {
-                    DateDivider(label = grouping.dayLabel.orEmpty())
+            ) { _, row ->
+                if (row.grouping.showDayDivider) {
+                    DateDivider(label = row.grouping.dayLabel.orEmpty())
                 }
-                if (showUnreadDivider) {
+                if (row.showUnreadDivider) {
                     UnreadDivider()
                 }
                 ChatMessageBubble(
-                    message = message,
-                    isOwn = message.senderId == currentUserId,
+                    message = row.message,
+                    isOwn = row.message.senderId == currentUserId,
                     currentUserId = currentUserId,
-                    context = context,
-                    onReply = onReply,
                     onLongPress = onOpenMessageMenu,
                     onOpenAttachment = onOpenAttachment,
                     onOpenImage = onOpenImage,
                     onDownloadAttachment = onDownloadAttachment,
-                    outgoingBubbleColor = outgoingBubbleColor,
-                    incomingBubbleColor = incomingBubbleColor,
                     bubbleOpacity = bubbleOpacity,
-                    imageCluster = imageCluster,
-                    showSenderName = grouping.showSenderName,
-                    compactWithPrevious = grouping.compactWithPrevious,
-                    compactWithNext = grouping.compactWithNext
+                    imageCluster = row.imageCluster,
+                    scrollInProgress = isScrolling,
+                    showSenderName = row.grouping.showSenderName,
+                    compactWithPrevious = row.grouping.compactWithPrevious,
+                    compactWithNext = row.grouping.compactWithNext
                 )
-            }
-            if (typingNames.isNotEmpty()) {
-                item(key = "typing-indicator") {
-                    TypingIndicatorBubble(names = typingNames)
-                }
             }
         }
 
-        AnimatedVisibility(
-            visible = !isNearBottom && messages.isNotEmpty(),
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(end = HelloSpacing.Lg, bottom = HelloSpacing.Lg)
-        ) {
-            ScrollToBottomFab(
-                visible = true,
-                unreadBelow = unreadCount,
-                onClick = onJumpToLatest
-            )
+        if (typingNames.isNotEmpty()) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(start = HelloSpacing.Md, bottom = HelloSpacing.Lg)
+            ) {
+                TypingIndicatorBubble(names = typingNames)
+            }
+        }
+        if (!isNearBottom && rows.isNotEmpty()) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = HelloSpacing.Lg, bottom = HelloSpacing.Lg)
+            ) {
+                ScrollToBottomFab(
+                    visible = true,
+                    unreadBelow = unreadCount,
+                    onClick = onJumpToLatest
+                )
+            }
         }
     }
 }
@@ -219,12 +178,11 @@ private fun UnreadDivider() {
 @Composable
 private fun TypingIndicatorBubble(names: List<String>) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier,
         horizontalArrangement = Arrangement.Start
     ) {
         Column(
             modifier = Modifier
-                .padding(horizontal = HelloSpacing.Md)
                 .clip(HelloShapes.MessageOther)
                 .background(HelloColors.DarkPanelStrong)
                 .border(1.dp, HelloColors.DarkBorderStrong, HelloShapes.MessageOther)

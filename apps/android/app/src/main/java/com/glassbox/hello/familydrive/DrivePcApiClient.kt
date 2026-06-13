@@ -250,7 +250,7 @@ class DrivePcApiClient : DrivePcApi {
     private fun normalizeDriveError(error: Exception): Exception {
         if (error is DriveApiException) {
             val friendlyMessage = when (error.code) {
-                502, 503, 504 -> "PC Drive is unavailable right now. Check that your PC backend or Cloudflare tunnel is online, then try again."
+                502, 503, 504 -> "PC Drive is offline."
                 else -> null
             }
             if (!friendlyMessage.isNullOrBlank()) {
@@ -258,9 +258,23 @@ class DrivePcApiClient : DrivePcApi {
             }
         }
         if (error is IOException) {
-            return Exception("PC Drive is offline or unreachable. Make sure your PC backend is running and reachable, then try again.", error)
+            return Exception("PC Drive is offline.", error)
         }
         return error
+    }
+
+    companion object {
+        fun isPcUnavailable(error: Throwable?): Boolean {
+            var current = error
+            while (current != null) {
+                when (current) {
+                    is IOException -> return true
+                    is DriveApiException -> if (current.code in setOf(502, 503, 504)) return true
+                }
+                current = current.cause
+            }
+            return false
+        }
     }
 
     private fun encodePathValue(value: String): String = URLEncoder.encode(value, "UTF-8").replace("+", "%20")

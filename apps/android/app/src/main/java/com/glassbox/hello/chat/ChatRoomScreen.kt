@@ -39,6 +39,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -61,6 +62,7 @@ import com.glassbox.hello.chat.components.ChatActionSheet
 import com.glassbox.hello.chat.components.ChatComposer
 import com.glassbox.hello.chat.components.ChatHeader
 import com.glassbox.hello.chat.components.ChatMessageList
+import com.glassbox.hello.chat.components.buildChatRenderRows
 import com.glassbox.hello.chat.components.ContactShareDialog
 import com.glassbox.hello.chat.components.EmojiStickerPickerSheet
 import com.glassbox.hello.chat.components.MediaViewer
@@ -90,8 +92,10 @@ import com.glassbox.hello.ui.theme.HelloSpacing
 import com.glassbox.hello.ui.theme.rememberChatTheme
 import com.glassbox.hello.ui.utils.AnimationUtils
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.launch
 import org.json.JSONObject
 import java.io.File
 import androidx.activity.result.PickVisualMediaRequest
@@ -110,6 +114,10 @@ fun ChatRoomScreen(
     onChatDeleted: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val mountedWindowSize = 140
+    val mountedWindowShift = 40
+    val mountedWindowEdgeThreshold = 24
+
     val viewModel: ChatViewModel = viewModel()
     val messagesState by viewModel.messagesState.collectAsState()
     val messagesRefreshing by viewModel.messagesRefreshing.collectAsState()
@@ -150,9 +158,24 @@ fun ChatRoomScreen(
     var cameraCapture by remember { mutableStateOf<CameraCapture?>(null) }
     var voiceState by remember { mutableStateOf(VoiceRecordingState()) }
     var recordingElapsedSeconds by remember { mutableStateOf(0L) }
-    var typingNames by remember(chat.id) { mutableStateOf<List<String>>(emptyList()) }
     var hasAutoScrolledInitial by remember(chat.id) { mutableStateOf(false) }
     var mediaViewerState by remember { mutableStateOf<MediaViewerState?>(null) }
+    var locallyTyping by remember(chat.id) { mutableStateOf(false) }
+    var previousMessageCount by remember(chat.id) { mutableStateOf(0) }
+    var previousLastMessageId by remember(chat.id) { mutableStateOf<String?>(null) }
+    var lastReadMessageId by remember(chat.id) { mutableStateOf<String?>(null) }
+    var typingExpirations by remember(chat.id) { mutableStateOf<Map<String, Long>>(emptyMap()) }
+    var pendingBelowMessageIds by remember(chat.id) { mutableStateOf<Set<String>>(emptySet()) }
+    var mountedWindowStart by remember(chat.id) { mutableStateOf(0) }
+    val latestCloudChatEnabled by rememberUpdatedState(settingsState.cloudChatEnabled)
+    val typingNames by remember(typingExpirations) {
+        derivedStateOf {
+            typingExpirations.entries
+                .sortedBy { it.value }
+                .map { it.key }
+                .takeLast(3)
+        }
+    }
 
     val visibleMessages by remember(messagesState, currentUserId) {
         derivedStateOf {
@@ -160,6 +183,29 @@ fun ChatRoomScreen(
                 is ResultState.Success -> (messagesState as ResultState.Success<List<Message>>).data.visibleForUser(currentUserId)
                 else -> emptyList()
             }
+        }
+    }
+    val mountedWindowEndExclusive by remember(visibleMessages.size, mountedWindowStart) {
+        derivedStateOf {
+            minOf(visibleMessages.size, mountedWindowStart + mountedWindowSize)
+        }
+    }
+    val mountedMessages by remember(visibleMessages, mountedWindowStart, mountedWindowEndExclusive) {
+        derivedStateOf {
+            visibleMessages.subList(
+                mountedWindowStart.coerceAtMost(visibleMessages.size),
+                mountedWindowEndExclusive.coerceAtMost(visibleMessages.size)
+            )
+        }
+    }
+    val mountedRows by remember(mountedMessages, currentUserId, chat.isGroup, chat.unreadCount, pendingBelowMessageIds.size) {
+        derivedStateOf {
+            buildChatRenderRows(
+                messages = mountedMessages,
+                currentUserId = currentUserId,
+                chatIsGroup = chat.isGroup,
+                unreadCount = maxOf(chat.unreadCount ?: 0, pendingBelowMessageIds.size)
+            )
         }
     }
 
@@ -204,41 +250,128 @@ fun ChatRoomScreen(
         recordingElapsedSeconds = 0L
     }
 
-    LaunchedEffect(messageText, chat.id, currentUserId, currentUserName) {
-        if (messageText.isBlank()) {
-            socketManager.typing(chat.id, currentUserId, currentUserName, isTyping = false)
-            return@LaunchedEffect
-        }
-        socketManager.typing(chat.id, currentUserId, currentUserName, isTyping = true)
-        delay(1500)
+    fun stopTypingIndicator() {
+        if (!locallyTyping) return
+        locallyTyping = false
         socketManager.typing(chat.id, currentUserId, currentUserName, isTyping = false)
+    }
+
+    LaunchedEffect(chat.id, currentUserId, currentUserName) {
+        snapshotFlow { messageText }
+            .collectLatest { draft ->
+                if (draft.isBlank()) {
+                    stopTypingIndicator()
+                    return@collectLatest
+                }
+                if (!locallyTyping) {
+                    locallyTyping = true
+                    socketManager.typing(chat.id, currentUserId, currentUserName, isTyping = true)
+                }
+                delay(1500)
+                stopTypingIndicator()
+            }
+    }
+
+    LaunchedEffect(chat.id) {
+        snapshotFlow { typingExpirations.values.minOrNull() }
+            .collectLatest { nextExpiryAt ->
+                if (nextExpiryAt == null) return@collectLatest
+                val delayMs = (nextExpiryAt - System.currentTimeMillis()).coerceAtLeast(0L)
+                delay(delayMs)
+                val now = System.currentTimeMillis()
+                typingExpirations = typingExpirations.filterValues { it > now }
+            }
     }
 
     LaunchedEffect(chat.id, settingsState.cloudChatEnabled) {
         snapshotFlow {
-            Triple(listState.firstVisibleItemIndex, hasMoreOlderMessages, isLoadingOlderMessages)
-        }.collect { (firstVisibleIndex, hasOlder, loadingOlder) ->
-            if (hasAutoScrolledInitial && hasOlder && !loadingOlder && firstVisibleIndex <= 1) {
+            Triple(mountedWindowStart + listState.firstVisibleItemIndex, hasMoreOlderMessages, isLoadingOlderMessages)
+        }.collect { (firstGlobalVisibleIndex, hasOlder, loadingOlder) ->
+            if (hasAutoScrolledInitial && hasOlder && !loadingOlder && firstGlobalVisibleIndex <= 1) {
                 viewModel.loadOlderMessages(chat.id, cloudChatEnabled = settingsState.cloudChatEnabled)
             }
         }
     }
 
+    LaunchedEffect(chat.id, visibleMessages.size, mountedWindowStart, mountedWindowEndExclusive) {
+        if (visibleMessages.size <= mountedWindowSize || mountedMessages.isEmpty()) return@LaunchedEffect
+        snapshotFlow { listState.firstVisibleItemIndex }
+            .collectLatest { localFirstVisibleIndex ->
+                val currentWindowSize = mountedMessages.size
+                if (currentWindowSize == 0) return@collectLatest
+                val oldStart = mountedWindowStart
+                val maxWindowStart = (visibleMessages.size - mountedWindowSize).coerceAtLeast(0)
+                val newStart = when {
+                    localFirstVisibleIndex <= mountedWindowEdgeThreshold && oldStart > 0 -> {
+                        (oldStart - mountedWindowShift).coerceAtLeast(0)
+                    }
+                    localFirstVisibleIndex >= currentWindowSize - mountedWindowEdgeThreshold &&
+                        oldStart < maxWindowStart -> {
+                        (oldStart + mountedWindowShift).coerceAtMost(maxWindowStart)
+                    }
+                    else -> oldStart
+                }
+                if (newStart != oldStart) {
+                    val anchorGlobalIndex = oldStart + localFirstVisibleIndex
+                    mountedWindowStart = newStart
+                    val newLocalIndex = (anchorGlobalIndex - newStart).coerceAtLeast(0)
+                    listState.scrollToItem(newLocalIndex, listState.firstVisibleItemScrollOffset)
+                }
+            }
+    }
+
+    LaunchedEffect(chat.id) {
+        snapshotFlow {
+            listState.layoutInfo.visibleItemsInfo.mapNotNull { it.key?.toString() }
+        }
+            .distinctUntilChanged()
+            .collect { visibleKeys ->
+                HelloDebugLog.d(
+                    "ChatScroll",
+                    "chatId=${chat.id} visibleRows=${visibleKeys.size} mounted=${mountedMessages.size}/${visibleMessages.size} windowStart=$mountedWindowStart first=${visibleKeys.firstOrNull().orEmpty()} last=${visibleKeys.lastOrNull().orEmpty()}"
+                )
+            }
+    }
+
     val lastVisibleMessage = visibleMessages.lastOrNull()
 
-    LaunchedEffect(chat.id, lastVisibleMessage?.id, isNearBottom) {
+    LaunchedEffect(chat.id, lastVisibleMessage?.id, visibleMessages.size) {
         HelloDebugLog.d("ChatRoom", "visibleMessages chatId=${chat.id} count=${visibleMessages.size} nearBottom=$isNearBottom")
         if (visibleMessages.isNotEmpty()) {
-            socketManager.markMessagesRead(chat.id, currentUserId)
-            viewModel.clearUnreadForChat(chat.id, currentUserId, settingsState.cloudChatEnabled)
-            val shouldStickToBottom = isNearBottom || lastVisibleMessage?.senderId == currentUserId
             if (!hasAutoScrolledInitial) {
-                listState.scrollToItem(visibleMessages.lastIndex)
+                mountedWindowStart = (visibleMessages.size - mountedWindowSize).coerceAtLeast(0)
+                listState.scrollToItem((visibleMessages.lastIndex - mountedWindowStart).coerceAtLeast(0))
                 hasAutoScrolledInitial = true
-            } else if (shouldStickToBottom) {
-                listState.scrollToItem(visibleMessages.lastIndex)
+            } else {
+                val messageAppended =
+                    visibleMessages.size > previousMessageCount && lastVisibleMessage?.id != previousLastMessageId
+                val sentByCurrentUser = lastVisibleMessage?.senderId == currentUserId
+                val shouldStickToBottom = messageAppended && (isNearBottom || sentByCurrentUser)
+                if (shouldStickToBottom) {
+                    mountedWindowStart = (visibleMessages.size - mountedWindowSize).coerceAtLeast(0)
+                    listState.scrollToItem((visibleMessages.lastIndex - mountedWindowStart).coerceAtLeast(0))
+                }
             }
+            previousMessageCount = visibleMessages.size
+            previousLastMessageId = lastVisibleMessage?.id
+        } else {
+            mountedWindowStart = 0
+            previousMessageCount = 0
+            previousLastMessageId = null
         }
+    }
+
+    LaunchedEffect(chat.id, lastVisibleMessage?.id, isNearBottom) {
+        if (!isNearBottom) return@LaunchedEffect
+        if (pendingBelowMessageIds.isNotEmpty()) {
+            pendingBelowMessageIds = emptySet()
+        }
+        val latestMessage = lastVisibleMessage ?: return@LaunchedEffect
+        if (latestMessage.senderId == currentUserId) return@LaunchedEffect
+        if (lastReadMessageId == latestMessage.id) return@LaunchedEffect
+        socketManager.markMessagesRead(chat.id, currentUserId)
+        viewModel.clearUnreadForChat(chat.id, currentUserId, latestCloudChatEnabled)
+        lastReadMessageId = latestMessage.id
     }
 
     LaunchedEffect(sendMessageState) {
@@ -481,7 +614,7 @@ fun ChatRoomScreen(
             replyTo = null
             AnimationUtils.Haptics.sendMessage(context)
             ChatFeedback.playSent(settingsState.chatSounds)
-            socketManager.typing(chat.id, currentUserId, currentUserName, isTyping = false)
+            stopTypingIndicator()
             viewModel.uploadAndSendAttachments(
                 chatId = chat.id,
                 attachments = attachments,
@@ -509,7 +642,7 @@ fun ChatRoomScreen(
         replyTo = null
         AnimationUtils.Haptics.sendMessage(context)
         ChatFeedback.playSent(settingsState.chatSounds)
-        socketManager.typing(chat.id, currentUserId, currentUserName, isTyping = false)
+        stopTypingIndicator()
         viewModel.sendMessage(
             chatId = chat.id,
             text = trimmed,
@@ -546,7 +679,7 @@ fun ChatRoomScreen(
         showEmojiRow = false
         AnimationUtils.Haptics.sendMessage(context)
         ChatFeedback.playSent(settingsState.chatSounds)
-        socketManager.typing(chat.id, currentUserId, currentUserName, isTyping = false)
+        stopTypingIndicator()
         viewModel.sendMessage(
             chatId = chat.id,
             text = payload,
@@ -572,8 +705,14 @@ fun ChatRoomScreen(
                         baseChat = chat
                     )
                     if (message.senderId != currentUserId) {
-                        socketManager.markMessagesRead(chat.id, currentUserId)
-                        viewModel.clearUnreadForChat(chat.id, currentUserId, settingsState.cloudChatEnabled)
+                        if (isNearBottom) {
+                            socketManager.markMessagesRead(chat.id, currentUserId)
+                            viewModel.clearUnreadForChat(chat.id, currentUserId, latestCloudChatEnabled)
+                            lastReadMessageId = message.id
+                            pendingBelowMessageIds = emptySet()
+                        } else {
+                            pendingBelowMessageIds = pendingBelowMessageIds + message.id
+                        }
                         ChatFeedback.playReceived(settingsState.chatSounds)
                     }
                 }
@@ -596,16 +735,14 @@ fun ChatRoomScreen(
                     }
                     ?: "Someone"
                 if (userId != currentUserId && name != currentUserName) {
-                    scope.launch {
-                        typingNames = if (payload.optBoolean("isTyping", true)) {
-                            (typingNames + name).distinct().takeLast(3)
-                        } else {
-                            typingNames.filterNot { it == name }
+                    val isTyping = payload.optBoolean("isTyping", true)
+                    typingExpirations = if (isTyping) {
+                        LinkedHashMap(typingExpirations).apply {
+                            remove(name)
+                            put(name, System.currentTimeMillis() + 3_200L)
                         }
-                        if (payload.optBoolean("isTyping", true)) {
-                            delay(3200)
-                            typingNames = typingNames.filterNot { it == name }
-                        }
+                    } else {
+                        typingExpirations - name
                     }
                 }
             }
@@ -621,10 +758,14 @@ fun ChatRoomScreen(
         socketManager.connect(context, User(id = currentUserId, name = currentUserName, avatar = currentUserAvatar))
         socketManager.joinChat(chat.id)
         socketManager.markMessagesRead(chat.id, currentUserId)
-        viewModel.clearUnreadForChat(chat.id, currentUserId, settingsState.cloudChatEnabled)
+        viewModel.clearUnreadForChat(chat.id, currentUserId, latestCloudChatEnabled)
+        lastReadMessageId = lastVisibleMessage?.takeIf { it.senderId != currentUserId }?.id
+        pendingBelowMessageIds = emptySet()
         onDispose {
             HelloNotificationCenter.setOpenChat(null)
-            socketManager.typing(chat.id, currentUserId, currentUserName, isTyping = false)
+            stopTypingIndicator()
+            typingExpirations = emptyMap()
+            pendingBelowMessageIds = emptySet()
             socketManager.leaveChat(chat.id)
             socketManager.removeMessageListener(messageListener)
             socketManager.removeMessageUpdateListener(updateListener)
@@ -681,29 +822,26 @@ fun ChatRoomScreen(
                                 EmptyRoom()
                             } else {
                                 ChatMessageList(
-                                    messages = visibleMessages,
+                                    rows = mountedRows,
                                     currentUserId = currentUserId,
-                                    chatIsGroup = chat.isGroup,
-                                    unreadCount = chat.unreadCount ?: 0,
+                                    unreadCount = maxOf(chat.unreadCount ?: 0, pendingBelowMessageIds.size),
                                     typingNames = typingNames,
-                                    context = context,
                                     listState = listState,
                                     hasMoreOlderMessages = hasMoreOlderMessages,
                                     isLoadingOlderMessages = isLoadingOlderMessages,
-                                    onReply = { replyTo = it },
                                     onOpenMessageMenu = { message ->
                                         selectedMessage = ActionMessageState(message = message, isOwn = message.senderId == currentUserId)
                                     },
                                     onOpenAttachment = { url -> openExternalTarget(context, url) },
                                     onOpenImage = { url, label -> mediaViewerState = MediaViewerState(url, label) },
                                     onDownloadAttachment = { url, fileName -> downloadAttachment(context, url, fileName) },
-                                    outgoingBubbleColor = chatTheme.color,
-                                    incomingBubbleColor = chatTheme.incomingColor,
                                     bubbleOpacity = bubbleOpacity,
                                     onJumpToLatest = {
                                         scope.launch {
                                             if (visibleMessages.isNotEmpty()) {
-                                                listState.scrollToItem(visibleMessages.lastIndex)
+                                                mountedWindowStart = (visibleMessages.size - mountedWindowSize).coerceAtLeast(0)
+                                                listState.scrollToItem((visibleMessages.lastIndex - mountedWindowStart).coerceAtLeast(0))
+                                                pendingBelowMessageIds = emptySet()
                                             }
                                         }
                                     }

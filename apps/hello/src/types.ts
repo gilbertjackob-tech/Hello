@@ -207,6 +207,7 @@ export interface DriveCircle {
   id: string;
   name: string;
   ownerUserId?: string | null;
+  avatarUrl?: string | null;
   memberCount: number;
   members: DriveCircleMember[];
   createdAt: number;

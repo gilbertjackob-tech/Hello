@@ -10,6 +10,7 @@ import com.glassbox.hello.debug.HelloDebugLog
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
@@ -87,12 +88,95 @@ class FamilyDriveRepository(
         return api.fetchDriveCircles(userId)
     }
 
-    suspend fun createCircle(id: String? = null, name: String, ownerUserId: String, members: List<DriveCircleMember>): Result<DriveCircle> {
-        return api.createDriveCircle(id, name, ownerUserId, members).also { result ->
-            result.getOrNull()?.let { circle ->
-                mirrorDriveMetadataToFirestore("circles", circle.id, circle)
+    suspend fun fetchCirclesWithPending(context: Context, userId: String): Result<List<DriveCircle>> = withContext(Dispatchers.IO) {
+        syncPendingCircles(context.applicationContext, userId)
+        val pending = pendingCircleStore(context.applicationContext).getActive()
+        val remote = fetchCircles(userId)
+        remote.fold(
+            onSuccess = { circles ->
+                Result.success(mergeCircles(circles, pending))
+            },
+            onFailure = { error ->
+                if (pending.isNotEmpty()) {
+                    Result.success(mergeCircles(emptyList(), pending))
+                } else {
+                    Result.failure(error)
+                }
             }
+        )
+    }
+
+    suspend fun createCircle(
+        context: Context,
+        id: String? = null,
+        name: String,
+        ownerUserId: String,
+        members: List<DriveCircleMember>
+    ): Result<DriveCircle> = withContext(Dispatchers.IO) {
+        val appContext = context.applicationContext
+        val remoteResult = api.createDriveCircle(id, name, ownerUserId, members)
+        remoteResult.getOrNull()?.let { circle ->
+            mirrorDriveMetadataToFirestore("circles", circle.id, circle)
+            return@withContext Result.success(circle)
         }
+        val error = remoteResult.exceptionOrNull() ?: Exception("Circle could not be created")
+        if (!id.isNullOrBlank() || !DrivePcApiClient.isPcUnavailable(error)) {
+            return@withContext Result.failure(error)
+        }
+        val pending = PendingDriveCircle(
+            id = buildLocalCircleId(),
+            name = name,
+            ownerUserId = ownerUserId,
+            members = members,
+            createdAt = System.currentTimeMillis(),
+            updatedAt = System.currentTimeMillis(),
+            status = PendingDriveCircleStatus.PENDING_LOCAL,
+            lastError = null
+        )
+        pendingCircleStore(appContext).upsert(pending)
+        Result.success(pending.asDriveCircle())
+    }
+
+    suspend fun syncPendingCircles(context: Context, ownerUserId: String): Result<Map<String, String>> = withContext(Dispatchers.IO) {
+        try {
+            val appContext = context.applicationContext
+            val circleStore = pendingCircleStore(appContext)
+            val uploadStore = pendingStore(appContext)
+            val pendingCircles = circleStore.getRetryable()
+            val remappedIds = mutableMapOf<String, String>()
+            for (circle in pendingCircles) {
+                circleStore.updateStatus(circle.id, PendingDriveCircleStatus.SYNCING)
+                try {
+                    val created = api.createDriveCircle(
+                        id = null,
+                        name = circle.name,
+                        ownerUserId = ownerUserId,
+                        members = circle.members
+                    ).getOrThrow()
+                    mirrorDriveMetadataToFirestore("circles", created.id, created)
+                    remappedIds[circle.id] = created.id
+                    uploadStore.remapCircleIds(mapOf(circle.id to created.id))
+                    circleStore.delete(circle.id)
+                } catch (error: Exception) {
+                    HelloDebugLog.w("DriveRepo", "syncPendingCircles item_failed circleId=${circle.id} error=${error.message}", error)
+                    circleStore.markRetryable(circle.id, error.message ?: "Sync failed")
+                }
+            }
+            Result.success(remappedIds)
+        } catch (error: Exception) {
+            HelloDebugLog.w("DriveRepo", "syncPendingCircles failure error=${error.message}", error)
+            Result.failure(error)
+        }
+    }
+
+    fun observePendingUploads(context: Context): Flow<List<PendingDriveItem>> {
+        return pendingStore(context).observeActive()
+    }
+
+    fun observePendingCircles(context: Context): Flow<List<DriveCircle>> {
+        return pendingCircleStore(context.applicationContext)
+            .observeActive()
+            .map { pending -> pending.map { it.asDriveCircle() } }
     }
 
     suspend fun uploadCircleAvatar(circleId: String, userId: String, fileName: String, mimeType: String, bytes: ByteArray): Result<DriveCircle> {
@@ -196,6 +280,16 @@ class FamilyDriveRepository(
         }
     }
 
+    suspend fun removePendingCircle(context: Context, circleId: String): Result<Unit> = withContext(Dispatchers.IO) {
+        try {
+            pendingCircleStore(context.applicationContext).delete(circleId)
+            pendingStore(context.applicationContext).removeCircleId(circleId)
+            Result.success(Unit)
+        } catch (error: Exception) {
+            Result.failure(error)
+        }
+    }
+
     suspend fun uploadUris(
         context: Context,
         uris: List<Uri>,
@@ -239,14 +333,11 @@ class FamilyDriveRepository(
         }
     }
 
-    fun observePendingUploads(context: Context): Flow<List<PendingDriveItem>> {
-        return pendingStore(context).observeActive()
-    }
-
     suspend fun retryPendingUploads(context: Context, uploaderId: String, itemId: String? = null): Result<Int> = withContext(Dispatchers.IO) {
         try {
             HelloDebugLog.d("DriveRepo", "retryPendingUploads uploaderId=$uploaderId itemId=$itemId")
             val appContext = context.applicationContext
+            syncPendingCircles(appContext, uploaderId)
             val store = pendingStore(appContext)
             val items = store.getRetryable(itemId)
             var uploadedCount = 0
@@ -357,6 +448,24 @@ class FamilyDriveRepository(
 
     private fun pendingStore(context: Context): FamilyDrivePendingStore {
         return FamilyDrivePendingStore.getInstance(context.applicationContext)
+    }
+
+    private fun pendingCircleStore(context: Context): FamilyDrivePendingCircleStore {
+        return FamilyDrivePendingCircleStore.getInstance(context.applicationContext)
+    }
+
+    private fun mergeCircles(remote: List<DriveCircle>, pending: List<PendingDriveCircle>): List<DriveCircle> {
+        val remoteIds = remote.map { it.id }.toSet()
+        val pendingCircles = pending
+            .filter { it.serverCircleId.isNullOrBlank() || it.serverCircleId !in remoteIds }
+            .map { it.asDriveCircle() }
+        return (pendingCircles + remote)
+            .distinctBy { it.id }
+            .sortedByDescending { it.updatedAt }
+    }
+
+    private fun buildLocalCircleId(): String {
+        return "local_circle_${System.currentTimeMillis()}"
     }
 
     private fun normalizedContactName(user: ChatModels.User): String {

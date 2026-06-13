@@ -86,6 +86,48 @@ fun buildImageClusterTimeline(messages: List<ChatModels.Message>): ImageClusterT
     return ImageClusterTimeline(clustersByLeadIndex = clusters, followerToLeadIndex = followers)
 }
 
+fun buildMessageContentTypes(
+    messages: List<ChatModels.Message>,
+    imageClusterTimeline: ImageClusterTimeline
+): List<String> {
+    if (messages.isEmpty()) return emptyList()
+    return messages.mapIndexed { index, message ->
+        when {
+            imageClusterTimeline.followerToLeadIndex.containsKey(index) -> "cluster-follower"
+            imageClusterTimeline.clustersByLeadIndex.containsKey(index) -> "image-cluster"
+            message.callInfo != null || message.messageType == "call_log" -> "call"
+            else -> attachmentKind(message) ?: "text"
+        }
+    }
+}
+
+fun buildChatRenderRows(
+    messages: List<ChatModels.Message>,
+    currentUserId: String,
+    chatIsGroup: Boolean,
+    unreadCount: Int
+): List<ChatRenderRow> {
+    if (messages.isEmpty()) return emptyList()
+    val unreadStartIndex = unreadBoundaryIndex(messages, currentUserId, unreadCount)
+    val imageClusterTimeline = buildImageClusterTimeline(messages)
+    val contentTypes = buildMessageContentTypes(messages, imageClusterTimeline)
+    val rows = ArrayList<ChatRenderRow>(messages.size)
+    messages.forEachIndexed { index, message ->
+        if (imageClusterTimeline.followerToLeadIndex.containsKey(index)) return@forEachIndexed
+        val grouping = buildTimelineGrouping(messages, index, currentUserId, chatIsGroup, unreadStartIndex)
+        rows += ChatRenderRow(
+            key = message.id,
+            contentType = contentTypes.getOrElse(index) { "text" },
+            message = message,
+            imageCluster = imageClusterTimeline.clustersByLeadIndex[index],
+            grouping = grouping,
+            showUnreadDivider = grouping.showUnreadDivider ||
+                imageClusterTimeline.followerToLeadIndex[unreadStartIndex] == index
+        )
+    }
+    return rows
+}
+
 fun normalizeAttachmentUrl(url: String?): String? {
     if (url.isNullOrBlank()) return null
     return UrlResolver.resolve(url) ?: url.takeIf {
@@ -212,7 +254,7 @@ private fun isCollageImageMessage(message: ChatModels.Message): Boolean {
     return attachmentKind(message) == "image" && !normalizeAttachmentUrl(message.attachmentUrl).isNullOrBlank()
 }
 
-private fun unreadBoundaryIndex(messages: List<ChatModels.Message>, currentUserId: String, unreadCount: Int): Int? {
+fun unreadBoundaryIndex(messages: List<ChatModels.Message>, currentUserId: String, unreadCount: Int): Int? {
     if (unreadCount <= 0 || messages.isEmpty()) return null
     val candidates = messages.withIndex().filter { (_, message) -> message.senderId != currentUserId }
     if (candidates.isEmpty()) return null

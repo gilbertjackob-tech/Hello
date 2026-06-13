@@ -31,6 +31,7 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -368,7 +369,7 @@ fun FamilyDriveScreen(
                         onDeleteOrLeaveCircle = { circle ->
                             val isOwner = circle.ownerUserId.isNullOrBlank() || circle.ownerUserId == currentUserId
                             if (isOwner) {
-                                viewModel.deleteCircle(circle.id, currentUserId) {
+                                viewModel.deleteCircle(context, circle.id, currentUserId) {
                                     if (editingCircle?.id == circle.id) editingCircle = null
                                 }
                             } else {
@@ -586,13 +587,13 @@ fun FamilyDriveScreen(
                 },
                 editingCircle = editingCircle,
                 onCreateCircle = { circleId, name, members ->
-                    viewModel.createCircle(circleId, name, currentUserId, members) {
+                    viewModel.createCircle(context, circleId, name, currentUserId, members) {
                         editingCircle = null
                         uploadStep = DriveUploadStep.Circles
                     }
                 },
                 onDeleteCircle = { circle ->
-                    viewModel.deleteCircle(circle.id, currentUserId) {
+                    viewModel.deleteCircle(context, circle.id, currentUserId) {
                         if (editingCircle?.id == circle.id) editingCircle = null
                         uploadStep = DriveUploadStep.Circles
                     }
@@ -1235,9 +1236,28 @@ private fun UploadSummaryStep(
     onSubmit: () -> Unit
 ) {
     val breakdown = buildSummaryBreakdown(media, circles, selectedAudienceIds, customPeopleIds, sortAssignments)
-    Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = HelloSpacing.ScreenPadding)
+    ) {
         FlowHeader("Upload Summary", "Review event and visibility", onBack)
+        Spacer(modifier = Modifier.height(HelloSpacing.Md))
         EventChoiceCard(eventName, "${media.size} photos/videos - ${formatFileSize(media.sumOf { it.size })}", selected = true, onClick = {})
+        HelloPanel(modifier = Modifier.fillMaxWidth().padding(bottom = HelloSpacing.Md), strong = false, shape = HelloShapes.Lg) {
+            Column(modifier = Modifier.padding(HelloSpacing.Md), verticalArrangement = Arrangement.spacedBy(HelloSpacing.Sm)) {
+                Text("Collage preview", color = HelloColors.DarkText, fontWeight = FontWeight.Bold)
+                Box(modifier = Modifier.fillMaxWidth().height(320.dp)) {
+                    SelectedMediaCollageGrid(
+                        media = media.take(6),
+                        circles = circles,
+                        sortAssignments = sortAssignments,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+            }
+        }
         breakdown.forEach { (label, count) ->
             HelloPanel(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp), strong = false, shape = HelloShapes.Lg) {
                 Row(modifier = Modifier.padding(HelloSpacing.Md), verticalAlignment = Alignment.CenterVertically) {
@@ -1307,18 +1327,26 @@ private fun PendingUploadsStep(state: FamilyDriveUiState, onBack: () -> Unit, on
 
 @Composable
 private fun UploadEventPreviewStep(media: List<SelectedDriveMedia>, eventName: String, circles: List<DriveCircle>, sortAssignments: Map<String, String>, onBack: () -> Unit, onOpenCircles: () -> Unit) {
-    Column(modifier = Modifier.fillMaxSize()) {
-        FlowHeader(eventName, "All visible - Uploaded by me - Shared with me", onBack)
-        LazyVerticalGrid(columns = GridCells.Fixed(3), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.weight(1f)) {
-            items(media, key = { it.id }) { item ->
-                Box {
-                    UploadMediaTile(item, selected = false, onClick = {})
-                    sortAssignments[item.id]?.let {
-                        Text("Visible to: ${audienceTitle(it, circles)}", color = Color.White, style = MaterialTheme.typography.labelSmall, modifier = Modifier.align(Alignment.BottomStart).padding(4.dp).clip(HelloShapes.Sm).background(Color.Black.copy(alpha = 0.58f)).padding(4.dp), maxLines = 1)
-                    }
-                }
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = HelloSpacing.ScreenPadding)
+    ) {
+        FlowHeader(eventName, "Preview before Family Drive sync", onBack)
+        Spacer(modifier = Modifier.height(HelloSpacing.Md))
+        HelloPanel(modifier = Modifier.fillMaxWidth(), strong = true, shape = HelloShapes.Lg) {
+            Column(modifier = Modifier.padding(HelloSpacing.Lg), verticalArrangement = Arrangement.spacedBy(HelloSpacing.Xs)) {
+                Text("${media.size} selected item${if (media.size == 1) "" else "s"}", color = HelloColors.DarkText, fontWeight = FontWeight.Black)
+                Text("Grouped as a shared collage. Audience labels stay attached to each tile.", color = HelloColors.DarkTextMuted, style = MaterialTheme.typography.bodySmall)
             }
         }
+        Spacer(modifier = Modifier.height(HelloSpacing.Md))
+        SelectedMediaCollageGrid(
+            media = media,
+            circles = circles,
+            sortAssignments = sortAssignments,
+            modifier = Modifier.weight(1f)
+        )
         Button(onClick = onOpenCircles, modifier = Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(containerColor = HelloColors.DarkAccent), shape = HelloShapes.Lg) {
             Text("Manage Circles", color = HelloColors.DarkBg, fontWeight = FontWeight.Black)
         }
@@ -1336,8 +1364,48 @@ private fun CircleManagementStep(
     onUploadCircleAvatar: (DriveCircle) -> Unit,
     onDeleteOrLeaveCircle: (DriveCircle) -> Unit
 ) {
-    Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+    val pendingCount = circles.count { it.syncStatus != PendingDriveCircleStatus.SYNCED }
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = HelloSpacing.ScreenPadding)
+    ) {
         FlowHeader("My Circles", "Saved sharing groups", onBack)
+        Spacer(modifier = Modifier.height(HelloSpacing.Md))
+        HelloPanel(modifier = Modifier.fillMaxWidth(), strong = true, shape = HelloShapes.Lg) {
+            Column(modifier = Modifier.padding(HelloSpacing.Lg), verticalArrangement = Arrangement.spacedBy(HelloSpacing.Sm)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(CircleShape)
+                            .background(HelloColors.DarkAccent.copy(alpha = 0.16f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(Icons.Default.Cloud, contentDescription = null, tint = HelloColors.DarkAccent)
+                    }
+                    Spacer(modifier = Modifier.width(HelloSpacing.Md))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Family sharing circles", color = HelloColors.DarkText, fontWeight = FontWeight.Black)
+                        Text(
+                            if (pendingCount > 0) "$pendingCount circle${if (pendingCount == 1) "" else "s"} waiting for PC sync." else "Create and manage private sharing groups.",
+                            color = HelloColors.DarkTextMuted,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
+                Button(
+                    onClick = onCreateCircle,
+                    modifier = Modifier.fillMaxWidth().height(50.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = HelloColors.DarkAccent),
+                    shape = HelloShapes.Md
+                ) {
+                    Text("New Circle", color = HelloColors.DarkBg, fontWeight = FontWeight.Black)
+                }
+            }
+        }
+        Spacer(modifier = Modifier.height(HelloSpacing.Md))
         if (circles.isEmpty()) {
             EmptyInlineState("No circles yet", "Create a circle from your Hello people list.")
         } else {
@@ -1352,9 +1420,7 @@ private fun CircleManagementStep(
                 )
             }
         }
-        Button(onClick = onCreateCircle, modifier = Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(containerColor = HelloColors.DarkAccent), shape = HelloShapes.Lg) {
-            Text("Create Circle", color = HelloColors.DarkBg, fontWeight = FontWeight.Black)
-        }
+        Spacer(modifier = Modifier.height(HelloSpacing.Xl))
     }
 }
 
@@ -1369,11 +1435,12 @@ private fun CircleManagementCard(
 ) {
     var menuExpanded by remember(circle.id) { mutableStateOf(false) }
     val isOwner = circle.ownerUserId.isNullOrBlank() || circle.ownerUserId == activeUserId
+    val isPending = circle.syncStatus != PendingDriveCircleStatus.SYNCED
     HelloPanel(
         modifier = Modifier
             .fillMaxWidth()
             .padding(bottom = 10.dp)
-            .clickable(onClick = onOpenCircle, role = Role.Button),
+            .clickable(enabled = !isPending, onClick = onOpenCircle, role = Role.Button),
         strong = false,
         shape = HelloShapes.Lg
     ) {
@@ -1401,21 +1468,41 @@ private fun CircleManagementCard(
             }
             Spacer(modifier = Modifier.width(HelloSpacing.Md))
             Column(modifier = Modifier.weight(1f)) {
-                Text(circle.name, color = HelloColors.DarkText, fontWeight = FontWeight.Bold)
-                Text(buildCircleManagementSubtitle(circle), color = HelloColors.DarkTextMuted, style = MaterialTheme.typography.bodySmall)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(circle.name, color = HelloColors.DarkText, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    if (isPending) {
+                        SmallStatusBadge(
+                            text = when (circle.syncStatus) {
+                                PendingDriveCircleStatus.FAILED_RETRYABLE -> "Needs sync"
+                                PendingDriveCircleStatus.SYNCING -> "Syncing"
+                                else -> "Pending"
+                            },
+                            tint = if (circle.syncStatus == PendingDriveCircleStatus.FAILED_RETRYABLE) HelloColors.DarkDanger else HelloColors.DarkAccent
+                        )
+                    }
+                }
+                Text(
+                    if (isPending) "Saved on this phone. Syncs when the PC is online." else buildCircleManagementSubtitle(circle),
+                    color = HelloColors.DarkTextMuted,
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
             Box {
                 IconButton(onClick = { menuExpanded = true }) {
                     Icon(Icons.Default.MoreVert, contentDescription = "Circle options", tint = HelloColors.DarkTextMuted)
                 }
                 DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
-                    DropdownMenuItem(
-                        text = { Text("Open Drive") },
-                        onClick = {
-                            menuExpanded = false
-                            onOpenCircle()
-                        }
-                    )
+                    if (!isPending) {
+                        DropdownMenuItem(
+                            text = { Text("Open Drive") },
+                            onClick = {
+                                menuExpanded = false
+                                onOpenCircle()
+                            }
+                        )
+                    }
                     DropdownMenuItem(
                         text = { Text("Manage circle") },
                         onClick = {
@@ -1423,7 +1510,7 @@ private fun CircleManagementCard(
                             onManageCircle()
                         }
                     )
-                    if (isOwner) {
+                    if (isOwner && !isPending) {
                         DropdownMenuItem(
                             text = { Text("Profile picture") },
                             onClick = {
@@ -1441,7 +1528,9 @@ private fun CircleManagementCard(
                     )
                 }
             }
-            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = HelloColors.DarkAccent)
+            if (!isPending) {
+                Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = HelloColors.DarkAccent)
+            }
         }
     }
 }
@@ -1471,10 +1560,30 @@ private fun EditCircleStep(
     var role by remember(existingCircle?.id) {
         mutableStateOf(existingCircle?.members.orEmpty().firstOrNull { it.userId != existingCircle?.ownerUserId }?.role?.let(::normalizeDriveRole) ?: "Viewer")
     }
-    Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+    val isPending = existingCircle?.syncStatus != null && existingCircle.syncStatus != PendingDriveCircleStatus.SYNCED
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = HelloSpacing.ScreenPadding)
+    ) {
         FlowHeader(if (existingCircle == null) "Create Circle" else "Manage Circle", "Simple permissions for family sharing", onBack)
-        HelloPanel(modifier = Modifier.fillMaxWidth().padding(vertical = HelloSpacing.Md), strong = true, shape = HelloShapes.Lg) {
-            Column(modifier = Modifier.padding(HelloSpacing.Md), verticalArrangement = Arrangement.spacedBy(HelloSpacing.Sm)) {
+        Spacer(modifier = Modifier.height(HelloSpacing.Md))
+        HelloPanel(modifier = Modifier.fillMaxWidth(), strong = true, shape = HelloShapes.Lg) {
+            Column(modifier = Modifier.padding(HelloSpacing.Lg), verticalArrangement = Arrangement.spacedBy(HelloSpacing.Md)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(if (existingCircle == null) "Circle details" else "Circle settings", color = HelloColors.DarkText, fontWeight = FontWeight.Black)
+                        Text(
+                            if (isPending) "This circle is saved locally and will sync when the PC is online." else "Choose a clear name and who can access it.",
+                            color = HelloColors.DarkTextMuted,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                    if (isPending) {
+                        SmallStatusBadge(text = "Pending", tint = HelloColors.DarkAccent)
+                    }
+                }
                 if (existingCircle != null) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(
@@ -1499,8 +1608,14 @@ private fun EditCircleStep(
                             }
                         }
                         Spacer(modifier = Modifier.width(HelloSpacing.Md))
-                        TextButton(onClick = { onUploadCircleAvatar(existingCircle) }) {
-                            Text("Upload profile picture", color = HelloColors.DarkAccent, fontWeight = FontWeight.Bold)
+                        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text(existingCircle.name, color = HelloColors.DarkText, fontWeight = FontWeight.Bold)
+                            Text(buildCircleManagementSubtitle(existingCircle), color = HelloColors.DarkTextMuted, style = MaterialTheme.typography.bodySmall)
+                        }
+                        if (!isPending) {
+                            TextButton(onClick = { onUploadCircleAvatar(existingCircle) }) {
+                                Text("Photo", color = HelloColors.DarkAccent, fontWeight = FontWeight.Bold)
+                            }
                         }
                     }
                 }
@@ -1513,9 +1628,15 @@ private fun EditCircleStep(
                 )
             }
         }
-        HelloPanel(modifier = Modifier.fillMaxWidth().padding(bottom = HelloSpacing.Md), strong = false, shape = HelloShapes.Lg) {
-            Column(modifier = Modifier.padding(HelloSpacing.Md)) {
-                Text("Add people from Hello", color = HelloColors.DarkTextMuted)
+        Spacer(modifier = Modifier.height(HelloSpacing.Md))
+        HelloPanel(modifier = Modifier.fillMaxWidth(), strong = false, shape = HelloShapes.Lg) {
+            Column(modifier = Modifier.padding(HelloSpacing.Lg), verticalArrangement = Arrangement.spacedBy(HelloSpacing.Sm)) {
+                Text("Members", color = HelloColors.DarkText, fontWeight = FontWeight.Bold)
+                Text(
+                    if (selectedIds.isEmpty()) "Select people from Hello chats and contacts." else "${selectedIds.size} selected member${if (selectedIds.size == 1) "" else "s"}",
+                    color = HelloColors.DarkTextMuted,
+                    style = MaterialTheme.typography.bodySmall
+                )
                 if (contacts.isEmpty()) {
                     EmptyInlineState("No people found", "People from your Hello account and existing chats can be added here.")
                 }
@@ -1545,24 +1666,31 @@ private fun EditCircleStep(
                 }
             }
         }
-        listOf("Admin", "Contributor", "Viewer").forEach { label ->
-            AudienceChoiceCard(
-                DriveAudienceOption(
-                    label,
-                    label,
-                    if (selectedIds.isEmpty()) "Select people first" else "Apply to ${selectedIds.size} selected member${if (selectedIds.size == 1) "" else "s"}"
-                ),
-                selected = label == role,
-                onClick = {
-                    role = label
-                    if (selectedIds.isNotEmpty()) {
-                        selectedRoles = selectedRoles.toMutableMap().apply {
-                            selectedIds.forEach { put(it, label) }
+        Spacer(modifier = Modifier.height(HelloSpacing.Md))
+        HelloPanel(modifier = Modifier.fillMaxWidth(), strong = false, shape = HelloShapes.Lg) {
+            Column(modifier = Modifier.padding(HelloSpacing.Lg), verticalArrangement = Arrangement.spacedBy(HelloSpacing.Sm)) {
+                Text("Default permission", color = HelloColors.DarkText, fontWeight = FontWeight.Bold)
+                listOf("Admin", "Contributor", "Viewer").forEach { label ->
+                    AudienceChoiceCard(
+                        DriveAudienceOption(
+                            label,
+                            label,
+                            if (selectedIds.isEmpty()) "Select people first" else "Apply to ${selectedIds.size} selected member${if (selectedIds.size == 1) "" else "s"}"
+                        ),
+                        selected = label == role,
+                        onClick = {
+                            role = label
+                            if (selectedIds.isNotEmpty()) {
+                                selectedRoles = selectedRoles.toMutableMap().apply {
+                                    selectedIds.forEach { put(it, label) }
+                                }
+                            }
                         }
-                    }
+                    )
                 }
-            )
+            }
         }
+        Spacer(modifier = Modifier.height(HelloSpacing.Md))
         Button(
             onClick = {
                 val members = contacts
@@ -1583,7 +1711,7 @@ private fun EditCircleStep(
             colors = ButtonDefaults.buttonColors(containerColor = HelloColors.DarkAccent),
             shape = HelloShapes.Lg
         ) {
-            Text(if (existingCircle == null) "Save" else "Update Circle", color = HelloColors.DarkBg, fontWeight = FontWeight.Black)
+            Text(if (existingCircle == null) "Save Circle" else "Update Circle", color = HelloColors.DarkBg, fontWeight = FontWeight.Black)
         }
         existingCircle?.let { circle ->
             val isOwner = circle.ownerUserId.isNullOrBlank() || circle.ownerUserId == activeUserId
@@ -1593,9 +1721,10 @@ private fun EditCircleStep(
                 },
                 modifier = Modifier.fillMaxWidth().height(48.dp)
             ) {
-                Text(if (isOwner) "Delete Circle" else "Leave Circle", color = HelloColors.DarkDanger, fontWeight = FontWeight.Bold)
+                Text(if (isPending || isOwner) "Remove Circle" else "Leave Circle", color = HelloColors.DarkDanger, fontWeight = FontWeight.Bold)
             }
         }
+        Spacer(modifier = Modifier.height(HelloSpacing.Xl))
     }
 }
 
@@ -1705,6 +1834,120 @@ private fun UploadMediaTile(item: SelectedDriveMedia, selected: Boolean, onClick
         SelectionMark(selected = selected, modifier = Modifier.align(Alignment.TopEnd).padding(5.dp))
         if (item.isVideo) {
             Text("Video", color = Color.White, style = MaterialTheme.typography.labelSmall, modifier = Modifier.align(Alignment.BottomEnd).padding(5.dp).clip(CircleShape).background(Color.Black.copy(alpha = 0.55f)).padding(horizontal = 6.dp, vertical = 3.dp))
+        }
+    }
+}
+
+@Composable
+private fun SmallStatusBadge(text: String, tint: Color, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(999.dp))
+            .background(tint.copy(alpha = 0.16f))
+            .border(1.dp, tint.copy(alpha = 0.3f), RoundedCornerShape(999.dp))
+            .padding(horizontal = 8.dp, vertical = 4.dp)
+    ) {
+        Text(text, color = tint, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+    }
+}
+
+@Composable
+private fun SelectedMediaCollageTile(
+    item: SelectedDriveMedia,
+    collageStyle: DriveCollageStyle,
+    audienceLabel: String? = null,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier
+            .aspectRatio(collageStyle.aspectRatio)
+            .clip(collageStyle.shape)
+            .background(HelloColors.DarkPanelStrong)
+            .border(1.dp, Color.White.copy(alpha = 0.58f), collageStyle.shape)
+    ) {
+        if (item.isVideo) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.White, modifier = Modifier.size(42.dp))
+            }
+        } else {
+            SubcomposeAsyncImage(
+                model = ImageRequest.Builder(LocalContext.current)
+                    .data(item.uri)
+                    .crossfade(false)
+                    .allowHardware(true)
+                    .memoryCacheKey(item.id)
+                    .build(),
+                contentDescription = item.displayName,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop,
+                loading = {
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(color = HelloColors.DarkAccent, modifier = Modifier.size(18.dp))
+                    }
+                },
+                error = {
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Icon(Icons.Default.Image, contentDescription = null, tint = HelloColors.DarkTextMuted)
+                    }
+                }
+            )
+        }
+        if (item.isVideo) {
+            Row(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(6.dp)
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(Color.Black.copy(alpha = 0.55f))
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("Video", color = Color.White, style = MaterialTheme.typography.labelSmall)
+            }
+        }
+        audienceLabel?.let { label ->
+            Text(
+                text = label,
+                color = Color.White,
+                style = MaterialTheme.typography.labelSmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(6.dp)
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(Color.Black.copy(alpha = 0.58f))
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun SelectedMediaCollageGrid(
+    media: List<SelectedDriveMedia>,
+    circles: List<DriveCircle>,
+    sortAssignments: Map<String, String>,
+    modifier: Modifier = Modifier
+) {
+    LazyVerticalGrid(
+        columns = GridCells.Fixed(3),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+        contentPadding = PaddingValues(bottom = 96.dp),
+        modifier = modifier
+    ) {
+        itemsIndexed(media, key = { _, item -> item.id }, span = { index, item ->
+            GridItemSpan(driveCollageStyleFor(item.id, item.isVideo, index).span)
+        }) { index, item ->
+            val collageStyle = driveCollageStyleFor(item.id, item.isVideo, index)
+            SelectedMediaCollageTile(
+                item = item,
+                collageStyle = collageStyle,
+                audienceLabel = sortAssignments[item.id]?.let { audienceTitle(it, circles) }
+            )
         }
     }
 }

@@ -62,7 +62,8 @@ fun ImageCard(
     message: ChatModels.Message,
     resolvedUrl: String,
     onOpenImage: (String, String) -> Unit,
-    onDownload: (String, String?) -> Unit
+    onDownload: (String, String?) -> Unit,
+    lightweight: Boolean = false
 ) {
     var aspectRatio by remember(resolvedUrl) { mutableStateOf(4f / 3f) }
     BoxWithConstraints {
@@ -73,40 +74,49 @@ fun ImageCard(
                 .heightIn(max = 360.dp)
                 .aspectRatio(ratio)
         ) {
-            AsyncImage(
-                model = ImageRequest.Builder(androidx.compose.ui.platform.LocalContext.current)
-                    .data(resolvedUrl)
-                    .decoderFactory(SvgDecoder.Factory())
-                    .crossfade(false)
-                    .allowHardware(true)
-                    .memoryCacheKey(message.id)
-                    .diskCacheKey(message.id)
-                    .build(),
-                contentDescription = message.attachmentName ?: "Image attachment",
-                contentScale = ContentScale.Fit,
-                onSuccess = { state ->
-                    val drawable = state.result.drawable
-                    val width = drawable.intrinsicWidth
-                    val height = drawable.intrinsicHeight
-                    if (width > 0 && height > 0) {
-                        aspectRatio = width.toFloat() / height.toFloat()
-                    }
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 120.dp, max = 360.dp)
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(Color(0xFF071219))
-                    .combinedClickable(onClick = { onOpenImage(resolvedUrl, message.attachmentName ?: "Image") }),
-                placeholder = null,
-                error = null
-            )
-            DownloadChip(
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(10.dp),
-                onClick = { onDownload(resolvedUrl, message.attachmentName) }
-            )
+            if (lightweight) {
+                AttachmentPlaceholder(
+                    label = message.attachmentName ?: "Image",
+                    aspectRatio = ratio
+                )
+            } else {
+                AsyncImage(
+                    model = ImageRequest.Builder(androidx.compose.ui.platform.LocalContext.current)
+                        .data(resolvedUrl)
+                        .decoderFactory(SvgDecoder.Factory())
+                        .crossfade(false)
+                        .allowHardware(true)
+                        .memoryCacheKey(message.id)
+                        .diskCacheKey(message.id)
+                        .build(),
+                    contentDescription = message.attachmentName ?: "Image attachment",
+                    contentScale = ContentScale.Fit,
+                    onSuccess = { state ->
+                        val drawable = state.result.drawable
+                        val width = drawable.intrinsicWidth
+                        val height = drawable.intrinsicHeight
+                        if (width > 0 && height > 0) {
+                            aspectRatio = width.toFloat() / height.toFloat()
+                        }
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 120.dp, max = 360.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(Color(0xFF071219))
+                        .combinedClickable(onClick = { onOpenImage(resolvedUrl, message.attachmentName ?: "Image") }),
+                    placeholder = null,
+                    error = null
+                )
+            }
+            if (!lightweight) {
+                DownloadChip(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(10.dp),
+                    onClick = { onDownload(resolvedUrl, message.attachmentName) }
+                )
+            }
         }
     }
 }
@@ -115,7 +125,8 @@ fun ImageCard(
 fun ImageCollageCard(
     messages: List<ChatModels.Message>,
     onOpenImage: (String, String) -> Unit,
-    onDownload: (String, String?) -> Unit
+    onDownload: (String, String?) -> Unit,
+    lightweight: Boolean = false
 ) {
     val items = remember(messages) {
         messages.mapNotNull { message ->
@@ -126,6 +137,16 @@ fun ImageCollageCard(
     }
     if (items.isEmpty()) return
     val visibleItems = items.take(4)
+    if (lightweight) {
+        AttachmentPlaceholder(
+            label = buildString {
+                append(visibleItems.size)
+                append(if (visibleItems.size == 1) " image" else " images")
+            },
+            aspectRatio = 1.18f
+        )
+        return
+    }
     Box(
         modifier = Modifier
             .widthIn(min = 180.dp, max = 320.dp)
@@ -200,13 +221,15 @@ fun ImageCollageCard(
                 }
             }
         }
-        DownloadChip(
-            modifier = Modifier.align(Alignment.TopEnd).padding(10.dp),
-            onClick = {
-                val lead = items.first()
-                onDownload(lead.second, lead.first.attachmentName)
-            }
-        )
+        if (!lightweight) {
+            DownloadChip(
+                modifier = Modifier.align(Alignment.TopEnd).padding(10.dp),
+                onClick = {
+                    val lead = items.first()
+                    onDownload(lead.second, lead.first.attachmentName)
+                }
+            )
+        }
     }
 }
 
@@ -251,7 +274,16 @@ private fun CollageImageTile(
 }
 
 @Composable
-fun AudioCard(message: ChatModels.Message, resolvedUrl: String, onDownload: (String, String?) -> Unit) {
+fun AudioCard(
+    message: ChatModels.Message,
+    resolvedUrl: String,
+    onDownload: (String, String?) -> Unit,
+    lightweight: Boolean = false
+) {
+    if (lightweight) {
+        StaticAudioCard(message = message, onDownload = { onDownload(resolvedUrl, message.attachmentName) })
+        return
+    }
     var player by remember(resolvedUrl) { mutableStateOf<MediaPlayer?>(null) }
     var isPlaying by remember { mutableStateOf(false) }
     DisposableEffect(resolvedUrl) {
@@ -386,7 +418,8 @@ fun VideoCard(
     message: ChatModels.Message,
     resolvedUrl: String,
     onOpen: (String) -> Unit,
-    onDownload: (String, String?) -> Unit
+    onDownload: (String, String?) -> Unit,
+    lightweight: Boolean = false
 ) {
     Box(
         modifier = Modifier
@@ -397,18 +430,25 @@ fun VideoCard(
             .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(18.dp))
             .combinedClickable(onClick = { onOpen(resolvedUrl) })
     ) {
-        AsyncImage(
-            model = ImageRequest.Builder(androidx.compose.ui.platform.LocalContext.current)
-                .data(resolvedUrl)
-                .crossfade(false)
-                .allowHardware(true)
-                .memoryCacheKey(message.id)
-                .diskCacheKey(message.id)
-                .build(),
-            contentDescription = message.attachmentName ?: "Video attachment",
-            contentScale = ContentScale.Crop,
-            modifier = Modifier.fillMaxSize()
-        )
+        if (lightweight) {
+            AttachmentPlaceholder(
+                label = message.attachmentName ?: "Video",
+                aspectRatio = 16f / 9f
+            )
+        } else {
+            AsyncImage(
+                model = ImageRequest.Builder(androidx.compose.ui.platform.LocalContext.current)
+                    .data(resolvedUrl)
+                    .crossfade(false)
+                    .allowHardware(true)
+                    .memoryCacheKey(message.id)
+                    .diskCacheKey(message.id)
+                    .build(),
+                contentDescription = message.attachmentName ?: "Video attachment",
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+        }
         Box(
             modifier = Modifier
                 .align(Alignment.Center)
@@ -419,12 +459,14 @@ fun VideoCard(
         ) {
             Icon(Icons.Default.PlayArrow, contentDescription = "Play video", tint = Color.White, modifier = Modifier.size(34.dp))
         }
-        DownloadChip(
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(10.dp),
-            onClick = { onDownload(resolvedUrl, message.attachmentName) }
-        )
+        if (!lightweight) {
+            DownloadChip(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(10.dp),
+                onClick = { onDownload(resolvedUrl, message.attachmentName) }
+            )
+        }
     }
 }
 
@@ -549,6 +591,48 @@ private fun VoiceWaveform(isPlaying: Boolean) {
                     .background(if (isPlaying) HelloColors.DarkAccentStrong else HelloColors.DarkTextMuted.copy(alpha = 0.55f))
             )
         }
+    }
+}
+
+@Composable
+private fun StaticAudioCard(
+    message: ChatModels.Message,
+    onDownload: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .widthIn(max = 340.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(Color.Black.copy(alpha = 0.18f))
+            .padding(10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(42.dp)
+                .clip(CircleShape)
+                .background(HelloColors.DarkAccent.copy(alpha = 0.72f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                Icons.Default.PlayArrow,
+                contentDescription = null,
+                tint = Color.White,
+                modifier = Modifier.size(24.dp)
+            )
+        }
+        Column(modifier = Modifier.weight(1f)) {
+            Text("Voice note", color = HelloColors.DarkText, fontWeight = FontWeight.Bold)
+            Text(
+                text = message.attachmentName ?: "Audio attachment",
+                color = HelloColors.DarkTextMuted,
+                style = MaterialTheme.typography.labelSmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        DownloadChip(onClick = onDownload)
     }
 }
 

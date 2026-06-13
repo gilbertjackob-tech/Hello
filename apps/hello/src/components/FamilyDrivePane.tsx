@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import {
   createDriveCircle,
   createDriveDeletePoll,
@@ -19,11 +20,32 @@ import {
   renameDriveEvent,
   restoreDriveItem,
   setDriveFavorite,
+  uploadDriveCircleAvatar,
   uploadDriveFiles,
   voteDriveDeletePoll,
 } from "../api";
 import type { Chat, DriveCircle, DriveDeletePoll, DriveEvent, DriveItem, User } from "../types";
-import { Heart, Image as ImageIcon, LogOut, Plus, ShieldAlert, Trash2, Users } from "lucide-react";
+import {
+  ArrowLeft,
+  CalendarDays,
+  ChevronLeft,
+  ChevronRight,
+  Crown,
+  Download,
+  Eye,
+  FolderOpen,
+  Heart,
+  Image as ImageIcon,
+  LogOut,
+  MoreVertical,
+  Plus,
+  ShieldAlert,
+  Trash2,
+  Upload,
+  UserCog,
+  Users,
+  X,
+} from "lucide-react";
 
 interface FamilyDrivePaneProps {
   currentUser: User;
@@ -32,6 +54,7 @@ interface FamilyDrivePaneProps {
 
 type DriveView = "circles" | "events" | "items" | "trash";
 type MemberRole = "view" | "add" | "manage";
+type CircleMenuAction = "rename" | "members" | "avatar" | "delete" | "leave" | "request-delete";
 
 export function FamilyDrivePane({ currentUser, visible }: FamilyDrivePaneProps) {
   const [view, setView] = useState<DriveView>("circles");
@@ -50,6 +73,12 @@ export function FamilyDrivePane({ currentUser, visible }: FamilyDrivePaneProps) 
   const [eventName, setEventName] = useState("");
   const [contactSearch, setContactSearch] = useState("");
   const [selectedContactRoles, setSelectedContactRoles] = useState<Record<string, MemberRole>>({});
+  const [openCircleMenuId, setOpenCircleMenuId] = useState<string | null>(null);
+  const [memberEditorOpen, setMemberEditorOpen] = useState(false);
+  const [memberEditorRoles, setMemberEditorRoles] = useState<Record<string, MemberRole>>({});
+  const [avatarCircleId, setAvatarCircleId] = useState<string | null>(null);
+  const avatarCircleIdRef = useRef<string | null>(null);
+  const avatarInputRef = useRef<HTMLInputElement | null>(null);
 
   const selectedCircle = useMemo(
     () => circles.find((circle) => circle.id === selectedCircleId) || null,
@@ -87,7 +116,7 @@ export function FamilyDrivePane({ currentUser, visible }: FamilyDrivePaneProps) 
     try {
       const nextCircles = await fetchDriveCircles(currentUser.id);
       setCircles(nextCircles);
-      setSelectedCircleId((current) => current && nextCircles.some((circle) => circle.id === current) ? current : nextCircles[0]?.id || null);
+      setSelectedCircleId((current) => current && nextCircles.some((circle) => circle.id === current) ? current : null);
       if (!nextCircles.length) {
         setSelectedEventId(null);
         setEvents([]);
@@ -187,6 +216,84 @@ export function FamilyDrivePane({ currentUser, visible }: FamilyDrivePaneProps) 
     if (selectedCircleId) await refreshEvents(selectedCircleId);
   }
 
+  async function handleRenameCircle(circle: DriveCircle) {
+    if (!canManageCircle(circle, currentUser.id)) return;
+    const nextName = window.prompt("Rename circle", circle.name)?.trim();
+    if (!nextName || nextName === circle.name) return;
+    await createDriveCircle({
+      userId: currentUser.id,
+      id: circle.id,
+      name: nextName,
+      members: circle.members.map((member) => ({
+        userId: member.userId,
+        role: member.role || "view",
+        name: member.name || null,
+        username: member.username || null,
+        avatar: member.avatar || null,
+      })),
+    });
+    await refreshCircles();
+  }
+
+  function openMemberEditor(circle: DriveCircle) {
+    if (!canManageCircle(circle, currentUser.id)) return;
+    setSelectedCircleId(circle.id);
+    setMemberEditorRoles(
+      circle.members.reduce<Record<string, MemberRole>>((acc, member) => {
+        if (member.userId !== circle.ownerUserId) {
+          acc[member.userId] = normalizeMemberRole(member.role);
+        }
+        return acc;
+      }, {}),
+    );
+    setMemberEditorOpen(true);
+  }
+
+  async function handleSaveMembers() {
+    if (!selectedCircle || !canManageCircle(selectedCircle, currentUser.id)) return;
+    const currentMembers = new Map(selectedCircle.members.map((member) => [member.userId, member]));
+    const ownerId = selectedCircle.ownerUserId || currentUser.id;
+    const members = [
+      {
+        userId: ownerId,
+        role: "owner",
+        name: currentMembers.get(ownerId)?.name || currentUser.name,
+        username: currentMembers.get(ownerId)?.username || currentUser.username || null,
+        avatar: currentMembers.get(ownerId)?.avatar || currentUser.avatar || null,
+      },
+      ...Object.entries(memberEditorRoles).map(([userId, role]) => {
+        const member = currentMembers.get(userId);
+        const contact = contacts.find((candidate) => candidate.id === userId);
+        return {
+          userId,
+          role,
+          name: member?.name || contact?.name || userId,
+          username: member?.username || contact?.username || null,
+          avatar: member?.avatar || contact?.avatar || null,
+        };
+      }),
+    ];
+    await createDriveCircle({
+      userId: currentUser.id,
+      id: selectedCircle.id,
+      name: selectedCircle.name,
+      members,
+    });
+    setMemberEditorOpen(false);
+    await refreshCircles();
+  }
+
+  async function handleCircleAvatarSelected(files: FileList | null) {
+    const file = files?.[0];
+    const circleId = avatarCircleIdRef.current || avatarCircleId;
+    if (!file || !circleId) return;
+    const updated = await uploadDriveCircleAvatar(circleId, currentUser.id, file);
+    setCircles((current) => (current.map((circle) => circle.id === updated.id ? updated : circle)));
+    avatarCircleIdRef.current = null;
+    setAvatarCircleId(null);
+    if (avatarInputRef.current) avatarInputRef.current.value = "";
+  }
+
   async function handleDeleteEvent(event: DriveEvent) {
     if (!selectedCircleId) return;
     try {
@@ -206,6 +313,15 @@ export function FamilyDrivePane({ currentUser, visible }: FamilyDrivePaneProps) 
   }
 
   async function handleDeleteCircle(circle: DriveCircle) {
+    if (!canManageCircle(circle, currentUser.id)) {
+      await createDriveDeletePoll({
+        userId: currentUser.id,
+        targetType: "circle",
+        targetId: circle.id,
+      });
+      await refreshPolls(circle.id);
+      return;
+    }
     try {
       await deleteDriveCircle(circle.id, currentUser.id);
     } catch (error) {
@@ -226,7 +342,25 @@ export function FamilyDrivePane({ currentUser, visible }: FamilyDrivePaneProps) 
   async function handleLeaveCircle(circle: DriveCircle) {
     await leaveDriveCircle(circle.id, currentUser.id);
     await refreshCircles();
+    if (circle.id === selectedCircleId) {
+      setSelectedCircleId(null);
+      setSelectedEventId(null);
+      setMemberEditorOpen(false);
+    }
     setView("circles");
+  }
+
+  function handleCircleMenuAction(circle: DriveCircle, action: CircleMenuAction) {
+    setOpenCircleMenuId(null);
+    if (action === "rename") void handleRenameCircle(circle);
+    if (action === "members") openMemberEditor(circle);
+    if (action === "avatar") {
+      avatarCircleIdRef.current = circle.id;
+      setAvatarCircleId(circle.id);
+      avatarInputRef.current?.click();
+    }
+    if (action === "delete" || action === "request-delete") void handleDeleteCircle(circle);
+    if (action === "leave") void handleLeaveCircle(circle);
   }
 
   async function handleUpload(files: FileList | null) {
@@ -306,28 +440,86 @@ export function FamilyDrivePane({ currentUser, visible }: FamilyDrivePaneProps) 
     [contacts, selectedContactRoles],
   );
 
+  const circleContacts = useMemo(() => {
+    if (!selectedCircle) return contacts;
+    const existingIds = new Set(selectedCircle.members.map((member) => member.userId));
+    const mappedMembers = selectedCircle.members
+      .filter((member) => member.userId !== selectedCircle.ownerUserId)
+      .map<User>((member) => ({
+        id: member.userId,
+        name: member.name || member.username || member.userId,
+        username: member.username || undefined,
+        avatar: member.avatar || undefined,
+      }));
+    return [
+      ...mappedMembers,
+      ...contacts.filter((contact) => !existingIds.has(contact.id)),
+    ].sort((a, b) => displayHandle(a).localeCompare(displayHandle(b)));
+  }, [contacts, selectedCircle]);
+
+  const selectedCircleMember = selectedCircle?.members.find((member) => member.userId === currentUser.id) || null;
+  const selectedCircleCanManage = selectedCircle ? canManageCircle(selectedCircle, currentUser.id) : false;
+  const selectedCircleCanUpload = selectedCircle ? canUploadToCircle(selectedCircle, currentUser.id) : false;
+
   if (!visible) return null;
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden bg-[var(--hello-surface)] text-[var(--hello-text)]">
+      <input
+        ref={avatarInputRef}
+        className="hidden"
+        type="file"
+        accept="image/*"
+        onChange={(event) => void handleCircleAvatarSelected(event.target.files)}
+      />
       <div className="border-b border-[var(--hello-border)] px-5 py-4">
         <div className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--hello-muted)]">Hello Drive</div>
         <div className="mt-1 flex items-center justify-between gap-3">
           <div>
-            <h1 className="text-2xl font-extrabold">All Circles</h1>
-            <p className="text-sm text-[var(--hello-muted)]">Shared media lives inside circles and events.</p>
+            <h1 className="text-2xl font-extrabold">{selectedCircle ? selectedCircle.name : "Circles"}</h1>
+            <p className="text-sm text-[var(--hello-muted)]">
+              {selectedCircle
+                ? `${selectedCircle.memberCount} members - ${roleLabel(selectedCircleMember?.role)}`
+                : "Choose a circle to open its dedicated Drive workspace."}
+            </p>
           </div>
-          {selectedCircleId ? (
+          <div className="flex items-center gap-2">
+          {selectedCircle ? (
+            <button
+              type="button"
+              onClick={() => {
+                setSelectedCircleId(null);
+                setSelectedEventId(null);
+                setView("circles");
+                setMemberEditorOpen(false);
+              }}
+              className="inline-flex items-center gap-2 rounded-full border border-[var(--hello-border)] bg-white px-4 py-2 text-sm font-semibold text-[var(--hello-text)]"
+            >
+              <ArrowLeft className="h-4 w-4" />
+              Circles
+            </button>
+          ) : null}
+          {selectedCircleId && selectedCircleCanUpload ? (
             <label className="inline-flex cursor-pointer items-center gap-2 rounded-full bg-[var(--hello-accent)] px-4 py-2 text-sm font-semibold text-white">
-              <Plus className="h-4 w-4" />
+              <Upload className="h-4 w-4" />
               {uploading ? "Uploading..." : "Upload"}
               <input className="hidden" type="file" accept="image/*,video/*" multiple onChange={(event) => void handleUpload(event.target.files)} />
             </label>
           ) : null}
+          {selectedCircle ? (
+            <CircleActionsMenu
+              circle={selectedCircle}
+              currentUserId={currentUser.id}
+              open={openCircleMenuId === selectedCircle.id}
+              onToggle={() => setOpenCircleMenuId((current) => current === selectedCircle.id ? null : selectedCircle.id)}
+              onAction={(action) => handleCircleMenuAction(selectedCircle, action)}
+            />
+          ) : null}
+          </div>
         </div>
       </div>
 
-      <div className="grid min-h-0 flex-1 gap-0 overflow-hidden md:grid-cols-[360px_minmax(0,1fr)]">
+      <div className={`grid min-h-0 flex-1 gap-0 overflow-hidden ${selectedCircle ? "md:grid-cols-[360px_minmax(0,1fr)]" : "md:grid-cols-[390px_minmax(0,1fr)]"}`}>
         <aside className="min-h-0 overflow-y-auto border-r border-[var(--hello-border)] bg-[linear-gradient(180deg,rgba(255,255,255,0.65),rgba(255,255,255,0.35))] p-4 custom-scrollbar md:p-5">
           <div className="rounded-[28px] border border-pink-200/80 bg-white/85 p-5 shadow-[0_18px_50px_rgba(166,63,111,0.10)] backdrop-blur">
             <div className="mb-2 flex items-start justify-between gap-3">
@@ -435,9 +627,9 @@ export function FamilyDrivePane({ currentUser, visible }: FamilyDrivePaneProps) 
                         onClick={(event) => event.stopPropagation()}
                         className="min-w-[112px] rounded-full border border-[var(--hello-border)] bg-white px-3 py-1.5 text-xs font-semibold text-[var(--hello-text)] outline-none"
                       >
-                        <option value="view">Can view</option>
-                        <option value="add">Can add</option>
-                        <option value="manage">Can manage</option>
+                        <option value="manage">Admin</option>
+                        <option value="add">Contributor</option>
+                        <option value="view">Viewer</option>
                       </select>
                     ) : null}
                   </label>
@@ -459,7 +651,7 @@ export function FamilyDrivePane({ currentUser, visible }: FamilyDrivePaneProps) 
             </button>
           </div>
 
-          <div className="mt-5 space-y-3">
+          <div className={`mt-5 space-y-3 ${selectedCircle ? "" : "hidden"}`}>
             {circles.map((circle) => (
               <button
                 key={circle.id}
@@ -478,30 +670,13 @@ export function FamilyDrivePane({ currentUser, visible }: FamilyDrivePaneProps) 
                     <div className="truncate text-sm font-semibold">{circle.name}</div>
                     <div className="truncate text-xs text-[var(--hello-muted)]">{circle.memberCount} members</div>
                   </div>
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      className="rounded-full p-2 text-[var(--hello-muted)] hover:bg-white"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        void handleDeleteCircle(circle);
-                      }}
-                      title="Delete circle"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
-                    <button
-                      type="button"
-                      className="rounded-full p-2 text-[var(--hello-muted)] hover:bg-white"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        void handleLeaveCircle(circle);
-                      }}
-                      title="Leave circle"
-                    >
-                      <LogOut className="h-4 w-4" />
-                    </button>
-                  </div>
+                  <CircleActionsMenu
+                    circle={circle}
+                    currentUserId={currentUser.id}
+                    open={openCircleMenuId === circle.id}
+                    onToggle={() => setOpenCircleMenuId((current) => current === circle.id ? null : circle.id)}
+                    onAction={(action) => handleCircleMenuAction(circle, action)}
+                  />
                 </div>
                 <div className="mt-3 flex -space-x-2">
                   {circle.members.slice(0, 5).map((member) => (
@@ -520,7 +695,20 @@ export function FamilyDrivePane({ currentUser, visible }: FamilyDrivePaneProps) 
 
         <section className="flex min-h-0 flex-col">
           {!selectedCircle ? (
-            <EmptyState title="Select a circle" subtitle="Circles replace the old global photo library. Pick one to manage events and uploads." />
+            <CircleIndex
+              circles={circles}
+              loading={loading}
+              currentUserId={currentUser.id}
+              openMenuId={openCircleMenuId}
+              onOpen={(circle) => {
+                setSelectedCircleId(circle.id);
+                setSelectedEventId(null);
+                setMemberEditorOpen(false);
+                setView("events");
+              }}
+              onToggleMenu={(circleId) => setOpenCircleMenuId((current) => current === circleId ? null : circleId)}
+              onAction={(circle, action) => handleCircleMenuAction(circle, action)}
+            />
           ) : (
             <>
               <div className="border-b border-[var(--hello-border)] px-5 py-4">
@@ -533,13 +721,24 @@ export function FamilyDrivePane({ currentUser, visible }: FamilyDrivePaneProps) 
                   </div>
                   <div className="flex flex-wrap gap-2">
                     <button type="button" onClick={() => setView("events")} className={tabClass(view === "events")}>Events</button>
-                    <button type="button" onClick={() => setView("items")} className={tabClass(view === "items")}>Media</button>
+                    <button type="button" onClick={() => setView("items")} className={tabClass(view === "items")}>Drive</button>
                     <button type="button" onClick={() => setView("trash")} className={tabClass(view === "trash")}>Trash</button>
                   </div>
                 </div>
               </div>
 
               <div className="min-h-0 flex-1 overflow-auto p-5">
+                {memberEditorOpen ? (
+                  <MemberManagementPanel
+                    circle={selectedCircle}
+                    contacts={circleContacts}
+                    roles={memberEditorRoles}
+                    onChangeRoles={setMemberEditorRoles}
+                    onCancel={() => setMemberEditorOpen(false)}
+                    onSave={() => void handleSaveMembers()}
+                  />
+                ) : null}
+
                 {view === "events" ? (
                   <div className="space-y-4">
                     <div className="rounded-2xl border border-[var(--hello-border)] bg-white/80 p-4 shadow-sm">
@@ -581,8 +780,12 @@ export function FamilyDrivePane({ currentUser, visible }: FamilyDrivePaneProps) 
                               <div className="text-xs text-[var(--hello-muted)]">{event.itemCount} items</div>
                             </button>
                             <div className="flex gap-2">
-                              <button type="button" className="rounded-full px-3 py-1 text-xs font-medium text-[var(--hello-muted)] hover:bg-pink-50" onClick={() => void handleRenameEvent(event)}>Rename</button>
-                              <button type="button" className="rounded-full px-3 py-1 text-xs font-medium text-red-600 hover:bg-red-50" onClick={() => void handleDeleteEvent(event)}>Delete</button>
+                              {selectedCircleCanManage ? (
+                                <button type="button" className="rounded-full px-3 py-1 text-xs font-medium text-[var(--hello-muted)] hover:bg-pink-50" onClick={() => void handleRenameEvent(event)}>Rename</button>
+                              ) : null}
+                              <button type="button" className="rounded-full px-3 py-1 text-xs font-medium text-red-600 hover:bg-red-50" onClick={() => void handleDeleteEvent(event)}>
+                                {selectedCircleCanManage ? "Delete" : "Request delete"}
+                              </button>
                             </div>
                           </div>
                         </div>
@@ -618,8 +821,8 @@ export function FamilyDrivePane({ currentUser, visible }: FamilyDrivePaneProps) 
 
                 {view === "items" ? (
                   <DriveItemsGrid
-                    title={selectedEvent?.name || "Circle media"}
-                    subtitle={selectedEvent ? "Shared media in this event" : "All shared media in this circle"}
+                    title={selectedEvent?.name || `${selectedCircle.name} Drive`}
+                    subtitle={selectedEvent ? "Shared files in this event" : "All files shared in this circle"}
                     items={items}
                     favoriteIds={favoriteIds}
                     onToggleFavorite={(item) => void handleToggleFavorite(item)}
@@ -648,6 +851,224 @@ export function FamilyDrivePane({ currentUser, visible }: FamilyDrivePaneProps) 
   );
 }
 
+function CircleIndex(props: {
+  circles: DriveCircle[];
+  loading: boolean;
+  currentUserId: string;
+  openMenuId: string | null;
+  onOpen: (circle: DriveCircle) => void;
+  onToggleMenu: (circleId: string) => void;
+  onAction: (circle: DriveCircle, action: CircleMenuAction) => void;
+}) {
+  const { circles, loading, currentUserId, openMenuId, onOpen, onToggleMenu, onAction } = props;
+  return (
+    <div className="min-h-0 overflow-auto p-5 custom-scrollbar">
+      <div className="mb-5 flex items-center justify-between gap-3">
+        <div>
+          <h2 className="text-lg font-bold">Your Circles</h2>
+          <p className="text-sm text-[var(--hello-muted)]">Every box opens a separate circle Drive with its own events, files, members, and delete requests.</p>
+        </div>
+        <div className="rounded-full border border-[var(--hello-border)] bg-white px-3 py-1 text-xs font-semibold text-[var(--hello-muted)]">
+          {circles.length} circles
+        </div>
+      </div>
+      <div className="grid gap-4 sm:grid-cols-2 2xl:grid-cols-3">
+        {circles.map((circle) => (
+          <CircleBox
+            key={circle.id}
+            circle={circle}
+            currentUserId={currentUserId}
+            menuOpen={openMenuId === circle.id}
+            onOpen={() => onOpen(circle)}
+            onToggleMenu={() => onToggleMenu(circle.id)}
+            onAction={(action) => onAction(circle, action)}
+          />
+        ))}
+      </div>
+      {!loading && !circles.length ? (
+        <EmptyState title="No circles yet" subtitle="Create a circle, add people, and their shared Drive will appear here." />
+      ) : null}
+    </div>
+  );
+}
+
+function CircleBox(props: {
+  circle: DriveCircle;
+  currentUserId: string;
+  menuOpen: boolean;
+  onOpen: () => void;
+  onToggleMenu: () => void;
+  onAction: (action: CircleMenuAction) => void;
+}) {
+  const { circle, currentUserId, menuOpen, onOpen, onToggleMenu, onAction } = props;
+  const myRole = circle.members.find((member) => member.userId === currentUserId)?.role;
+  const admin = canManageCircle(circle, currentUserId);
+  return (
+    <div className="group relative rounded-[8px] border border-[var(--hello-border)] bg-white p-4 shadow-sm transition hover:-translate-y-0.5 hover:border-pink-200 hover:shadow-md">
+      <div className="flex items-start justify-between gap-3">
+        <button type="button" onClick={onOpen} className="min-w-0 flex-1 text-left">
+          <div className="flex items-center gap-3">
+            {circle.avatarUrl ? (
+              <img src={circle.avatarUrl} alt={circle.name} className="h-11 w-11 shrink-0 rounded-[8px] object-cover" />
+            ) : (
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[8px] bg-pink-50 text-pink-600">
+                <FolderOpen className="h-5 w-5" />
+              </div>
+            )}
+            <div className="min-w-0">
+              <div className="truncate text-sm font-bold text-[var(--hello-text)]">{circle.name}</div>
+              <div className="truncate text-xs text-[var(--hello-muted)]">{circle.memberCount} members - {roleLabel(myRole)}</div>
+            </div>
+          </div>
+        </button>
+        <CircleActionsMenu
+          circle={circle}
+          currentUserId={currentUserId}
+          open={menuOpen}
+          onToggle={onToggleMenu}
+          onAction={onAction}
+        />
+      </div>
+      <button type="button" onClick={onOpen} className="mt-4 block w-full text-left">
+        <div className="flex -space-x-2">
+          {circle.members.slice(0, 6).map((member) => (
+            <MemberAvatar key={`${circle.id}-${member.userId}`} member={member} />
+          ))}
+        </div>
+        <div className="mt-4 flex items-center justify-between gap-3">
+          <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">
+            {admin ? <Crown className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+            {admin ? "Admin tools" : "Viewer access"}
+          </span>
+          <span className="text-xs font-semibold text-pink-600">Open Drive</span>
+        </div>
+      </button>
+    </div>
+  );
+}
+
+function CircleActionsMenu(props: {
+  circle: DriveCircle;
+  currentUserId: string;
+  open: boolean;
+  onToggle: () => void;
+  onAction: (action: CircleMenuAction) => void;
+}) {
+  const { circle, currentUserId, open, onToggle, onAction } = props;
+  const admin = canManageCircle(circle, currentUserId);
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        className="rounded-full p-2 text-[var(--hello-muted)] hover:bg-pink-50"
+        onClick={(event) => {
+          event.stopPropagation();
+          onToggle();
+        }}
+        title="Circle actions"
+      >
+        <MoreVertical className="h-4 w-4" />
+      </button>
+      {open ? (
+        <div className="absolute right-0 top-10 z-20 w-56 overflow-hidden rounded-[8px] border border-[var(--hello-border)] bg-white py-1 text-sm shadow-xl">
+          {admin ? (
+            <>
+              <MenuButton icon={<FolderOpen className="h-4 w-4" />} label="Rename circle" onClick={() => onAction("rename")} />
+              <MenuButton icon={<ImageIcon className="h-4 w-4" />} label="Profile picture" onClick={() => onAction("avatar")} />
+              <MenuButton icon={<UserCog className="h-4 w-4" />} label="Members and roles" onClick={() => onAction("members")} />
+              <MenuButton danger icon={<Trash2 className="h-4 w-4" />} label="Delete circle" onClick={() => onAction("delete")} />
+            </>
+          ) : (
+            <MenuButton danger icon={<ShieldAlert className="h-4 w-4" />} label="Request delete" onClick={() => onAction("request-delete")} />
+          )}
+          <MenuButton icon={<LogOut className="h-4 w-4" />} label="Leave circle" onClick={() => onAction("leave")} />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function MenuButton({ icon, label, danger = false, onClick }: { icon: ReactNode; label: string; danger?: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      className={`flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-pink-50 ${danger ? "text-red-600" : "text-[var(--hello-text)]"}`}
+      onClick={(event) => {
+        event.stopPropagation();
+        onClick();
+      }}
+    >
+      {icon}
+      <span>{label}</span>
+    </button>
+  );
+}
+
+function MemberManagementPanel(props: {
+  circle: DriveCircle;
+  contacts: User[];
+  roles: Record<string, MemberRole>;
+  onChangeRoles: (roles: Record<string, MemberRole>) => void;
+  onCancel: () => void;
+  onSave: () => void;
+}) {
+  const { circle, contacts, roles, onChangeRoles, onCancel, onSave } = props;
+  const ownerId = circle.ownerUserId;
+  return (
+    <div className="mb-5 rounded-[8px] border border-pink-200 bg-white p-4 shadow-sm">
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <div>
+          <div className="text-sm font-bold">Members and roles</div>
+          <div className="text-xs text-[var(--hello-muted)]">Admins can rename, upload, manage people, and delete. Viewers can open the Drive and request deletion.</div>
+        </div>
+        <div className="flex gap-2">
+          <button type="button" className="rounded-full border border-[var(--hello-border)] px-4 py-2 text-xs font-semibold" onClick={onCancel}>Cancel</button>
+          <button type="button" className="rounded-full bg-[var(--hello-accent)] px-4 py-2 text-xs font-semibold text-white" onClick={onSave}>Save roles</button>
+        </div>
+      </div>
+      <div className="grid gap-2 md:grid-cols-2">
+        {contacts.map((contact) => {
+          const isOwner = contact.id === ownerId;
+          const checked = isOwner || Boolean(roles[contact.id]);
+          return (
+            <label key={contact.id} className={`flex items-center gap-3 rounded-[8px] border px-3 py-3 ${checked ? "border-pink-200 bg-pink-50/70" : "border-[var(--hello-border)] bg-white"}`}>
+              <input
+                type="checkbox"
+                disabled={isOwner}
+                checked={checked}
+                onChange={() => {
+                  const next = { ...roles };
+                  if (roles[contact.id]) delete next[contact.id];
+                  else next[contact.id] = "view";
+                  onChangeRoles(next);
+                }}
+              />
+              <Avatar user={contact} />
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-sm font-semibold">{contact.name}</div>
+                <div className="truncate text-xs text-[var(--hello-muted)]">{isOwner ? "Creator admin" : contact.username ? `@${contact.username}` : contact.id}</div>
+              </div>
+              {isOwner ? (
+                <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-pink-600">Owner</span>
+              ) : checked ? (
+                <select
+                  value={roles[contact.id] || "view"}
+                  onChange={(event) => onChangeRoles({ ...roles, [contact.id]: event.target.value as MemberRole })}
+                  className="rounded-full border border-[var(--hello-border)] bg-white px-3 py-1.5 text-xs font-semibold outline-none"
+                >
+                  <option value="manage">Admin</option>
+                  <option value="add">Contributor</option>
+                  <option value="view">Viewer</option>
+                </select>
+              ) : null}
+            </label>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function DriveItemsGrid(props: {
   title: string;
   subtitle: string;
@@ -660,6 +1081,9 @@ function DriveItemsGrid(props: {
   onPermanentDelete?: (item: DriveItem) => void;
 }) {
   const { title, subtitle, items, favoriteIds, trashMode, onToggleFavorite, onDelete, onRestore, onPermanentDelete } = props;
+  const [activeItemId, setActiveItemId] = useState<string | null>(null);
+  const activeIndex = useMemo(() => items.findIndex((item) => item.id === activeItemId), [items, activeItemId]);
+  const activeItem = activeIndex >= 0 ? items[activeIndex] : null;
   if (!items.length) return <EmptyState title={title} subtitle={`No items here yet. ${subtitle}`} compact />;
   return (
     <div>
@@ -667,45 +1091,205 @@ function DriveItemsGrid(props: {
         <h3 className="text-lg font-bold">{title}</h3>
         <p className="text-sm text-[var(--hello-muted)]">{subtitle}</p>
       </div>
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        {items.map((item) => {
-          const isFavorite = favoriteIds.has(item.id);
-          return (
-            <div key={item.id} className="overflow-hidden rounded-2xl border border-[var(--hello-border)] bg-white shadow-sm">
-              <div className="aspect-[4/3] bg-slate-100">
-                {item.type === "video" ? (
-                  <video className="h-full w-full object-cover" src={item.thumbnailUrl || item.url} muted playsInline />
-                ) : (
-                  <img className="h-full w-full object-cover" src={item.thumbnailUrl || item.url} alt={item.originalName || "Drive item"} />
-                )}
-              </div>
-              <div className="space-y-3 p-4">
-                <div>
-                  <div className="truncate text-sm font-semibold">{item.originalName || item.eventName || "Untitled item"}</div>
-                  <div className="text-xs text-[var(--hello-muted)]">{item.eventName || "No event"}{item.favorite ? " · Favorite" : ""}</div>
+      <div className="rounded-[34px] border border-white/80 bg-white/90 p-3 shadow-[0_30px_90px_rgba(15,23,42,0.12)] backdrop-blur">
+        <div className="grid auto-rows-[82px] grid-cols-2 gap-3 md:auto-rows-[92px] md:grid-cols-4 xl:auto-rows-[110px] xl:grid-cols-6">
+          {items.map((item) => {
+            const isFavorite = favoriteIds.has(item.id);
+            const tile = driveCollageTile(item.id, item.type);
+            return (
+              <article
+                key={item.id}
+                className={`group overflow-hidden border border-white/80 bg-white/75 shadow-[0_18px_40px_rgba(15,23,42,0.08)] ${tile.shellClass}`}
+                style={{ borderRadius: tile.radius }}
+              >
+                <button
+                  type="button"
+                  className={`relative block w-full overflow-hidden bg-slate-100 text-left ${tile.mediaClass}`}
+                  onClick={() => setActiveItemId(item.id)}
+                >
+                  {item.type === "video" ? (
+                    <>
+                      <video className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.03]" src={item.thumbnailUrl || item.url} muted playsInline />
+                      <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(15,23,42,0.02),rgba(15,23,42,0.38))]" />
+                      <div className="absolute bottom-3 left-3 inline-flex items-center gap-1 rounded-full bg-black/55 px-3 py-1 text-[11px] font-semibold text-white">
+                        <ImageIcon className="h-3 w-3" />
+                        Video
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <img className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.03]" src={item.thumbnailUrl || item.url} alt={item.originalName || "Drive item"} />
+                      <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(255,255,255,0),rgba(15,23,42,0.08))]" />
+                    </>
+                  )}
+                </button>
+                <div className="space-y-3 p-4">
+                  <div>
+                    <div className="truncate text-sm font-semibold">{item.originalName || item.eventName || "Untitled item"}</div>
+                    <div className="text-xs text-[var(--hello-muted)]">{item.eventName || "No event"}{item.favorite ? " - Favorite" : ""}</div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button type="button" className={`rounded-full px-3 py-1 text-xs font-semibold ${isFavorite ? "bg-pink-100 text-pink-700" : "bg-slate-100 text-slate-700"}`} onClick={() => onToggleFavorite(item)}>
+                      <Heart className="mr-1 inline h-3 w-3" />
+                      {isFavorite ? "Loved" : "Love"}
+                    </button>
+                    {!trashMode && onDelete ? (
+                      <button type="button" className="rounded-full bg-red-50 px-3 py-1 text-xs font-semibold text-red-600" onClick={() => onDelete(item)}>Delete</button>
+                    ) : null}
+                    {trashMode && onRestore ? (
+                      <button type="button" className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700" onClick={() => onRestore(item)}>Restore</button>
+                    ) : null}
+                    {trashMode && onPermanentDelete ? (
+                      <button type="button" className="rounded-full bg-red-50 px-3 py-1 text-xs font-semibold text-red-600" onClick={() => onPermanentDelete(item)}>Permanent</button>
+                    ) : null}
+                  </div>
                 </div>
-                <div className="flex flex-wrap gap-2">
-                  <button type="button" className={`rounded-full px-3 py-1 text-xs font-semibold ${isFavorite ? "bg-pink-100 text-pink-700" : "bg-slate-100 text-slate-700"}`} onClick={() => onToggleFavorite(item)}>
-                    <Heart className="mr-1 inline h-3 w-3" />
-                    {isFavorite ? "Loved" : "Love"}
-                  </button>
-                  {!trashMode && onDelete ? (
-                    <button type="button" className="rounded-full bg-red-50 px-3 py-1 text-xs font-semibold text-red-600" onClick={() => onDelete(item)}>Delete</button>
-                  ) : null}
-                  {trashMode && onRestore ? (
-                    <button type="button" className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700" onClick={() => onRestore(item)}>Restore</button>
-                  ) : null}
-                  {trashMode && onPermanentDelete ? (
-                    <button type="button" className="rounded-full bg-red-50 px-3 py-1 text-xs font-semibold text-red-600" onClick={() => onPermanentDelete(item)}>Permanent</button>
-                  ) : null}
-                </div>
-              </div>
-            </div>
+            </article>
           );
         })}
+        </div>
+      </div>
+      {activeItem ? (
+        <DriveItemLightbox
+          item={activeItem}
+          isFavorite={favoriteIds.has(activeItem.id)}
+          trashMode={trashMode}
+          hasPrevious={activeIndex > 0}
+          hasNext={activeIndex < items.length - 1}
+          onClose={() => setActiveItemId(null)}
+          onPrevious={() => activeIndex > 0 && setActiveItemId(items[activeIndex - 1]?.id || null)}
+          onNext={() => activeIndex < items.length - 1 && setActiveItemId(items[activeIndex + 1]?.id || null)}
+          onToggleFavorite={() => onToggleFavorite(activeItem)}
+          onDelete={onDelete ? () => onDelete(activeItem) : undefined}
+          onRestore={onRestore ? () => onRestore(activeItem) : undefined}
+          onPermanentDelete={onPermanentDelete ? () => onPermanentDelete(activeItem) : undefined}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function DriveItemLightbox(props: {
+  item: DriveItem;
+  isFavorite: boolean;
+  trashMode?: boolean;
+  hasPrevious: boolean;
+  hasNext: boolean;
+  onClose: () => void;
+  onPrevious: () => void;
+  onNext: () => void;
+  onToggleFavorite: () => void;
+  onDelete?: () => void;
+  onRestore?: () => void;
+  onPermanentDelete?: () => void;
+}) {
+  const {
+    item,
+    isFavorite,
+    trashMode,
+    hasPrevious,
+    hasNext,
+    onClose,
+    onPrevious,
+    onNext,
+    onToggleFavorite,
+    onDelete,
+    onRestore,
+    onPermanentDelete,
+  } = props;
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") onClose();
+      if (event.key === "ArrowLeft" && hasPrevious) onPrevious();
+      if (event.key === "ArrowRight" && hasNext) onNext();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [hasNext, hasPrevious, onClose, onNext, onPrevious]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/82 p-4 backdrop-blur-sm" onClick={onClose}>
+      <div className="relative flex max-h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-[32px] border border-white/10 bg-slate-950 text-white shadow-[0_35px_120px_rgba(15,23,42,0.65)]" onClick={(event) => event.stopPropagation()}>
+        <div className="flex items-center justify-between gap-3 border-b border-white/10 px-5 py-4">
+          <div className="min-w-0">
+            <div className="truncate text-base font-semibold">{item.originalName || item.eventName || "Drive media"}</div>
+            <div className="text-xs text-white/60">{item.eventName || "Circle Drive"} - {formatDriveDate(item.createdAt)}</div>
+          </div>
+          <button type="button" className="rounded-full p-2 text-white/80 hover:bg-white/10 hover:text-white" onClick={onClose}>
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+        <div className="relative flex min-h-0 flex-1 items-center justify-center bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.08),transparent_48%)] px-3 py-4 sm:px-5">
+          <button type="button" onClick={onPrevious} disabled={!hasPrevious} className="absolute left-3 top-1/2 z-10 -translate-y-1/2 rounded-full bg-black/45 p-3 text-white transition hover:bg-black/65 disabled:cursor-not-allowed disabled:opacity-35">
+            <ChevronLeft className="h-5 w-5" />
+          </button>
+          <div className="flex max-h-full w-full items-center justify-center overflow-hidden rounded-[28px] border border-white/10 bg-black/30">
+            {item.type === "video" ? (
+              <video className="max-h-[68vh] w-full bg-black object-contain" src={item.url} controls autoPlay playsInline />
+            ) : (
+              <img className="max-h-[68vh] w-full object-contain" src={item.url} alt={item.originalName || "Drive item"} />
+            )}
+          </div>
+          <button type="button" onClick={onNext} disabled={!hasNext} className="absolute right-3 top-1/2 z-10 -translate-y-1/2 rounded-full bg-black/45 p-3 text-white transition hover:bg-black/65 disabled:cursor-not-allowed disabled:opacity-35">
+            <ChevronRight className="h-5 w-5" />
+          </button>
+        </div>
+        <div className="flex flex-wrap items-center gap-2 border-t border-white/10 px-5 py-4">
+          {!trashMode ? (
+            <>
+              <button type="button" className={`rounded-full px-4 py-2 text-sm font-semibold ${isFavorite ? "bg-pink-500 text-white" : "bg-white/10 text-white"}`} onClick={onToggleFavorite}>
+                <Heart className="mr-2 inline h-4 w-4" />
+                {isFavorite ? "Loved" : "Love"}
+              </button>
+              {onDelete ? (
+                <button type="button" className="rounded-full bg-red-500/90 px-4 py-2 text-sm font-semibold text-white" onClick={onDelete}>Move to trash</button>
+              ) : null}
+            </>
+          ) : (
+            <>
+              {onRestore ? (
+                <button type="button" className="rounded-full bg-emerald-500/90 px-4 py-2 text-sm font-semibold text-white" onClick={onRestore}>Restore</button>
+              ) : null}
+              {onPermanentDelete ? (
+                <button type="button" className="rounded-full bg-red-500/90 px-4 py-2 text-sm font-semibold text-white" onClick={onPermanentDelete}>Delete forever</button>
+              ) : null}
+            </>
+          )}
+          <a href={item.url} download={item.originalName || "family-drive-media"} className="rounded-full bg-white/10 px-4 py-2 text-sm font-semibold text-white">
+            <Download className="mr-2 inline h-4 w-4" />
+            Download
+          </a>
+        </div>
       </div>
     </div>
   );
+}
+
+function driveCollageTile(itemId: string, itemType: DriveItem["type"]) {
+  const patterns = [
+    { shellClass: "col-span-2 row-span-3 md:col-span-2 xl:col-span-3", mediaClass: "aspect-[1.52/1]", radius: "34px 34px 26px 26px" },
+    { shellClass: "col-span-2 row-span-2 md:col-span-2 xl:col-span-2", mediaClass: "aspect-[1.05/1]", radius: "28px 36px 26px 30px" },
+    { shellClass: "col-span-1 row-span-2 xl:col-span-1", mediaClass: "aspect-[0.82/1]", radius: "32px 24px 32px 20px" },
+    { shellClass: "col-span-1 row-span-3 xl:col-span-1", mediaClass: "aspect-[0.72/1]", radius: "24px 34px 24px 34px" },
+    { shellClass: "col-span-2 row-span-2 md:col-span-2 xl:col-span-2", mediaClass: "aspect-[1.18/1]", radius: "30px 24px 34px 26px" },
+    { shellClass: "col-span-1 row-span-2 xl:col-span-1", mediaClass: "aspect-[0.84/1]", radius: "22px 30px 20px 32px" },
+  ];
+  const hash = Array.from(itemId).reduce((sum, char) => sum + char.charCodeAt(0), 0);
+  const base = patterns[hash % patterns.length];
+  if (itemType === "video") {
+    return { ...base, mediaClass: "aspect-[1/1]" };
+  }
+  return base;
+}
+
+function formatDriveDate(timestamp?: number | null) {
+  if (!timestamp) return "Saved recently";
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(timestamp);
 }
 
 function EmptyState({ title, subtitle, compact = false }: { title: string; subtitle: string; compact?: boolean }) {
@@ -735,6 +1319,29 @@ function MemberAvatar({ member }: { member: DriveCircle["members"][number] }) {
 
 function displayHandle(user: User) {
   return user.username ? `@${user.username}` : user.name;
+}
+
+function normalizeMemberRole(role?: string | null): MemberRole {
+  if (role === "owner" || role === "manage") return "manage";
+  if (role === "add") return "add";
+  return "view";
+}
+
+function canManageCircle(circle: DriveCircle, userId: string) {
+  const member = circle.members.find((candidate) => candidate.userId === userId);
+  return circle.ownerUserId === userId || member?.role === "owner" || member?.role === "manage";
+}
+
+function canUploadToCircle(circle: DriveCircle, userId: string) {
+  const member = circle.members.find((candidate) => candidate.userId === userId);
+  return circle.ownerUserId === userId || member?.role === "owner" || member?.role === "manage" || member?.role === "add";
+}
+
+function roleLabel(role?: string | null) {
+  if (role === "owner") return "Creator admin";
+  if (role === "manage") return "Admin";
+  if (role === "add") return "Contributor";
+  return "Viewer";
 }
 
 function tabClass(active: boolean) {

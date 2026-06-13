@@ -1,4 +1,4 @@
-import React, { useEffect, useState, FormEvent, useCallback } from "react";
+import React, { useEffect, useState, FormEvent, useCallback, useRef } from "react";
 import { format } from "date-fns";
 import {
   MessageSquarePlus,
@@ -109,6 +109,7 @@ export function Sidebar({
 }: SidebarProps) {
   const { pushToast } = useToast();
   const [chats, setChats] = useState<Chat[]>([]);
+  const materializedContactsRef = useRef<string>("");
   const [chatListLoading, setChatListLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [chatFilter, setChatFilter] = useState<"all" | "unread" | "groups" | "calls" | "files" | "pinned">("all");
@@ -217,6 +218,7 @@ export function Sidebar({
       { id: "c2", name: "Bob Jones", phone: "+1 555-0200", isBlocked: false },
     ];
   });
+  const [cloudContactsLoaded, setCloudContactsLoaded] = useState(false);
 
   const { socket, isConnected } = useSocket();
 
@@ -249,6 +251,7 @@ export function Sidebar({
 
   useEffect(() => {
     let cancelled = false;
+    setCloudContactsLoaded(false);
     fetchCloudContacts()
       .then((cloudContacts) => {
         if (cancelled) return;
@@ -259,14 +262,60 @@ export function Sidebar({
           phone: user.phone,
           isBlocked: false,
         })));
+        setCloudContactsLoaded(true);
       })
       .catch((err) => {
         console.warn("Using cached local contacts", err);
+        if (!cancelled) setCloudContactsLoaded(false);
       });
     return () => {
       cancelled = true;
     };
   }, [currentUser.id]);
+
+  useEffect(() => {
+    if (!cloudContactsLoaded) return;
+    if (chatListLoading || contacts.length === 0) return;
+    if (!localStorage.getItem(CLOUD_SESSION_TOKEN_KEY)) return;
+
+    const existingDirectKeys = new Set(
+      chats
+        .map((chat) => directKeyForChat(chat, currentUser.id))
+        .filter((key): key is string => Boolean(key)),
+    );
+    const missingContacts = contacts
+      .filter((contact) => contact.id && contact.id !== currentUser.id && !contact.isBlocked)
+      .filter((contact) => !existingDirectKeys.has([currentUser.id, contact.id].sort().join(":")))
+      .slice(0, 40);
+
+    if (missingContacts.length === 0) return;
+    const signature = `${currentUser.id}:${missingContacts.map((contact) => contact.id).sort().join(",")}`;
+    if (materializedContactsRef.current === signature) return;
+    materializedContactsRef.current = signature;
+
+    let cancelled = false;
+    (async () => {
+      const materialized: Chat[] = [];
+      for (const contact of missingContacts) {
+        try {
+          const chat = await createDirectChat(currentUser.id, contact.id, {
+            currentUserName: currentUser.name,
+            targetUserName: contact.name,
+          });
+          materialized.push(chat);
+        } catch (err) {
+          console.warn("Failed to materialize contact chat", contact.id, err);
+        }
+      }
+      if (!cancelled && materialized.length > 0) {
+        setChats((prev) => mergeChats([...materialized, ...prev], currentUser.id));
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [chatListLoading, chats, cloudContactsLoaded, contacts, currentUser.id, currentUser.name]);
 
   useEffect(() => {
     localStorage.setItem(

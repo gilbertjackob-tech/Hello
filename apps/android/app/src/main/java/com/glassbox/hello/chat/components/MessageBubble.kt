@@ -1,21 +1,9 @@
 package com.glassbox.hello.chat.components
-
-import android.content.Context
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -29,7 +17,6 @@ import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Reply
 import androidx.compose.material.icons.filled.CallMade
 import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.Videocam
@@ -39,59 +26,40 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.luminance
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.glassbox.hello.chat.ChatModels
 import com.glassbox.hello.chat.OptimisticMessageManager
-import com.glassbox.hello.ui.theme.HelloAnimations
 import com.glassbox.hello.ui.theme.HelloColors
 import com.glassbox.hello.ui.utils.AnimationUtils
-import kotlin.math.roundToInt
 
 @Composable
 fun ChatMessageBubble(
     message: ChatModels.Message,
     isOwn: Boolean,
     currentUserId: String,
-    context: Context,
-    onReply: (ChatModels.Message) -> Unit,
     onLongPress: (ChatModels.Message) -> Unit,
     onOpenAttachment: (String) -> Unit,
     onOpenImage: (String, String) -> Unit,
     onDownloadAttachment: (String, String?) -> Unit,
-    outgoingBubbleColor: Color,
-    incomingBubbleColor: Color,
     bubbleOpacity: Float,
     imageCluster: List<ChatModels.Message>? = null,
+    scrollInProgress: Boolean = false,
     modifier: Modifier = Modifier,
     showSenderName: Boolean = false,
     compactWithPrevious: Boolean = false,
     compactWithNext: Boolean = false
 ) {
-    var swipeOffset by remember { mutableFloatStateOf(0f) }
-    val swipeThreshold = 64f
-    val showReplyIcon = swipeOffset > 18f
-    val bubbleScale by animateFloatAsState(
-        targetValue = if (OptimisticMessageManager.isTempId(message.id)) 0.98f else 1f,
-        animationSpec = spring(dampingRatio = 0.78f),
-        label = "bubbleScale"
-    )
+    val context = LocalContext.current
     val statusColor = when (message.status) {
         "read" -> HelloColors.ReadReceipt
         "delivered" -> HelloColors.DarkTextMuted
@@ -114,121 +82,88 @@ fun ChatMessageBubble(
     val bubbleShadow = when {
         isStickerMessage(message.text) -> 0.dp
         compactWithPrevious || compactWithNext -> 0.dp
-        else -> 3.dp
+        else -> 0.dp
     }
-    val contentScaleModifier = if (OptimisticMessageManager.isTempId(message.id)) {
-        Modifier.graphicsLayer(
-            scaleX = bubbleScale,
-            scaleY = bubbleScale
-        )
-    } else {
+    val interactionModifier = if (scrollInProgress) {
         Modifier
+    } else {
+        Modifier.combinedClickable(
+            onClick = {},
+            onLongClick = {
+                AnimationUtils.Haptics.tapMedium(context)
+                onLongPress(message)
+            }
+        )
     }
 
-    AnimatedVisibility(
-        visible = true,
-        enter = slideInVertically(
-            initialOffsetY = { 8 },
-            animationSpec = tween(HelloAnimations.Duration.MEDIUM)
-        ) + fadeIn() + scaleIn(initialScale = 0.96f),
-        exit = fadeOut(),
+    val timestampLabel = remember(message.timestamp) { formatTimestamp(message.timestamp) }
+
+    Box(
         modifier = modifier
+            .fillMaxWidth()
+            .padding(
+                start = 8.dp,
+                end = 8.dp,
+                top = if (compactWithPrevious) 2.dp else 8.dp,
+                bottom = if (compactWithNext) 2.dp else 8.dp
+            )
     ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(
-                    start = 8.dp,
-                    end = 8.dp,
-                    top = if (compactWithPrevious) 2.dp else 8.dp,
-                    bottom = if (compactWithNext) 2.dp else 8.dp
-                )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = if (isOwn) Arrangement.End else Arrangement.Start,
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            BoxWithConstraints {
-                val maxBubbleWidth = maxWidth * 0.76f
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = if (isOwn) Arrangement.End else Arrangement.Start,
-                    verticalAlignment = Alignment.CenterVertically
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth(0.82f)
+                    .widthIn(max = 340.dp)
+                    .wrapContentWidth(if (isOwn) Alignment.End else Alignment.Start),
+                horizontalAlignment = if (isOwn) Alignment.End else Alignment.Start
+            ) {
+                if (showSenderName && !isOwn) {
+                    Text(
+                        text = message.senderName,
+                        color = HelloColors.DarkAccentStrong,
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(start = 14.dp, bottom = 3.dp)
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .then(if (bubbleShadow > 0.dp) Modifier.shadow(bubbleShadow, bubbleShape, ambientColor = HelloColors.Accent.copy(alpha = 0.12f)) else Modifier)
+                        .clip(bubbleShape)
+                        .background(bubbleColor)
+                        .border(1.2.dp, bubbleBorder, bubbleShape)
+                        .then(interactionModifier)
+                        .padding(horizontal = 12.dp, vertical = 10.dp)
                 ) {
-                    if (!isOwn) ReplyHint(visible = showReplyIcon)
-                    Column(
-                        modifier = Modifier
-                            .widthIn(max = maxBubbleWidth)
-                            .wrapContentWidth(if (isOwn) Alignment.End else Alignment.Start),
-                        horizontalAlignment = if (isOwn) Alignment.End else Alignment.Start
-                    ) {
-                        if (showSenderName && !isOwn) {
-                            Text(
-                                text = message.senderName,
-                                color = HelloColors.DarkAccentStrong,
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier.padding(start = 14.dp, bottom = 3.dp)
-                            )
+                    Column {
+                        if (!scrollInProgress) {
+                            MessageBadges(message = message, currentUserId = currentUserId)
+                            ReplyPreview(message = message, isOwn = isOwn)
                         }
-                        Box(
-                            modifier = Modifier
-                                .offset { IntOffset(swipeOffset.roundToInt(), 0) }
-                                .shadow(bubbleShadow, bubbleShape, ambientColor = HelloColors.Accent.copy(alpha = 0.12f))
-                                .clip(bubbleShape)
-                                .background(bubbleColor)
-                                .border(1.2.dp, bubbleBorder, bubbleShape)
-                                .combinedClickable(
-                                    onClick = {},
-                                    onLongClick = {
-                                        AnimationUtils.Haptics.tapMedium(context)
-                                        onLongPress(message)
-                                    }
-                                )
-                                .pointerInput(message.id, isOwn) {
-                                    detectHorizontalDragGestures(
-                                        onHorizontalDrag = { change, dragAmount ->
-                                            val next = swipeOffset + dragAmount
-                                            swipeOffset = if (isOwn) {
-                                                next.coerceIn(-swipeThreshold * 1.45f, 0f)
-                                            } else {
-                                                next.coerceIn(0f, swipeThreshold * 1.45f)
-                                            }
-                                            if (kotlin.math.abs(swipeOffset) > swipeThreshold) {
-                                                AnimationUtils.Haptics.threshold(context)
-                                            }
-                                            change.consume()
-                                        },
-                                        onDragEnd = {
-                                            if (kotlin.math.abs(swipeOffset) > swipeThreshold) {
-                                                onReply(message)
-                                                AnimationUtils.Haptics.tapMedium(context)
-                                            }
-                                            swipeOffset = 0f
-                                        }
-                                    )
-                                }
-                                .padding(horizontal = 12.dp, vertical = 10.dp)
-                        ) {
-                            Column(modifier = contentScaleModifier) {
-                                MessageBadges(message = message, currentUserId = currentUserId)
-                                ReplyPreview(message = message, isOwn = isOwn)
-                                MessageBody(
-                                    message = message,
-                                    isOwn = isOwn,
-                                    textColor = contentColor,
-                                    onOpenAttachment = onOpenAttachment,
-                                    onOpenImage = onOpenImage,
-                                    onDownloadAttachment = onDownloadAttachment,
-                                    imageCluster = imageCluster
-                                )
-                                MessageMeta(
-                                    message = message,
-                                    isOwn = isOwn,
-                                    statusColor = statusColor,
-                                    compact = message.text.length <= 32 && message.attachmentUrl.isNullOrBlank()
-                                )
-                            }
-                        }
-                        ReactionStrip(message.reactions.orEmpty())
+                        MessageBody(
+                            message = message,
+                            isOwn = isOwn,
+                            textColor = contentColor,
+                            onOpenAttachment = onOpenAttachment,
+                            onOpenImage = onOpenImage,
+                            onDownloadAttachment = onDownloadAttachment,
+                            imageCluster = imageCluster,
+                            scrollInProgress = scrollInProgress
+                        )
+                        MessageMeta(
+                            message = message,
+                            isOwn = isOwn,
+                            statusColor = statusColor,
+                            compact = message.text.length <= 32 && message.attachmentUrl.isNullOrBlank(),
+                            timestampLabel = timestampLabel
+                        )
                     }
-                    if (isOwn) ReplyHint(visible = showReplyIcon)
+                }
+                if (!scrollInProgress) {
+                    ReactionStrip(message.reactions.orEmpty())
                 }
             }
         }
@@ -301,8 +236,14 @@ private fun MessageBody(
     onOpenAttachment: (String) -> Unit,
     onOpenImage: (String, String) -> Unit,
     onDownloadAttachment: (String, String?) -> Unit,
-    imageCluster: List<ChatModels.Message>? = null
+    imageCluster: List<ChatModels.Message>? = null,
+    scrollInProgress: Boolean = false
 ) {
+    val resolved = remember(message.attachmentUrl) { normalizeAttachmentUrl(message.attachmentUrl) }
+    val resolvedAttachmentKind = remember(message.attachmentType, message.attachmentName, message.attachmentUrl) {
+        attachmentKind(message)
+    }
+
     if (message.isDeleted == true) {
         Text(
             text = "This message was deleted",
@@ -333,19 +274,18 @@ private fun MessageBody(
         isUrlOnly(message.text) && message.attachmentUrl.isNullOrBlank() -> LinkCard(message.text, onOpenAttachment)
     }
 
-    val resolved = normalizeAttachmentUrl(message.attachmentUrl)
-    val attachmentKind = attachmentKind(message)
     if (!imageCluster.isNullOrEmpty()) {
         ImageCollageCard(
             messages = imageCluster,
             onOpenImage = onOpenImage,
-            onDownload = onDownloadAttachment
+            onDownload = onDownloadAttachment,
+            lightweight = scrollInProgress
         )
     } else if (!resolved.isNullOrBlank()) {
-        when (attachmentKind) {
-            "image" -> ImageCard(message, resolved, onOpenImage, onDownloadAttachment)
-            "audio" -> AudioCard(message, resolved, onDownloadAttachment)
-            "video" -> VideoCard(message, resolved, onOpenAttachment, onDownloadAttachment)
+        when (resolvedAttachmentKind) {
+            "image" -> ImageCard(message, resolved, onOpenImage, onDownloadAttachment, lightweight = scrollInProgress)
+            "audio" -> AudioCard(message, resolved, onDownloadAttachment, lightweight = scrollInProgress)
+            "video" -> VideoCard(message, resolved, onOpenAttachment, onDownloadAttachment, lightweight = scrollInProgress)
             else -> FileCard(message, resolved, onOpenAttachment, onDownloadAttachment)
         }
     }
@@ -430,12 +370,14 @@ private fun CallSummaryCard(
     }
 }
 
-private fun readableMessageTextColor(color: Color): Color {
-    return if (color.luminance() > 0.52f) Color(0xFF071219) else Color.White
-}
-
 @Composable
-private fun MessageMeta(message: ChatModels.Message, isOwn: Boolean, statusColor: Color, compact: Boolean) {
+private fun MessageMeta(
+    message: ChatModels.Message,
+    isOwn: Boolean,
+    statusColor: Color,
+    compact: Boolean,
+    timestampLabel: String
+) {
     Row(
         modifier = Modifier
             .wrapContentWidth(Alignment.End)
@@ -443,7 +385,7 @@ private fun MessageMeta(message: ChatModels.Message, isOwn: Boolean, statusColor
         horizontalArrangement = Arrangement.End,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(formatTimestamp(message.timestamp), color = HelloColors.DarkTextMuted, style = MaterialTheme.typography.labelSmall)
+        Text(timestampLabel, color = HelloColors.DarkTextMuted, style = MaterialTheme.typography.labelSmall)
         if (isOwn) {
             Spacer(modifier = Modifier.width(5.dp))
             Text(
@@ -467,15 +409,9 @@ private fun MessageMeta(message: ChatModels.Message, isOwn: Boolean, statusColor
 private fun ReactionStrip(reactions: List<ChatModels.Reaction>) {
     if (reactions.isEmpty()) return
     val grouped = reactions.groupBy { it.emoji }.entries.sortedByDescending { it.value.size }
-    val scale by animateFloatAsState(
-        targetValue = 1f,
-        animationSpec = spring(dampingRatio = 0.55f, stiffness = 520f),
-        label = "reactionChipBounce"
-    )
     Row(
         modifier = Modifier
             .padding(top = 3.dp, start = 8.dp, end = 8.dp)
-            .scale(scale)
             .clip(RoundedCornerShape(999.dp))
             .background(HelloColors.WarmGlow)
             .border(1.dp, HelloColors.WarmAccent.copy(alpha = 0.34f), RoundedCornerShape(999.dp))
@@ -487,22 +423,6 @@ private fun ReactionStrip(reactions: List<ChatModels.Reaction>) {
             Text(entry.key, style = MaterialTheme.typography.bodySmall)
         }
         Text(reactions.size.toString(), color = HelloColors.DarkTextMuted, style = MaterialTheme.typography.labelSmall)
-    }
-}
-
-@Composable
-private fun ReplyHint(visible: Boolean) {
-    AnimatedVisibility(visible = visible, enter = fadeIn(), exit = fadeOut()) {
-        Box(
-            modifier = Modifier
-                .padding(horizontal = 6.dp)
-                .size(30.dp)
-                .clip(CircleShape)
-                .background(HelloColors.DarkAccentSoft),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(Icons.AutoMirrored.Filled.Reply, contentDescription = "Reply", tint = HelloColors.DarkAccent, modifier = Modifier.size(18.dp))
-        }
     }
 }
 

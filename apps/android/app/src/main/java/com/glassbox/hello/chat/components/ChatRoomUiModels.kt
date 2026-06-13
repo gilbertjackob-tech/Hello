@@ -32,6 +32,15 @@ data class ImageClusterTimeline(
     val followerToLeadIndex: Map<Int, Int>
 )
 
+data class ChatRenderRow(
+    val key: String,
+    val contentType: String,
+    val message: ChatModels.Message,
+    val imageCluster: List<ChatModels.Message>?,
+    val grouping: TimelineGrouping,
+    val showUnreadDivider: Boolean
+)
+
 data class ActionMessageState(
     val message: ChatModels.Message,
     val isOwn: Boolean

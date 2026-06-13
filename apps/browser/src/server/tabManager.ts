@@ -9,7 +9,7 @@ const DEFAULT_LANDING_URL = 'https://bing.com';
 const MIN_ZOOM_FACTOR = 0.5;
 const MAX_ZOOM_FACTOR = 3;
 const ZOOM_STEP = 0.1;
-const HELLO_PERMISSION_NAMES = new Set(['media', 'camera', 'microphone', 'display-capture']);
+const HELLO_PERMISSION_NAMES = new Set(['media', 'camera', 'microphone', 'display-capture', 'notifications']);
 const CHROME_WINDOWS_UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36';
 const WHATSAPP_UA_PATCH_JS = `
@@ -126,13 +126,16 @@ function installMediaPermissionHandler(partitionSession: any) {
     return;
   }
 
+  const isAllowedHelloPermission = (permission: string, rawUrl: string) =>
+    Boolean(
+      HELLO_PERMISSION_NAMES.has(permission) &&
+      rawUrl &&
+      isTrustedHelloPermissionUrl(rawUrl),
+    );
+
   partitionSession.setPermissionRequestHandler((webContents: any, permission: string, callback: (allowed: boolean) => void, details: any = {}) => {
     const requestingUrl = details.requestingUrl || webContents?.getURL?.() || '';
-    const allowed = Boolean(
-      HELLO_PERMISSION_NAMES.has(permission) &&
-      requestingUrl &&
-      isTrustedHelloPermissionUrl(requestingUrl),
-    );
+    const allowed = isAllowedHelloPermission(permission, requestingUrl);
 
     console.log('[GLASSBOX_TAB_PERMISSION_REQUEST]', {
       permission,
@@ -142,6 +145,13 @@ function installMediaPermissionHandler(partitionSession: any) {
 
     callback(allowed);
   });
+
+  if (typeof partitionSession.setPermissionCheckHandler === 'function') {
+    partitionSession.setPermissionCheckHandler((webContents: any, permission: string, requestingOrigin: string, details: any = {}) => {
+      const requestingUrl = details.requestingUrl || requestingOrigin || webContents?.getURL?.() || '';
+      return isAllowedHelloPermission(permission, requestingUrl);
+    });
+  }
 }
 
 function shouldUseWhatsAppSpoof(url: string) {

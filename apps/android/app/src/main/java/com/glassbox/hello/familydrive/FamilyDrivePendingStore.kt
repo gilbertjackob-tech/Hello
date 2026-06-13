@@ -62,6 +62,24 @@ class FamilyDrivePendingStore private constructor(context: Context) {
         existing.filterNot { it.id == id }
     }
 
+    suspend fun remapCircleIds(circleIdMap: Map<String, String>) = mutate { existing ->
+        if (circleIdMap.isEmpty()) {
+            existing
+        } else {
+            existing.map { item ->
+                val nextCircleIds = item.selectedCircleIds.map { circleId -> circleIdMap[circleId] ?: circleId }
+                if (nextCircleIds == item.selectedCircleIds) item else item.copy(selectedCircleIds = nextCircleIds)
+            }
+        }
+    }
+
+    suspend fun removeCircleId(circleId: String) = mutate { existing ->
+        existing.map { item ->
+            val nextCircleIds = item.selectedCircleIds.filterNot { it == circleId }
+            if (nextCircleIds == item.selectedCircleIds) item else item.copy(selectedCircleIds = nextCircleIds)
+        }
+    }
+
     private suspend fun getActive(): List<PendingDriveItem> = withContext(Dispatchers.IO) {
         synchronized(lock) {
             readAllLocked()

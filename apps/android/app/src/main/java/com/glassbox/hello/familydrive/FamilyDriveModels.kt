@@ -54,7 +54,10 @@ data class DriveCircle(
     val memberCount: Int = 0,
     val members: List<DriveCircleMember> = emptyList(),
     val createdAt: Long = 0L,
-    val updatedAt: Long = 0L
+    val updatedAt: Long = 0L,
+    val syncStatus: PendingDriveCircleStatus = PendingDriveCircleStatus.SYNCED,
+    val syncError: String? = null,
+    val serverCircleId: String? = null
 )
 
 data class DriveCircleMember(
@@ -139,6 +142,41 @@ enum class PendingDriveStatus {
     UPLOADING,
     SYNCED,
     FAILED_RETRYABLE
+}
+
+enum class PendingDriveCircleStatus {
+    PENDING_LOCAL,
+    SYNCING,
+    SYNCED,
+    FAILED_RETRYABLE
+}
+
+data class PendingDriveCircle(
+    val id: String,
+    val name: String,
+    val ownerUserId: String,
+    val members: List<DriveCircleMember> = emptyList(),
+    val createdAt: Long,
+    val updatedAt: Long,
+    val status: PendingDriveCircleStatus = PendingDriveCircleStatus.PENDING_LOCAL,
+    val retryCount: Int = 0,
+    val lastError: String? = null,
+    val serverCircleId: String? = null
+) {
+    fun asDriveCircle(): DriveCircle {
+        return DriveCircle(
+            id = id,
+            name = name,
+            ownerUserId = ownerUserId,
+            memberCount = members.size,
+            members = members,
+            createdAt = createdAt,
+            updatedAt = updatedAt,
+            syncStatus = status,
+            syncError = lastError,
+            serverCircleId = serverCircleId
+        )
+    }
 }
 
 data class PendingDriveItem(

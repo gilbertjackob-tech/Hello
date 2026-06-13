@@ -217,6 +217,7 @@ function initializeHelloRuntime(options: MountHelloOptions = {}) {
       id TEXT PRIMARY KEY,
       name TEXT,
       ownerUserId TEXT,
+      avatarUrl TEXT,
       createdAt INTEGER,
       updatedAt INTEGER
     );
@@ -417,6 +418,9 @@ function initializeHelloRuntime(options: MountHelloOptions = {}) {
     ["username", "TEXT"],
     ["avatar", "TEXT"],
   ].forEach(([column, definition]) => ensureColumn("drive_circle_members", column, definition));
+  [
+    ["avatarUrl", "TEXT"],
+  ].forEach(([column, definition]) => ensureColumn("drive_circles", column, definition));
   try { db.prepare("CREATE INDEX IF NOT EXISTS idx_drive_items_latest ON drive_items (deletedAt, createdAt DESC, id DESC)").run(); } catch(e){}
   try { db.prepare("CREATE INDEX IF NOT EXISTS idx_drive_items_month ON drive_items (deletedAt, monthKey, createdAt DESC)").run(); } catch(e){}
   try { db.prepare("CREATE INDEX IF NOT EXISTS idx_drive_items_event ON drive_items (eventId, deletedAt, createdAt DESC)").run(); } catch(e){}
@@ -822,8 +826,8 @@ function getDriveActorCircleIds(userId: string) {
 function normalizeDriveCircleRole(role: string | null | undefined) {
   const value = String(role || "").trim().toLowerCase();
   if (value === "owner") return "owner";
-  if (value === "manage" || value.includes("manage")) return "manage";
-  if (value === "add" || value === "member" || value.includes("contribute")) return "add";
+  if (value === "manage" || value === "admin" || value.includes("manage")) return "manage";
+  if (value === "add" || value === "member" || value === "contributor" || value.includes("contribute")) return "add";
   return "view";
 }
 
@@ -2346,6 +2350,7 @@ export async function mountHello(
     const actorUserId = getDriveActorId(req);
     const id = String(req.body?.id || `drive_circle_${Math.random().toString(36).slice(2, 11)}`);
     const name = String(req.body?.name || "").trim();
+    const avatarUrl = String(req.body?.avatarUrl || "").trim();
     if (!name) {
       res.status(400).json({ error: "Circle name is required" });
       return;
@@ -2388,10 +2393,12 @@ export async function mountHello(
     }
     const members = Array.from(memberMap.values());
     const saveCircle = db.transaction(() => {
-      db.prepare("INSERT OR REPLACE INTO drive_circles (id, name, ownerUserId, createdAt, updatedAt) VALUES (?, ?, ?, COALESCE(?, ?), ?)").run(
+      db.prepare("INSERT OR REPLACE INTO drive_circles (id, name, ownerUserId, avatarUrl, createdAt, updatedAt) VALUES (?, ?, ?, COALESCE(NULLIF(?, ''), ?), COALESCE(?, ?), ?)").run(
         id,
         name,
         ownerUserId,
+        avatarUrl,
+        existing?.avatarUrl || null,
         existing?.createdAt || null,
         now,
         now,
@@ -2405,6 +2412,33 @@ export async function mountHello(
     });
     saveCircle();
     res.json(getDriveCircleSummary(id));
+  });
+
+  app.post("/api/drive/circles/:id/avatar", upload.single("file"), (req, res) => {
+    const actorUserId = getDriveActorId(req);
+    const circleId = req.params.id;
+    if (!canDriveCircleManage(circleId, actorUserId)) {
+      res.status(403).json({ error: "Circle manage access denied" });
+      return;
+    }
+    const file = req.file;
+    if (!file) {
+      res.status(400).json({ error: "Profile picture file is required" });
+      return;
+    }
+    if (!String(file.mimetype || "").startsWith("image/")) {
+      fs.unlink(file.path, () => undefined);
+      res.status(400).json({ error: "Circle profile picture must be an image" });
+      return;
+    }
+    const ext = path.extname(file.originalname || "") || ".jpg";
+    const safeName = sanitizeFilename(path.basename(file.originalname || "circle", ext)) || "circle";
+    const storedName = `drive_circle_${sanitizeFilename(circleId)}_${Date.now()}_${safeName}${ext}`;
+    const targetPath = path.join(UPLOAD_DIR, storedName);
+    fs.renameSync(file.path, targetPath);
+    const avatarUrl = `/uploads/${storedName}`;
+    db.prepare("UPDATE drive_circles SET avatarUrl = ?, updatedAt = ? WHERE id = ?").run(avatarUrl, Date.now(), circleId);
+    res.json(getDriveCircleSummary(circleId));
   });
 
   app.delete("/api/drive/circles/:id", (req, res) => {

@@ -48,6 +48,7 @@ class FamilyDriveViewModel : ViewModel() {
     private val repository = FamilyDriveRepository()
     private val pageSize = 60
     private var pendingObserverJob: Job? = null
+    private var pendingCirclesObserverJob: Job? = null
     private var activeUserId: String? = null
     private var activeCircleId: String? = null
     private var activeEventId: String? = null
@@ -63,12 +64,31 @@ class FamilyDriveViewModel : ViewModel() {
     }
 
     fun startPendingObserver(context: Context) {
-        if (pendingObserverJob != null) return
+        if (pendingObserverJob != null && pendingCirclesObserverJob != null) return
         HelloDebugLog.d("DriveVm", "startPendingObserver")
-        pendingObserverJob = viewModelScope.launch {
-            repository.observePendingUploads(context.applicationContext).collect { pending ->
-                HelloDebugLog.d("DriveVm", "pendingObserver update count=${pending.size}")
-                _state.update { it.copy(pendingItems = pending) }
+        if (pendingObserverJob == null) {
+            pendingObserverJob = viewModelScope.launch {
+                repository.observePendingUploads(context.applicationContext).collect { pending ->
+                    HelloDebugLog.d("DriveVm", "pendingObserver update count=${pending.size}")
+                    _state.update { it.copy(pendingItems = pending) }
+                }
+            }
+        }
+        if (pendingCirclesObserverJob == null) {
+            pendingCirclesObserverJob = viewModelScope.launch {
+                repository.observePendingCircles(context.applicationContext).collect { pending ->
+                    HelloDebugLog.d("DriveVm", "pendingCircleObserver update count=${pending.size}")
+                    _state.update { current ->
+                        val remote = current.circles.filter { it.syncStatus == PendingDriveCircleStatus.SYNCED }
+                        val pendingIds = pending.map { it.id }.toSet()
+                        val preservedRemote = remote.filterNot { it.id in pendingIds }
+                        current.copy(
+                            circles = (pending + preservedRemote)
+                                .distinctBy { it.id }
+                                .sortedByDescending { it.updatedAt }
+                        )
+                    }
+                }
             }
         }
     }
@@ -164,17 +184,25 @@ class FamilyDriveViewModel : ViewModel() {
         HelloDebugLog.d("DriveVm", "refreshDriveSetup userId=$userId circleId=$circleId")
         setScope(userId, circleId, activeEventId)
         viewModelScope.launch {
-            repository.fetchCircles(userId).fold(
+            repository.fetchCirclesWithPending(context.applicationContext, userId).fold(
                 onSuccess = { circles ->
                     val uniqueCircles = circles.distinctBy { it.id }.sortedByDescending { it.updatedAt }
-                    val nextCircleId = circleId ?: uniqueCircles.firstOrNull()?.id
+                    val nextCircleId = circleId?.takeIf { id -> uniqueCircles.any { it.id == id } } ?: uniqueCircles.firstOrNull()?.id
                     activeCircleId = nextCircleId
                     _state.update { it.copy(circles = uniqueCircles, activeCircleId = nextCircleId) }
-                    loadEvents(userId, nextCircleId)
-                    if (!nextCircleId.isNullOrBlank()) loadDeletePolls(userId, nextCircleId)
-                    else _state.update { it.copy(deletePolls = emptyList()) }
+                    if (!nextCircleId.isNullOrBlank()) {
+                        val activeCircle = uniqueCircles.firstOrNull { it.id == nextCircleId }
+                        if (activeCircle?.syncStatus == PendingDriveCircleStatus.SYNCED) {
+                            loadEvents(userId, nextCircleId)
+                            loadDeletePolls(userId, nextCircleId)
+                        } else {
+                            _state.update { state -> state.copy(events = emptyList(), deletePolls = emptyList(), activeEventId = null) }
+                        }
+                    } else {
+                        _state.update { it.copy(deletePolls = emptyList(), events = emptyList(), activeEventId = null) }
+                    }
                 },
-                onFailure = { error -> _state.update { it.copy(error = error.message ?: "Drive circles could not load") } }
+                onFailure = { error -> _state.update { it.copy(error = error.message ?: "Circles unavailable.") } }
             )
             repository.fetchChatContacts(context.applicationContext, userId).fold(
                 onSuccess = { contacts -> _state.update { it.copy(chatContacts = contacts) } },
@@ -317,28 +345,38 @@ class FamilyDriveViewModel : ViewModel() {
         }
     }
 
-    fun createCircle(id: String? = null, name: String, ownerUserId: String, members: List<DriveCircleMember>, onCreated: (DriveCircle) -> Unit = {}) {
+    fun createCircle(context: Context, id: String? = null, name: String, ownerUserId: String, members: List<DriveCircleMember>, onCreated: (DriveCircle) -> Unit = {}) {
         val cleanName = name.trim()
         if (cleanName.isBlank()) {
             _state.update { it.copy(error = "Enter a circle name") }
             return
         }
         viewModelScope.launch {
-            repository.createCircle(id, cleanName, ownerUserId, members).fold(
+            val userId = activeUserId ?: ownerUserId
+            repository.createCircle(context = context.applicationContext, id = id, name = cleanName, ownerUserId = ownerUserId, members = members).fold(
                 onSuccess = { circle ->
                     activeCircleId = circle.id
                     _state.update { current ->
                         current.copy(
                             circles = (listOf(circle) + current.circles.filterNot { it.id == circle.id }).sortedByDescending { it.updatedAt },
                             activeCircleId = circle.id,
-                            infoMessage = if (id.isNullOrBlank()) "Circle created." else "Circle updated."
+                            infoMessage = when {
+                                circle.syncStatus != PendingDriveCircleStatus.SYNCED -> "Circle saved locally. Waiting for PC."
+                                id.isNullOrBlank() -> "Circle created."
+                                else -> "Circle updated."
+                            },
+                            error = null
                         )
                     }
-                    loadEvents(ownerUserId, circle.id)
-                    loadDeletePolls(ownerUserId, circle.id)
+                    if (circle.syncStatus == PendingDriveCircleStatus.SYNCED) {
+                        loadEvents(userId, circle.id)
+                        loadDeletePolls(userId, circle.id)
+                    } else {
+                        _state.update { it.copy(events = emptyList(), deletePolls = emptyList(), activeEventId = null) }
+                    }
                     onCreated(circle)
                 },
-                onFailure = { error -> _state.update { it.copy(error = error.message ?: "Circle could not be created") } }
+                onFailure = { error -> _state.update { it.copy(error = error.message ?: "Circle unavailable.") } }
             )
         }
     }
@@ -405,8 +443,38 @@ class FamilyDriveViewModel : ViewModel() {
         }
     }
 
-    fun deleteCircle(circleId: String, userId: String, onDone: () -> Unit = {}) {
+    fun deleteCircle(context: Context, circleId: String, userId: String, onDone: () -> Unit = {}) {
         if (circleId.isBlank() || userId.isBlank()) return
+        val localCircle = _state.value.circles.firstOrNull { it.id == circleId && it.syncStatus != PendingDriveCircleStatus.SYNCED }
+        if (localCircle != null) {
+            viewModelScope.launch {
+                repository.removePendingCircle(context.applicationContext, circleId).fold(
+                    onSuccess = {
+                        val remainingCircles = _state.value.circles.filterNot { it.id == circleId }
+                        val nextCircleId = remainingCircles.firstOrNull()?.id
+                        activeCircleId = nextCircleId
+                        activeEventId = null
+                        _state.update {
+                            it.copy(
+                                circles = remainingCircles,
+                                events = emptyList(),
+                                items = emptyList(),
+                                trashItems = emptyList(),
+                                deletePolls = emptyList(),
+                                activeCircleId = nextCircleId,
+                                activeEventId = null,
+                                infoMessage = "Pending circle removed."
+                            )
+                        }
+                        onDone()
+                    },
+                    onFailure = { error ->
+                        _state.update { it.copy(error = error.message ?: "Circle unavailable.") }
+                    }
+                )
+            }
+            return
+        }
         viewModelScope.launch {
             repository.deleteCircle(circleId, userId).fold(
                 onSuccess = {
@@ -737,13 +805,14 @@ class FamilyDriveViewModel : ViewModel() {
                         )
                     }
                     if (uploadedCount > 0) refresh()
+                    refreshDriveSetup(context.applicationContext, uploaderId, activeCircleId)
                 },
                 onFailure = { error ->
                     HelloDebugLog.w("DriveVm", "retryPending failure error=${error.message}", error)
                     _state.update {
                         it.copy(
                             retryingPendingId = null,
-                            error = error.message ?: "Pending uploads could not sync"
+                            error = error.message ?: "Pending sync unavailable."
                         )
                     }
                 }
@@ -782,6 +851,6 @@ class FamilyDriveViewModel : ViewModel() {
 
     companion object {
         const val LOCAL_SAVE_MESSAGE: String =
-            "Saved locally, waiting for PC. Please don't delete the original photos/videos until upload is complete."
+            "Saved locally. Waiting for PC to sync."
     }
 }

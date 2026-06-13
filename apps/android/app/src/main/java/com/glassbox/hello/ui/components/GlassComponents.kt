@@ -294,36 +294,31 @@ fun ScrollToBottomFab(
     unreadBelow: Int = 0,
     onClick: () -> Unit
 ) {
-    AnimatedVisibility(
-        visible = visible,
-        enter = fadeIn(tween(200)) + scaleIn(initialScale = 0.5f, animationSpec = HelloMotion.SpringBouncy),
-        exit = fadeOut(tween(150)) + scaleOut(targetScale = 0.5f)
+    if (!visible) return
+    Box(
+        modifier = Modifier
+            .size(40.dp)
+            .clip(CircleShape)
+            .background(HelloColors.TealDeep)
+            .border(1.dp, HelloColors.TealGlow, CircleShape)
+            .clickable(
+                indication = null,
+                interactionSource = remember { MutableInteractionSource() },
+                onClick = onClick
+            ),
+        contentAlignment = Alignment.Center
     ) {
-        Box(
-            modifier = Modifier
-                .size(40.dp)
-                .clip(CircleShape)
-                .background(HelloColors.TealDeep)
-                .border(1.dp, HelloColors.TealGlow, CircleShape)
-                .clickable(
-                    indication = null,
-                    interactionSource = remember { MutableInteractionSource() },
-                    onClick = onClick
-                ),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(text = "v", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-            if (unreadBelow > 0) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .offset(x = 4.dp, y = (-4).dp)
-                        .clip(CircleShape)
-                        .background(HelloColors.WarmAccent)
-                        .padding(horizontal = 4.dp, vertical = 1.dp)
-                ) {
-                    Text("$unreadBelow", fontSize = 9.sp, color = Color.Black)
-                }
+        Text(text = "v", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        if (unreadBelow > 0) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .offset(x = 4.dp, y = (-4).dp)
+                    .clip(CircleShape)
+                    .background(HelloColors.WarmAccent)
+                    .padding(horizontal = 4.dp, vertical = 1.dp)
+            ) {
+                Text("$unreadBelow", fontSize = 9.sp, color = Color.Black)
             }
         }
     }

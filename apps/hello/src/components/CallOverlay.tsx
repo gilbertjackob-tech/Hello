@@ -44,7 +44,13 @@ import {
 import { CALL_API_BASE, cloudAuthHeaders } from "../api";
 
 const DEFAULT_ICE_SERVERS: RTCIceServer[] = [
-  { urls: "stun:stun.l.google.com:19302" },
+  {
+    urls: [
+      "stun:stun.l.google.com:19302",
+      "stun:stun1.l.google.com:19302",
+      "stun:stun2.l.google.com:19302",
+    ],
+  },
 ];
 const FORCE_RELAY = (import.meta as any).env?.VITE_WEBRTC_FORCE_RELAY === "true";
 const CALL_DEBUG_UI = false;
@@ -198,6 +204,10 @@ const hasTurnServer = (iceServers?: RTCIceServer[]) =>
     const urls = Array.isArray(server.urls) ? server.urls : [server.urls];
     return urls.some((url) => String(url).toLowerCase().startsWith("turn:"));
   });
+
+const isExpectedPublicStunTimeout = (event: RTCPeerConnectionIceErrorEvent) =>
+  event.errorCode === 701 &&
+  String(event.url || "").toLowerCase().startsWith("stun:");
 
 const parseIceCandidate = (candidate?: string) => {
   const parts = String(candidate || "").trim().split(/\s+/);
@@ -1622,13 +1632,18 @@ export function CallOverlay({ currentUser }: CallOverlayProps) {
     };
 
     pc.onicecandidateerror = (event) => {
-      addCallDebug("WEB: icecandidateerror", {
+      const details = {
         address: event.address,
         port: event.port,
         url: event.url,
         errorCode: event.errorCode,
         errorText: event.errorText,
-      });
+      };
+      if (isExpectedPublicStunTimeout(event)) {
+        addCallDebug("WEB: public STUN candidate timed out; continuing ICE gathering", details);
+        return;
+      }
+      addCallDebug("WEB: icecandidateerror", details);
       updateCallDebug({ lastError: `icecandidateerror_${event.errorCode}` });
     };
 

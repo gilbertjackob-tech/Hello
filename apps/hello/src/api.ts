@@ -582,6 +582,7 @@ export async function createDriveCircle(input: {
   userId: string;
   id?: string;
   name: string;
+  avatarUrl?: string | null;
   members: Array<{ userId: string; role?: string; name?: string | null; username?: string | null; avatar?: string | null }>;
 }): Promise<DriveCircle> {
   const res = await fetch(`${DRIVE_API_BASE}/drive/circles`, {
@@ -590,6 +591,18 @@ export async function createDriveCircle(input: {
     body: JSON.stringify(input),
   });
   if (!res.ok) return readJsonError(res, "Failed to save Drive circle");
+  return res.json();
+}
+
+export async function uploadDriveCircleAvatar(circleId: string, userId: string, file: File): Promise<DriveCircle> {
+  const formData = new FormData();
+  formData.append("userId", userId);
+  formData.append("file", file);
+  const res = await fetch(`${DRIVE_API_BASE}/drive/circles/${encodeURIComponent(circleId)}/avatar`, {
+    method: "POST",
+    body: formData,
+  });
+  if (!res.ok) return readJsonError(res, "Failed to update circle profile picture");
   return res.json();
 }
 

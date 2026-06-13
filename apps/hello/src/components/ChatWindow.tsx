@@ -1,5 +1,6 @@
 import React, {
   useEffect,
+  useMemo,
   useState,
   useRef,
   FormEvent,
@@ -100,6 +101,106 @@ function callSummaryLabel(message: Message) {
   }
 }
 
+function ChatImageCollage({ items }: { items: Message[] }) {
+  const visibleItems = items.slice(0, 4);
+  const extraCount = items.length - visibleItems.length;
+  const resolved = visibleItems.map((item) => ({
+    message: item,
+    url: resolveCloudChatUrl(item.attachmentUrl),
+  }));
+
+  const tile = (
+    entry: { message: Message; url: string | undefined },
+    className: string,
+    radius: string,
+    overlayLabel?: string,
+  ) => (
+    <a
+      key={entry.message.id}
+      href={entry.url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className={cn("group relative block overflow-hidden bg-slate-950/10 dark:bg-white/5", className)}
+      style={{ borderRadius: radius }}
+    >
+      <img
+        src={entry.url}
+        alt={entry.message.attachmentName || "attachment"}
+        className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.03]"
+      />
+      {overlayLabel ? (
+        <div className="absolute inset-0 flex items-center justify-center bg-black/45 text-2xl font-black text-white">
+          {overlayLabel}
+        </div>
+      ) : null}
+    </a>
+  );
+
+  return (
+    <div className="rounded-[28px] border border-white/70 bg-white/85 p-1.5 shadow-[0_16px_50px_rgba(15,23,42,0.10)] dark:border-white/10 dark:bg-slate-900/75">
+      {resolved.length === 2 ? (
+        <div className="grid grid-cols-[1.2fr_0.9fr] gap-1.5">
+          {tile(resolved[0], "aspect-[0.92]", "24px 18px 22px 16px")}
+          {tile(resolved[1], "aspect-[0.92]", "18px 24px 16px 22px")}
+        </div>
+      ) : resolved.length === 3 ? (
+        <div className="space-y-1.5">
+          {tile(resolved[0], "aspect-[1.38]", "24px")}
+          <div className="grid grid-cols-2 gap-1.5">
+            {tile(resolved[1], "aspect-square", "18px 14px 22px 14px")}
+            {tile(resolved[2], "aspect-square", "14px 18px 14px 22px")}
+          </div>
+        </div>
+      ) : (
+        <div className="grid grid-cols-[1.18fr_0.92fr] gap-1.5">
+          {tile(resolved[0], "aspect-[0.96]", "24px 18px 24px 18px")}
+          <div className="grid gap-1.5">
+            {tile(resolved[1], "aspect-[1.2]", "18px 22px 14px 14px")}
+            {tile(resolved[2], "aspect-[1.0]", "14px")}
+            {tile(resolved[3], "aspect-[1.1]", "14px 18px 16px 24px", extraCount > 0 ? `+${extraCount}` : undefined)}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+type ChatRenderEntry = {
+  lead: Message;
+  items: Message[];
+};
+
+function isCollageImageMessage(message: Message) {
+  return message.attachmentType === "image" && Boolean(message.attachmentUrl);
+}
+
+function shouldClusterMessages(previous: Message, current: Message) {
+  return previous.senderId === current.senderId && current.timestamp - previous.timestamp < 5 * 60 * 1000;
+}
+
+function buildChatRenderEntries(messages: Message[]): ChatRenderEntry[] {
+  const entries: ChatRenderEntry[] = [];
+  for (let index = 0; index < messages.length; index += 1) {
+    const lead = messages[index];
+    if (!isCollageImageMessage(lead)) {
+      entries.push({ lead, items: [lead] });
+      continue;
+    }
+    const cluster = [lead];
+    let cursor = index + 1;
+    while (cursor < messages.length) {
+      const candidate = messages[cursor];
+      const previous = messages[cursor - 1];
+      if (!isCollageImageMessage(candidate) || !shouldClusterMessages(previous, candidate)) break;
+      cluster.push(candidate);
+      cursor += 1;
+    }
+    entries.push({ lead, items: cluster });
+    index = cursor - 1;
+  }
+  return entries;
+}
+
 interface ChatWindowProps {
   key?: React.Key;
   chat: Chat;
@@ -182,9 +283,31 @@ export function ChatWindow({
 
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const messageViewportRef = useRef<HTMLElement | null>(null);
+  const shouldStickToBottomRef = useRef(true);
   const { socket } = useSocket();
   const { enterIsSend, chatWallpaper, chatWallpaperOpacity } = useTheme();
   const bottomRef = useRef<HTMLDivElement>(null);
+  const visibleMessages = useMemo(
+    () =>
+      messages
+        .filter((m) => !m.deletedFor?.includes(currentUser.id))
+        .filter(
+          (m) =>
+            !searchQuery ||
+            (m.text &&
+              m.text.toLowerCase().includes(searchQuery.toLowerCase())),
+        ),
+    [currentUser.id, messages, searchQuery],
+  );
+  const renderEntries = useMemo(
+    () => buildChatRenderEntries(visibleMessages),
+    [visibleMessages],
+  );
+  const pinnedMessages = useMemo(
+    () => visibleMessages.filter((m) => m.pinnedUntil && m.pinnedUntil > Date.now()),
+    [visibleMessages],
+  );
 
   const [otherUserPresence, setOtherUserPresence] = useState<{
     online: boolean;
@@ -505,8 +628,21 @@ export function ChatWindow({
   }, [socket, chat.id]);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+    const lastMessage = messages[messages.length - 1];
+    const shouldStick =
+      shouldStickToBottomRef.current ||
+      lastMessage?.senderId === currentUser.id ||
+      lastMessage?.senderId === "local-user";
+    if (!shouldStick) return;
+    bottomRef.current?.scrollIntoView({ behavior: "auto" });
+  }, [currentUser.id, messages]);
+
+  const handleViewportScroll = () => {
+    const node = messageViewportRef.current;
+    if (!node) return;
+    const remaining = node.scrollHeight - node.scrollTop - node.clientHeight;
+    shouldStickToBottomRef.current = remaining < 160;
+  };
 
   const handleTextChange = (e: ChangeEvent<HTMLInputElement>) => {
     setText(e.target.value);
@@ -1217,18 +1353,11 @@ export function ChatWindow({
       )}
 
       {/* Pinned Messages Banner */}
-      {messages
-        .filter((m) => !m.deletedFor?.includes(currentUser.id))
-        .filter((m) => m.pinnedUntil && m.pinnedUntil > Date.now()).length >
-        0 && (
+      {pinnedMessages.length > 0 && (
         <div
           className="bg-slate-100 dark:bg-[#202c33] border-b border-slate-200 dark:border-[#2f3b43] px-4 py-2 flex items-center justify-between cursor-pointer"
           onClick={() => {
-            // Scroll to message or show all pinned messages
-            const pinnedMsgs = messages
-              .filter((m) => !m.deletedFor?.includes(currentUser.id))
-              .filter((m) => m.pinnedUntil && m.pinnedUntil > Date.now());
-            const latestPinned = pinnedMsgs[pinnedMsgs.length - 1];
+            const latestPinned = pinnedMessages[pinnedMessages.length - 1];
             pushToast({
               title: "Pinned message",
               description: latestPinned.text || "Attachment",
@@ -1244,12 +1373,7 @@ export function ChatWindow({
                 Pinned Message
               </span>
               <span className="text-slate-500 dark:text-[#8696a0] truncate text-[13px]">
-                {
-                  messages
-                    .filter((m) => !m.deletedFor?.includes(currentUser.id))
-                    .filter((m) => m.pinnedUntil && m.pinnedUntil > Date.now())
-                    .pop()?.text
-                }
+                {pinnedMessages[pinnedMessages.length - 1]?.text}
               </span>
             </div>
           </div>
@@ -1285,14 +1409,7 @@ export function ChatWindow({
               </div>
             ))}
           </div>
-        ) : messages
-            .filter((m) => !m.deletedFor?.includes(currentUser.id))
-            .filter(
-              (m) =>
-                !searchQuery ||
-                (m.text &&
-                  m.text.toLowerCase().includes(searchQuery.toLowerCase())),
-            ).length === 0 ? (
+        ) : renderEntries.length === 0 ? (
           <EmptyState
             icon={<MessageCircleMore className="h-8 w-8" />}
             title={searchQuery ? "No messages match that search" : `Say hi to ${chatName}`}
@@ -1304,21 +1421,16 @@ export function ChatWindow({
             className="mx-auto mt-16 max-w-md"
           />
         ) : (
-        messages
-          .filter((m) => !m.deletedFor?.includes(currentUser.id))
-          .filter(
-            (m) =>
-              !searchQuery ||
-              (m.text &&
-                m.text.toLowerCase().includes(searchQuery.toLowerCase())),
-          )
-          .map((msg, idx, arr) => {
+        renderEntries
+          .map((entry, idx, arr) => {
+            const msg = entry.lead;
+            const clusterItems = entry.items;
             const isMe =
               msg.senderId === currentUser.id || msg.senderId === "local-user";
             const isTerminal =
               msg.senderId === "cli-bot" || msg.senderId === "system";
             const showName =
-              !isMe && (idx === 0 || arr[idx - 1].senderId !== msg.senderId);
+              !isMe && (idx === 0 || arr[idx - 1].lead.senderId !== msg.senderId);
 
             return (
               <div
@@ -1521,9 +1633,11 @@ export function ChatWindow({
                       </div>
                     )}
 
-                    {msg.attachmentUrl && (
+                    {(clusterItems.length > 1 || msg.attachmentUrl) && (
                       <div className="mb-2 mt-1">
-                        {msg.attachmentType === "image" ? (
+                        {clusterItems.length > 1 ? (
+                          <ChatImageCollage items={clusterItems} />
+                        ) : msg.attachmentType === "image" ? (
                           <div className="relative group rounded-md overflow-hidden bg-black/5 dark:bg-white/5">
                             <img
                               src={resolveCloudChatUrl(msg.attachmentUrl)}

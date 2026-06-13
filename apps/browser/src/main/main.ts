@@ -7,7 +7,7 @@ import { tabManager } from '../server/tabManager.js';
 
 const DEV_APP_URL = 'http://127.0.0.1:5173';
 const PROD_APP_URL = 'http://127.0.0.1:3000';
-const HELLO_PERMISSION_NAMES = new Set(['media', 'camera', 'microphone', 'display-capture']);
+const HELLO_PERMISSION_NAMES = new Set(['media', 'camera', 'microphone', 'display-capture', 'notifications']);
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -81,13 +81,16 @@ function isTrustedHelloPermissionUrl(rawUrl: string) {
 }
 
 function installHelloPermissionHandler(window: BrowserWindow) {
+  const isAllowedHelloPermission = (permission: string, rawUrl: string) =>
+    Boolean(
+      HELLO_PERMISSION_NAMES.has(permission) &&
+      rawUrl &&
+      isTrustedHelloPermissionUrl(rawUrl),
+    );
+
   window.webContents.session.setPermissionRequestHandler((webContents, permission, callback, details) => {
     const requestingUrl = details.requestingUrl || webContents.getURL();
-    const allowed = Boolean(
-      HELLO_PERMISSION_NAMES.has(permission) &&
-      requestingUrl &&
-      isTrustedHelloPermissionUrl(requestingUrl),
-    );
+    const allowed = isAllowedHelloPermission(permission, requestingUrl);
 
     console.log('[HELLO_PERMISSION_REQUEST]', {
       permission,
@@ -96,6 +99,11 @@ function installHelloPermissionHandler(window: BrowserWindow) {
     });
 
     callback(allowed);
+  });
+
+  window.webContents.session.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) => {
+    const requestingUrl = details.requestingUrl || requestingOrigin || webContents.getURL();
+    return isAllowedHelloPermission(permission, requestingUrl);
   });
 }
 
