@@ -35,11 +35,15 @@ data class DriveUploadPlan(
 data class DriveEvent(
     val id: String,
     val name: String,
+    val circleId: String? = null,
     val createdByUserId: String? = null,
     val coverItemId: String? = null,
     val itemCount: Int = 0,
     val createdAt: Long = 0L,
-    val updatedAt: Long = 0L
+    val updatedAt: Long = 0L,
+    val syncStatus: PendingDriveEventStatus = PendingDriveEventStatus.SYNCED,
+    val syncError: String? = null,
+    val serverEventId: String? = null
 )
 
 data class DriveEventsResponse(
@@ -151,6 +155,13 @@ enum class PendingDriveCircleStatus {
     FAILED_RETRYABLE
 }
 
+enum class PendingDriveEventStatus {
+    PENDING_LOCAL,
+    SYNCING,
+    SYNCED,
+    FAILED_RETRYABLE
+}
+
 data class PendingDriveCircle(
     val id: String,
     val name: String,
@@ -175,6 +186,33 @@ data class PendingDriveCircle(
             syncStatus = status,
             syncError = lastError,
             serverCircleId = serverCircleId
+        )
+    }
+}
+
+data class PendingDriveEvent(
+    val id: String,
+    val circleId: String,
+    val name: String,
+    val createdByUserId: String,
+    val createdAt: Long,
+    val updatedAt: Long,
+    val status: PendingDriveEventStatus = PendingDriveEventStatus.PENDING_LOCAL,
+    val retryCount: Int = 0,
+    val lastError: String? = null,
+    val serverEventId: String? = null
+) {
+    fun asDriveEvent(): DriveEvent {
+        return DriveEvent(
+            id = id,
+            name = name,
+            circleId = circleId,
+            createdByUserId = createdByUserId,
+            createdAt = createdAt,
+            updatedAt = updatedAt,
+            syncStatus = status,
+            syncError = lastError,
+            serverEventId = serverEventId
         )
     }
 }

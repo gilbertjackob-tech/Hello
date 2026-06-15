@@ -1,0 +1,58 @@
+Applications Memory Usage (in Kilobytes):
+Uptime: 81017715 Realtime: 366771723
+
+** MEMINFO in pid 24783 [com.glassbox.hello] **
+                   Pss  Private  Private  SwapPss      Rss     Heap     Heap     Heap
+                 Total    Dirty    Clean    Dirty    Total     Size    Alloc     Free
+                ------   ------   ------   ------   ------   ------   ------   ------
+  Native Heap    60140    60108        0        4    60884    25140    22541     2598
+  Dalvik Heap    14331    14288        0       98    15048    15791     7896     7895
+ Dalvik Other    13864     5604        0        1    22260                           
+        Stack     1924     1924        0        0     1928                           
+       Ashmem       22        0        0        0      700                           
+      Gfx dev     3340     3340        0        0     3340                           
+    Other dev       19        8        4        0      304                           
+     .so mmap     8932      544     6388        1    23148                           
+    .jar mmap    10063        0     6372        0    26268                           
+    .apk mmap      881        0      312        0     2296                           
+    .ttf mmap      503        0      452        0      592                           
+    .dex mmap    45460    45444        0        0    45972                           
+    .oat mmap       97        0       48        0      456                           
+    .art mmap     7800     7184        4       69    17400                           
+   Other mmap      104       32       36        0      608                           
+   EGL mtrack    23612    23612        0        0    23612                           
+      Unknown      426      408        0        0      748                           
+        TOTAL   191691   162496    13616      173   245564    40931    30437    10493
+ 
+ App Summary
+                       Pss(KB)                        Rss(KB)
+                        ------                         ------
+           Java Heap:    21476                          32448
+         Native Heap:    60108                          60884
+                Code:    60652                         116344
+               Stack:     1924                           1928
+            Graphics:    26952                          26952
+       Private Other:     5000
+              System:    15579
+             Unknown:                                    7008
+ 
+           TOTAL PSS:   191691            TOTAL RSS:   245564       TOTAL SWAP PSS:      173
+ 
+ Objects
+               Views:       14         ViewRootImpl:        2
+         AppContexts:        9           Activities:        2
+              Assets:       19        AssetManagers:        0
+       Local Binders:       17        Proxy Binders:       42
+       Parcel memory:       13         Parcel count:       54
+    Death Recipients:        0      OpenSSL Sockets:       10
+            WebViews:        0
+ 
+ SQL
+         MEMORY_USED:      366
+  PAGECACHE_OVERFLOW:      143          MALLOC_SIZE:       46
+ 
+ DATABASES
+      pgsz     dbsz   Lookaside(b)          cache  Dbname
+         4      104             70       52/92/25  /data/user/0/com.glassbox.hello/no_backup/androidx.work.workdb
+         4        8                         0/0/0    (attached) temp
+         4      104             25         4/14/2  /data/user/0/com.glassbox.hello/no_backup/androidx.work.workdb (2)

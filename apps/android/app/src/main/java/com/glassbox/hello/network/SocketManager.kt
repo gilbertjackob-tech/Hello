@@ -239,8 +239,13 @@ class SocketManager private constructor() : CallSocket {
             connect(user)
             return
         }
-        HelloDebugLog.d("Socket", "connectCloud userId=${user.id} origin=${AppConfig.CHAT_CLOUD_BASE_URL}")
         synchronized(socketLock) {
+            if (currentUser?.id == user.id && (cloudConnected || isConnecting)) {
+                currentUser = user
+                HelloDebugLog.d("Socket", "connectCloud reuse userId=${user.id} connected=$cloudConnected connecting=$isConnecting")
+                return
+            }
+            HelloDebugLog.d("Socket", "connectCloud userId=${user.id} origin=${AppConfig.CHAT_CLOUD_BASE_URL}")
             currentUser = user
             socket?.let {
                 it.off()
@@ -275,10 +280,10 @@ class SocketManager private constructor() : CallSocket {
 
             override fun onMessage(webSocket: WebSocket, text: String) {
                 runCatching {
-                    HelloDebugLog.d("Socket", "cloudMessage raw=${HelloDebugLog.snippet(text)}")
                     val envelope = JSONObject(text)
                     val event = envelope.optString("event")
                     val payload = envelope.optJSONObject("payload") ?: envelope
+                    HelloDebugLog.d("Socket", "cloudMessage event=$event")
                     runCatching {
                         dispatchCloudEvent(event, payload)
                     }.onFailure {
@@ -570,7 +575,7 @@ class SocketManager private constructor() : CallSocket {
     }
 
     private fun dispatchCloudEvent(event: String, payload: JSONObject) {
-        HelloDebugLog.d("Socket", "dispatchCloudEvent event=$event payload=${HelloDebugLog.snippet(payload.toString())}")
+        HelloDebugLog.d("Socket", "dispatchCloudEvent event=$event")
         when (event) {
             "receive_message" -> parseMessage(payload)?.let { message ->
                 dispatchOnMain {
@@ -625,7 +630,7 @@ class SocketManager private constructor() : CallSocket {
     }
 
     private fun emitCloud(event: String, payload: JSONObject) {
-        HelloDebugLog.d("Socket", "emitCloud event=$event payload=${HelloDebugLog.snippet(payload.toString())}")
+        HelloDebugLog.d("Socket", "emitCloud event=$event")
         val body = JSONObject()
             .put("event", event)
             .put("payload", payload)

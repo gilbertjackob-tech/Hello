@@ -14,7 +14,6 @@ class CloudChatRepository(
 ) {
     companion object {
         private const val TAG = "HelloInbox"
-        private const val MAX_AUTO_MATERIALIZED_CONTACTS = 40
     }
 
     private val sessionManager = CloudSessionManager(context.applicationContext)
@@ -55,15 +54,7 @@ class CloudChatRepository(
         )
         val result = api.fetchConversations(effectiveUserId)
         val remoteChats = result.getOrNull()?.map(::normalizeChat)
-        val materializedChats = remoteChats?.let { chats ->
-            materializeDirectConversationsForContacts(
-                currentUserId = effectiveUserId,
-                currentUserName = displayName,
-                existingChats = chats
-            )
-        }.orEmpty()
         val deduped = remoteChats
-            ?.plus(materializedChats)
             ?.let { dedupeChats(it, effectiveUserId) }
         deduped?.let {
             saveChats(userId, it)
@@ -90,55 +81,6 @@ class CloudChatRepository(
             )
             if (cached.isNotEmpty()) Result.success(cached) else result
         }
-    }
-
-    private suspend fun materializeDirectConversationsForContacts(
-        currentUserId: String,
-        currentUserName: String?,
-        existingChats: List<ChatModels.Chat>
-    ): List<ChatModels.Chat> {
-        val token = sessionManager.token().orEmpty()
-        if (token.isBlank()) return emptyList()
-        val existingDirectKeys = existingChats
-            .mapNotNull { directKeyForChat(it, currentUserId) }
-            .toMutableSet()
-        val contacts = api.fetchContacts(token)
-            .getOrNull()
-            .orEmpty()
-            .filter { it.safeId().isNotBlank() && it.safeId() != currentUserId }
-            .take(MAX_AUTO_MATERIALIZED_CONTACTS)
-        if (contacts.isEmpty()) return emptyList()
-
-        val created = mutableListOf<ChatModels.Chat>()
-        for (contact in contacts) {
-            val contactId = contact.safeId()
-            val directKey = directKey(currentUserId, contactId)
-            if (directKey in existingDirectKeys) continue
-            val result = api.ensureDirectConversation(
-                currentUserId = currentUserId,
-                targetUserId = contactId,
-                currentUserName = currentUserName ?: currentUserId,
-                targetUserName = contact.safeName()
-            )
-            result
-                .onSuccess { chat ->
-                    val normalized = normalizeChat(chat)
-                    cacheDirectConversationId(currentUserId, contactId, normalized.id)
-                    upsertCachedChat(currentUserId, normalized)
-                    existingDirectKeys += directKeyForChat(normalized, currentUserId) ?: directKey
-                    created += normalized
-                }
-                .onFailure { error ->
-                    Log.w(TAG, "repo_materialize_direct_failed currentUserId=$currentUserId contactId=$contactId error=${error.message}")
-                }
-        }
-        if (created.isNotEmpty()) {
-            Log.d(
-                TAG,
-                "repo_materialize_direct_success currentUserId=$currentUserId createdCount=${created.size} ids=${created.take(8).joinToString(",") { it.id }}"
-            )
-        }
-        return created
     }
 
     suspend fun fetchUsers(query: String? = null): Result<List<ChatModels.User>> {
@@ -316,7 +258,7 @@ class CloudChatRepository(
             .map(::normalizeMessage)
             .distinctBy { it.id }
             .sortedBy { it.timestamp }
-            .takeLast(100)
+            .takeLast(30)
         prefs.edit().putString(cacheKey(chatId), gson.toJson(recent)).apply()
     }
 

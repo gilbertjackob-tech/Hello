@@ -32,13 +32,25 @@ data class ImageClusterTimeline(
     val followerToLeadIndex: Map<Int, Int>
 )
 
+data class ReactionSummary(
+    val emojis: List<String>,
+    val totalCount: Int
+)
+
 data class ChatRenderRow(
     val key: String,
     val contentType: String,
     val message: ChatModels.Message,
     val imageCluster: List<ChatModels.Message>?,
     val grouping: TimelineGrouping,
-    val showUnreadDivider: Boolean
+    val showUnreadDivider: Boolean,
+    val timestampLabel: String,
+    val reactionSummary: ReactionSummary?
+)
+
+data class ChatPreparedMessages(
+    val visibleMessages: List<ChatModels.Message>,
+    val rows: List<ChatRenderRow>
 )
 
 data class ActionMessageState(

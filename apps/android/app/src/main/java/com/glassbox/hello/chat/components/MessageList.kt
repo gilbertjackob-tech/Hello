@@ -13,18 +13,21 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.glassbox.hello.chat.ChatModels
@@ -33,14 +36,19 @@ import com.glassbox.hello.ui.components.ScrollToBottomFab
 import com.glassbox.hello.ui.theme.HelloColors
 import com.glassbox.hello.ui.theme.HelloShapes
 import com.glassbox.hello.ui.theme.HelloSpacing
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
+
+private const val CHAT_ROW_RESTORE_SETTLE_MS = 250L
 
 @Composable
-fun rememberNearBottom(listState: androidx.compose.foundation.lazy.LazyListState): Boolean {
-    val state by remember {
+fun rememberNearBottom(
+    listState: androidx.compose.foundation.lazy.LazyListState,
+    itemCount: Int = listState.layoutInfo.totalItemsCount
+): Boolean {
+    val state by remember(itemCount) {
         derivedStateOf {
-            val layoutInfo = listState.layoutInfo
-            val lastVisible = layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
-            lastVisible >= layoutInfo.totalItemsCount - 4
+            itemCount > 0 && listState.firstVisibleItemIndex >= (itemCount - 8).coerceAtLeast(0)
         }
     }
     return state
@@ -62,8 +70,23 @@ fun ChatMessageList(
     bubbleOpacity: Float,
     onJumpToLatest: () -> Unit
 ) {
-    val isNearBottom = rememberNearBottom(listState)
-    val isScrolling = listState.isScrollInProgress
+    val extraRowCount = if (hasMoreOlderMessages || isLoadingOlderMessages) 1 else 0
+    val isNearBottom = rememberNearBottom(listState, rows.size + extraRowCount)
+    var deferExpensiveRowContent by remember(listState) {
+        mutableStateOf(listState.isScrollInProgress)
+    }
+    LaunchedEffect(listState) {
+        snapshotFlow { listState.isScrollInProgress }
+            .collectLatest { isScrolling ->
+                if (isScrolling) {
+                    deferExpensiveRowContent = true
+                } else {
+                    // A new fling cancels this restoration instead of rebuilding rows between gestures.
+                    delay(CHAT_ROW_RESTORE_SETTLE_MS)
+                    deferExpensiveRowContent = false
+                }
+            }
+    }
     Box(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
             state = listState,
@@ -76,13 +99,13 @@ fun ChatMessageList(
                     OlderMessagesRow(isLoading = isLoadingOlderMessages)
                 }
             }
-            itemsIndexed(
+            items(
                 items = rows,
-                key = { _, row -> row.key },
-                contentType = { _, row ->
+                key = { row -> row.key },
+                contentType = { row ->
                     row.contentType
                 }
-            ) { _, row ->
+            ) { row ->
                 if (row.grouping.showDayDivider) {
                     DateDivider(label = row.grouping.dayLabel.orEmpty())
                 }
@@ -99,7 +122,10 @@ fun ChatMessageList(
                     onDownloadAttachment = onDownloadAttachment,
                     bubbleOpacity = bubbleOpacity,
                     imageCluster = row.imageCluster,
-                    scrollInProgress = isScrolling,
+                    timestampLabel = row.timestampLabel,
+                    reactionSummary = row.reactionSummary,
+                    lightweightMedia = deferExpensiveRowContent,
+                    scrollInProgress = deferExpensiveRowContent,
                     showSenderName = row.grouping.showSenderName,
                     compactWithPrevious = row.grouping.compactWithPrevious,
                     compactWithNext = row.grouping.compactWithNext

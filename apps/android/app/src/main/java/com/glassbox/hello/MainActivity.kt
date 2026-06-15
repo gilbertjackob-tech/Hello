@@ -13,6 +13,7 @@ import com.glassbox.hello.ui.theme.HelloTheme
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
+        setTheme(R.style.Theme_Hello)
         super.onCreate(savedInstanceState)
         HelloNotificationCenter.handleLaunchIntent(intent)
         enableEdgeToEdge()

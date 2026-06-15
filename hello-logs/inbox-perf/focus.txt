@@ -1,0 +1,2 @@
+  mCurrentFocus=Window{d614f5b u0 NotificationShade}
+  mFocusedApp=ActivityRecord{cdc04dc u0 com.glassbox.hello/.MainActivity t3717}

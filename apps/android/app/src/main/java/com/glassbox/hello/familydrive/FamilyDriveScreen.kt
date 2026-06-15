@@ -75,6 +75,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -88,6 +89,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import coil.compose.AsyncImage
 import coil.compose.SubcomposeAsyncImage
 import coil.request.ImageRequest
 import com.glassbox.hello.chat.components.downloadAttachment
@@ -96,6 +98,8 @@ import com.glassbox.hello.ui.components.HelloPanel
 import com.glassbox.hello.ui.theme.HelloColors
 import com.glassbox.hello.ui.theme.HelloShapes
 import com.glassbox.hello.ui.theme.HelloSpacing
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -107,6 +111,8 @@ private enum class DriveMode {
     AllPhotos,
     Trash
 }
+
+private const val DRIVE_CELL_RESTORE_SETTLE_MS = 220L
 
 private enum class DriveUploadStep {
     SelectPhotos,
@@ -319,7 +325,7 @@ fun FamilyDriveScreen(
             pendingAction != null -> pendingAction = null
             viewerIndex != null -> viewerIndex = null
             selectedIds.isNotEmpty() -> selectedIds = emptySet()
-            mode == DriveMode.Events -> mode = DriveMode.Home
+            mode == DriveMode.Events -> mode = DriveMode.Circles
             mode == DriveMode.Circles && editingCircle != null -> {
                 editingCircle = null
             }
@@ -356,7 +362,7 @@ fun FamilyDriveScreen(
                             mode = DriveMode.Circles
                             uploadStep = DriveUploadStep.EditCircle
                         },
-                        onOpenCircle = { circle -> openCirclePhotos(circle) },
+                        onOpenCircle = { circle -> openCircleEvents(circle) },
                         onManageCircle = { circle ->
                             editingCircle = circle
                             mode = DriveMode.Circles
@@ -381,7 +387,7 @@ fun FamilyDriveScreen(
             }
             DriveMode.Events -> DriveEventManagementScreen(
                 state = state,
-                onBack = { mode = DriveMode.Home },
+                onBack = { mode = DriveMode.Circles },
                 onOpenCircleChooser = {
                     editingCircle = null
                     mode = DriveMode.Circles
@@ -396,19 +402,19 @@ fun FamilyDriveScreen(
                 onCreateEvent = { name ->
                     val circleId = state.activeCircleId
                     if (!circleId.isNullOrBlank()) {
-                        viewModel.createEvent(name, currentUserId, circleId) { event ->
+                        viewModel.createEvent(context, name, currentUserId, circleId) { event ->
                             selectedEventId = event.id
                             selectedEventName = event.name
                         }
                     }
                 },
                 onRenameEvent = { eventId, name ->
-                    viewModel.renameEvent(eventId, currentUserId, name) { event ->
+                    viewModel.renameEvent(context, eventId, currentUserId, name) { event ->
                         if (selectedEventId == event.id) selectedEventName = event.name
                     }
                 },
                 onDeleteEvent = { eventId ->
-                    viewModel.deleteEvent(eventId, currentUserId) {
+                    viewModel.deleteEvent(context, eventId, currentUserId) {
                         if (selectedEventId == eventId) {
                             selectedEventId = null
                             selectedEventName = ""
@@ -428,7 +434,13 @@ fun FamilyDriveScreen(
                 favoriteIds = state.favoriteIds,
                 activeCircleId = state.activeCircleId,
                 activeEventId = state.activeEventId,
-                onBack = { mode = DriveMode.Home },
+                onBack = {
+                    mode = if (!state.activeCircleId.isNullOrBlank()) {
+                        DriveMode.Events
+                    } else {
+                        DriveMode.Home
+                    }
+                },
                 onRefresh = { viewModel.refresh(currentUserId, state.activeCircleId, state.activeEventId) },
                 onRetryPending = { viewModel.retryPending(context, currentUserId) },
                 onLoadMore = { viewModel.loadMore(currentUserId, state.activeCircleId, state.activeEventId) },
@@ -511,7 +523,7 @@ fun FamilyDriveScreen(
                 onCreateEvent = { name ->
                     val circleId = selectedAudienceIds.firstOrNull()
                     if (!circleId.isNullOrBlank()) {
-                        viewModel.createEvent(name, currentUserId, circleId) { event ->
+                        viewModel.createEvent(context, name, currentUserId, circleId) { event ->
                             selectedEventId = event.id
                             selectedEventName = event.name
                             viewModel.setScope(currentUserId, circleId, event.id)
@@ -520,12 +532,12 @@ fun FamilyDriveScreen(
                     }
                 },
                 onRenameEvent = { eventId, name ->
-                    viewModel.renameEvent(eventId, currentUserId, name) { event ->
+                    viewModel.renameEvent(context, eventId, currentUserId, name) { event ->
                         if (selectedEventId == event.id) selectedEventName = event.name
                     }
                 },
                 onDeleteEvent = { eventId ->
-                    viewModel.deleteEvent(eventId, currentUserId) {
+                    viewModel.deleteEvent(context, eventId, currentUserId) {
                         if (selectedEventId == eventId) {
                             selectedEventId = null
                             selectedEventName = ""
@@ -574,7 +586,7 @@ fun FamilyDriveScreen(
                     uploadStep = DriveUploadStep.EditCircle
                 },
                 onOpenCircle = { circle ->
-                    openCirclePhotos(circle)
+                    openCircleEvents(circle)
                     uploadStep = null
                 },
                 onManageCircle = { circle ->
@@ -824,18 +836,25 @@ private fun EmptyInlineState(title: String, subtitle: String) {
 
 @Composable
 private fun SelectPhotosStep(media: List<SelectedDriveMedia>, onBack: () -> Unit, onAddMore: () -> Unit, onNext: () -> Unit) {
+    val gridState = rememberLazyGridState()
     Column(modifier = Modifier.fillMaxSize()) {
         FlowHeader("Select Photos", "${media.size} selected", onBack)
         Spacer(modifier = Modifier.height(HelloSpacing.Md))
         LazyVerticalGrid(
             columns = GridCells.Fixed(3),
+            state = gridState,
             contentPadding = PaddingValues(bottom = 92.dp),
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp),
             modifier = Modifier.weight(1f)
         ) {
             items(media, key = { it.id }) { item ->
-                UploadMediaTile(item = item, selected = true, onClick = {})
+                UploadMediaTile(
+                    item = item,
+                    selected = true,
+                    lightweight = gridState.isScrollInProgress,
+                    onClick = {}
+                )
             }
         }
         FlowBottomButton(
@@ -857,12 +876,13 @@ private fun ChooseEventStep(
     onCreateEvent: (String) -> Unit,
     onRenameEvent: (String, String) -> Unit,
     onDeleteEvent: (String) -> Unit,
-    showHeader: Boolean = true
+    showHeader: Boolean = true,
+    modifier: Modifier = Modifier
 ) {
     var eventName by remember { mutableStateOf("") }
     var editingEventId by remember { mutableStateOf<String?>(null) }
     var editingName by remember { mutableStateOf("") }
-    Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+    Column(modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         if (showHeader) {
             FlowHeader("Choose Event", "Where should these memories go?", onBack)
             Spacer(modifier = Modifier.height(HelloSpacing.Md))
@@ -933,6 +953,7 @@ private fun EventManagementCard(
     onCancelRename: () -> Unit,
     onDelete: () -> Unit
 ) {
+    val isPending = event.syncStatus != PendingDriveEventStatus.SYNCED
     HelloPanel(
         modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp),
         strong = selected,
@@ -950,8 +971,20 @@ private fun EventManagementCard(
                 }
                 Spacer(modifier = Modifier.width(HelloSpacing.Md))
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(event.name, color = HelloColors.DarkText, fontWeight = FontWeight.Bold)
-                    Text("${event.itemCount} items", color = HelloColors.DarkTextMuted, style = MaterialTheme.typography.bodySmall)
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(event.name, color = HelloColors.DarkText, fontWeight = FontWeight.Bold)
+                        if (isPending) {
+                            SmallStatusBadge(
+                                text = if (event.syncStatus == PendingDriveEventStatus.FAILED_RETRYABLE) "Needs sync" else "Local",
+                                tint = if (event.syncStatus == PendingDriveEventStatus.FAILED_RETRYABLE) HelloColors.DarkDanger else HelloColors.DarkAccent
+                            )
+                        }
+                    }
+                    Text(
+                        if (isPending) "Saved locally - ${event.itemCount} items" else "${event.itemCount} items",
+                        color = HelloColors.DarkTextMuted,
+                        style = MaterialTheme.typography.bodySmall
+                    )
                 }
                 Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = HelloColors.DarkTextMuted)
             }
@@ -1108,6 +1141,7 @@ private fun SortPhotosStep(
     onSetRemaining: () -> Unit,
     onReviewSummary: () -> Unit
 ) {
+    val gridState = rememberLazyGridState()
     var pickedIds by remember(media, activeAudienceId) { mutableStateOf(setOf<String>()) }
     val audienceIds = (selectedAudienceIds + if (customPeopleIds.isNotEmpty()) setOf("choose_people") else emptySet()).toList()
     val unsorted = media.filterNot { sortAssignments.containsKey(it.id) }
@@ -1125,6 +1159,7 @@ private fun SortPhotosStep(
         }
         LazyVerticalGrid(
             columns = GridCells.Fixed(3),
+            state = gridState,
             contentPadding = PaddingValues(bottom = 120.dp),
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -1134,6 +1169,7 @@ private fun SortPhotosStep(
                 UploadMediaTile(
                     item = item,
                     selected = item.id in pickedIds,
+                    lightweight = gridState.isScrollInProgress,
                     onClick = {
                         pickedIds = pickedIds.toMutableSet().apply {
                             if (contains(item.id)) remove(item.id) else add(item.id)
@@ -1440,7 +1476,7 @@ private fun CircleManagementCard(
         modifier = Modifier
             .fillMaxWidth()
             .padding(bottom = 10.dp)
-            .clickable(enabled = !isPending, onClick = onOpenCircle, role = Role.Button),
+            .clickable(onClick = onOpenCircle, role = Role.Button),
         strong = false,
         shape = HelloShapes.Lg
     ) {
@@ -1494,15 +1530,13 @@ private fun CircleManagementCard(
                     Icon(Icons.Default.MoreVert, contentDescription = "Circle options", tint = HelloColors.DarkTextMuted)
                 }
                 DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
-                    if (!isPending) {
-                        DropdownMenuItem(
-                            text = { Text("Open Drive") },
-                            onClick = {
-                                menuExpanded = false
-                                onOpenCircle()
-                            }
-                        )
-                    }
+                    DropdownMenuItem(
+                        text = { Text("Open events") },
+                        onClick = {
+                            menuExpanded = false
+                            onOpenCircle()
+                        }
+                    )
                     DropdownMenuItem(
                         text = { Text("Manage circle") },
                         onClick = {
@@ -1528,9 +1562,7 @@ private fun CircleManagementCard(
                     )
                 }
             }
-            if (!isPending) {
-                Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = HelloColors.DarkAccent)
-            }
+            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = HelloColors.DarkAccent)
         }
     }
 }
@@ -1770,7 +1802,6 @@ private fun DriveEventManagementScreen(
         ?: "No circle selected"
     Column(
         modifier = modifier
-            .verticalScroll(rememberScrollState())
             .padding(horizontal = HelloSpacing.ScreenPadding)
             .padding(top = HelloSpacing.Md, bottom = HelloSpacing.Lg)
     ) {
@@ -1801,14 +1832,20 @@ private fun DriveEventManagementScreen(
                 onCreateEvent = onCreateEvent,
                 onRenameEvent = onRenameEvent,
                 onDeleteEvent = onDeleteEvent,
-                showHeader = false
+                showHeader = false,
+                modifier = Modifier.weight(1f)
             )
         }
     }
 }
 
 @Composable
-private fun UploadMediaTile(item: SelectedDriveMedia, selected: Boolean, onClick: () -> Unit) {
+private fun UploadMediaTile(
+    item: SelectedDriveMedia,
+    selected: Boolean,
+    lightweight: Boolean = false,
+    onClick: () -> Unit
+) {
     Box(
         modifier = Modifier
             .aspectRatio(1f)
@@ -1817,13 +1854,21 @@ private fun UploadMediaTile(item: SelectedDriveMedia, selected: Boolean, onClick
             .border(2.dp, if (selected) HelloColors.DarkAccent else Color.Transparent, HelloShapes.Md)
             .clickable(onClick = onClick, role = Role.Checkbox)
     ) {
-        if (item.isVideo) {
+        if (lightweight) {
+            DriveMediaPlaceholder(isVideo = item.isVideo)
+        } else if (item.isVideo) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Icon(Icons.Default.PlayArrow, contentDescription = null, tint = HelloColors.DarkAccent, modifier = Modifier.size(36.dp))
             }
         } else {
             SubcomposeAsyncImage(
-                model = ImageRequest.Builder(LocalContext.current).data(item.uri).crossfade(false).allowHardware(true).memoryCacheKey(item.id).build(),
+                model = ImageRequest.Builder(LocalContext.current)
+                    .data(item.uri)
+                    .crossfade(false)
+                    .allowHardware(true)
+                    .size(480, 480)
+                    .memoryCacheKey(item.id)
+                    .build(),
                 contentDescription = item.displayName,
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop,
@@ -1831,8 +1876,10 @@ private fun UploadMediaTile(item: SelectedDriveMedia, selected: Boolean, onClick
                 error = { Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Icon(Icons.Default.Image, contentDescription = null, tint = HelloColors.DarkTextMuted) } }
             )
         }
-        SelectionMark(selected = selected, modifier = Modifier.align(Alignment.TopEnd).padding(5.dp))
-        if (item.isVideo) {
+        if (!lightweight) {
+            SelectionMark(selected = selected, modifier = Modifier.align(Alignment.TopEnd).padding(5.dp))
+        }
+        if (item.isVideo && !lightweight) {
             Text("Video", color = Color.White, style = MaterialTheme.typography.labelSmall, modifier = Modifier.align(Alignment.BottomEnd).padding(5.dp).clip(CircleShape).background(Color.Black.copy(alpha = 0.55f)).padding(horizontal = 6.dp, vertical = 3.dp))
         }
     }
@@ -2191,6 +2238,21 @@ private fun DriveLibraryContent(
     val loading = if (trashMode) state.isTrashLoading else state.isLoading
     val loadingMore = if (trashMode) state.isTrashLoadingMore else state.isLoadingMore
     val total = if (trashMode) state.trashTotal else state.total + pendingCount
+    var lightweightCells by remember(gridState) { mutableStateOf(gridState.isScrollInProgress) }
+    val activeEventName = state.events.firstOrNull { it.id == activeEventId }?.name
+    val activeCircleName = state.circles.firstOrNull { it.id == activeCircleId }?.name
+
+    LaunchedEffect(gridState) {
+        snapshotFlow { gridState.isScrollInProgress }
+            .collectLatest { isScrolling ->
+                if (isScrolling) {
+                    lightweightCells = true
+                } else {
+                    delay(DRIVE_CELL_RESTORE_SETTLE_MS)
+                    lightweightCells = false
+                }
+            }
+    }
 
     LaunchedEffect(gridState, gridItems.size, state.hasMore, state.trashHasMore, loadingMore) {
         snapshotFlow { gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0 }
@@ -2208,7 +2270,12 @@ private fun DriveLibraryContent(
             }
             Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(
-                    text = if (trashMode) "Trash" else "All Circles",
+                    text = when {
+                        trashMode -> "Trash"
+                        !activeEventName.isNullOrBlank() -> activeEventName
+                        !activeCircleName.isNullOrBlank() -> activeCircleName
+                        else -> "All Circles"
+                    },
                     color = HelloColors.DarkText,
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
@@ -2257,10 +2324,15 @@ private fun DriveLibraryContent(
             LazyVerticalGrid(
                 columns = GridCells.Fixed(3),
                 state = gridState,
-                modifier = Modifier.weight(1f).fillMaxWidth(),
-                contentPadding = PaddingValues(bottom = 116.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(32.dp))
+                    .background(Color.White.copy(alpha = 0.94f))
+                    .padding(horizontal = 6.dp),
+                contentPadding = PaddingValues(top = 4.dp, bottom = 116.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 groupedItems.forEach { (monthLabel, itemsInMonth) ->
                     item(span = { GridItemSpan(maxLineSpan) }) {
@@ -2278,6 +2350,7 @@ private fun DriveLibraryContent(
                             DriveMediaCard(
                                 item = gridItem,
                                 collageStyle = collageStyle,
+                                lightweight = lightweightCells,
                                 trashMode = trashMode,
                                 isSelected = gridItem is DriveGridItem.Synced && gridItem.item.id in selectedIds,
                                 selectionMode = selectionMode,
@@ -2426,6 +2499,7 @@ private fun driveCollageStyleFor(itemId: String, isVideo: Boolean, index: Int): 
 private fun DriveMediaCard(
     item: DriveGridItem,
     collageStyle: DriveCollageStyle,
+    lightweight: Boolean,
     trashMode: Boolean,
     isSelected: Boolean,
     selectionMode: Boolean,
@@ -2447,6 +2521,16 @@ private fun DriveMediaCard(
         is DriveGridItem.Synced -> item.item.originalName ?: "Drive media"
         is DriveGridItem.Pending -> item.item.displayName
     }
+    val imageRequest = remember(context, imageData, item.id) {
+        ImageRequest.Builder(context)
+            .data(imageData)
+            .crossfade(false)
+            .allowHardware(true)
+            .size(480, 480)
+            .memoryCacheKey(item.id)
+            .diskCacheKey(item.id)
+            .build()
+    }
     Box(
         modifier = Modifier
             .aspectRatio(collageStyle.aspectRatio)
@@ -2463,32 +2547,19 @@ private fun DriveMediaCard(
                 role = Role.Button
             }
     ) {
-        SubcomposeAsyncImage(
-            model = ImageRequest.Builder(context)
-                .data(imageData)
-                .crossfade(false)
-                .allowHardware(true)
-                .memoryCacheKey(item.id)
-                .diskCacheKey(item.id)
-                .build(),
+        DriveMediaPlaceholder(isVideo = isVideo)
+        AsyncImage(
+            model = imageRequest,
             contentDescription = displayName,
-            modifier = Modifier.fillMaxSize(),
-            contentScale = ContentScale.Crop,
-            loading = {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(color = HelloColors.DarkAccent, modifier = Modifier.size(22.dp))
-                }
-            },
-            error = {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Icon(Icons.Default.Image, contentDescription = null, tint = HelloColors.DarkTextMuted)
-                }
-            }
+            modifier = Modifier
+                .fillMaxSize()
+                .drawWithContent { if (!lightweight) drawContent() },
+            contentScale = ContentScale.Crop
         )
-        if (selectionMode && item is DriveGridItem.Synced) {
+        if (!lightweight && selectionMode && item is DriveGridItem.Synced) {
             SelectionMark(selected = isSelected, modifier = Modifier.align(Alignment.TopStart).padding(5.dp))
         }
-        if (isVideo) {
+        if (isVideo && !lightweight) {
             Row(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
@@ -2507,7 +2578,7 @@ private fun DriveMediaCard(
                 )
             }
         }
-        when (item) {
+        if (!lightweight) when (item) {
             is DriveGridItem.Synced -> {
                 if (!trashMode) {
                     Box(
@@ -2540,6 +2611,23 @@ private fun DriveMediaCard(
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun DriveMediaPlaceholder(isVideo: Boolean) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(HelloColors.DarkPanelStrong),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            imageVector = if (isVideo) Icons.Default.PlayArrow else Icons.Default.Image,
+            contentDescription = null,
+            tint = HelloColors.DarkTextMuted.copy(alpha = 0.58f),
+            modifier = Modifier.size(if (isVideo) 32.dp else 28.dp)
+        )
     }
 }
 
@@ -2719,14 +2807,23 @@ private fun DriveMediaViewer(
                         }
                     }
                 } else {
-                    SubcomposeAsyncImage(
-                        model = ImageRequest.Builder(context).data(resolvedUrl).crossfade(false).allowHardware(true).build(),
-                        contentDescription = item.originalName,
-                        modifier = Modifier.fillMaxWidth(),
-                        contentScale = ContentScale.Fit,
-                        loading = { CircularProgressIndicator(color = HelloColors.DarkAccent) },
-                        error = { Text("Photo load failed", color = Color.White) }
-                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(32.dp))
+                            .background(Color.White)
+                            .padding(8.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        SubcomposeAsyncImage(
+                            model = ImageRequest.Builder(context).data(resolvedUrl).crossfade(false).allowHardware(true).build(),
+                            contentDescription = item.originalName,
+                            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(25.dp)),
+                            contentScale = ContentScale.Fit,
+                            loading = { CircularProgressIndicator(color = HelloColors.DarkAccent) },
+                            error = { Text("Photo load failed", color = HelloColors.DarkDanger) }
+                        )
+                    }
                 }
                 TextButton(onClick = onNext, enabled = hasNext, modifier = Modifier.align(Alignment.CenterEnd).size(52.dp)) {
                     Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = "Next media", tint = Color.White)

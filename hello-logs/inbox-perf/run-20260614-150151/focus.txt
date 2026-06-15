@@ -1,0 +1,40 @@
+    mResumedActivity: ActivityRecord{d7c0356 u0 com.glassbox.hello/.MainActivity t3725}
+    * Task{3d9273 #3725 type=standard A=10514:com.glassbox.hello U=0 visible=true mode=fullscreen translucent=false sz=1}
+      affinity=10514:com.glassbox.hello
+      intent={flg=0x10000000 cmp=com.glassbox.hello/.MainActivity}
+      mActivityComponent=com.glassbox.hello/.MainActivity
+      Activities=[ActivityRecord{d7c0356 u0 com.glassbox.hello/.MainActivity t3725}]
+      mRootProcess=ProcessRecord{ed4e2cf 28781:com.glassbox.hello/u0a514}
+      * Hist #0: ActivityRecord{d7c0356 u0 com.glassbox.hello/.MainActivity t3725}
+          packageName=com.glassbox.hello processName=com.glassbox.hello
+          app=ProcessRecord{ed4e2cf 28781:com.glassbox.hello/u0a514}
+          Intent { flg=0x10000000 cmp=com.glassbox.hello/.MainActivity }
+          rootOfTask=true task=Task{3d9273 #3725 type=standard A=10514:com.glassbox.hello U=0 visible=true mode=fullscreen translucent=false sz=1}
+          taskAffinity=10514:com.glassbox.hello
+          mActivityComponent=com.glassbox.hello/.MainActivity
+          baseDir=/data/app/~~D6cJkzO5Teorc9Gb5OedoA==/com.glassbox.hello-rzebTX_WRzbRcMhob9aDPQ==/base.apk
+          dataDir=/data/user/0/com.glassbox.hello
+          mDimAnimInfo mOwner=ActivityRecord{d7c0356 u0 com.glassbox.hello/.MainActivity t3725} mDimmer=null isDimLayerValid=false isDimming=false mTriggered=false
+          windows=[Window{7634e7d u0 com.glassbox.hello/com.glassbox.hello.MainActivity}]
+    Resumed: ActivityRecord{d7c0356 u0 com.glassbox.hello/.MainActivity t3725}
+  ResumedActivity: ActivityRecord{d7c0356 u0 com.glassbox.hello/.MainActivity t3725}
+  topDisplayFocusedRootTask=Task{3d9273 #3725 type=standard A=10514:com.glassbox.hello U=0 visible=true mode=fullscreen translucent=false sz=1}
+  deepestLastOrientationSource=ActivityRecord{d7c0356 u0 com.glassbox.hello/.MainActivity t3725}
+  mCurrentFocus=Window{7634e7d u0 com.glassbox.hello/com.glassbox.hello.MainActivity}
+  mFocusedApp=ActivityRecord{d7c0356 u0 com.glassbox.hello/.MainActivity t3725}
+      mPreferredTopFocusableRootTask=Task{3d9273 #3725 type=standard A=10514:com.glassbox.hello U=0 visible=true mode=fullscreen translucent=false sz=1}
+      mLastFocusedRootTask=Task{3d9273 #3725 type=standard A=10514:com.glassbox.hello U=0 visible=true mode=fullscreen translucent=false sz=1}
+      * Task{3d9273 #3725 type=standard A=10514:com.glassbox.hello U=0 visible=true mode=fullscreen translucent=false sz=1}
+        mDimAnimInfo mOwner=Task{3d9273 #3725 type=standard A=10514:com.glassbox.hello U=0 visible=true mode=fullscreen translucent=false sz=1} mDimmer=null isDimLayerValid=false isDimming=false mTriggered=false
+        * ActivityRecord{d7c0356 u0 com.glassbox.hello/.MainActivity t3725}
+    mFocusedWindow=Window{7634e7d u0 com.glassbox.hello/com.glassbox.hello.MainActivity}
+    mTopFullscreenOpaqueWindowState=Window{7634e7d u0 com.glassbox.hello/com.glassbox.hello.MainActivity}
+    mTopFullscreenOpaqueOrDimmingWindowState=Window{7634e7d u0 com.glassbox.hello/com.glassbox.hello.MainActivity}
+      ITYPE_IME -> Window{7634e7d u0 com.glassbox.hello/com.glassbox.hello.MainActivity}
+      ITYPE_NAVIGATION_BAR -> Window{7634e7d u0 com.glassbox.hello/com.glassbox.hello.MainActivity}
+      ITYPE_STATUS_BAR -> Window{7634e7d u0 com.glassbox.hello/com.glassbox.hello.MainActivity}
+        mControlTarget=Window{7634e7d u0 com.glassbox.hello/com.glassbox.hello.MainActivity}
+        mControlTarget=Window{7634e7d u0 com.glassbox.hello/com.glassbox.hello.MainActivity}
+        mControlTarget=Window{7634e7d u0 com.glassbox.hello/com.glassbox.hello.MainActivity}
+        (fullscreen) Task{3d9273 #3725 type=standard A=10514:com.glassbox.hello U=0 visible=true mode=fullscreen translucent=false sz=1}
+  VisibleActivityProcess:[ ProcessRecord{ed4e2cf 28781:com.glassbox.hello/u0a514}]

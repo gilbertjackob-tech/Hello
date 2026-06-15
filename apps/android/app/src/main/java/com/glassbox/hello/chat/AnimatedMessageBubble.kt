@@ -76,6 +76,8 @@ import java.util.Date
 import java.util.Locale
 import kotlin.math.roundToInt
 
+private const val ENABLE_SWIPE_TO_REPLY = false
+
 @Composable
 fun AnimatedMessageBubble(
     message: ChatModels.Message,
@@ -134,29 +136,35 @@ fun AnimatedMessageBubble(
                     top = if (compactWithPrevious) 1.dp else 7.dp,
                     bottom = if (compactWithNext) 1.dp else 7.dp
                 )
-                .pointerInput(message.id, isOwn) {
-                    detectHorizontalDragGestures(
-                        onHorizontalDrag = { change, dragAmount ->
-                            val next = swipeOffset + dragAmount
-                            swipeOffset = if (isOwn) {
-                                next.coerceIn(-swipeThreshold * 1.45f, 0f)
-                            } else {
-                                next.coerceIn(0f, swipeThreshold * 1.45f)
-                            }
-                            if (kotlin.math.abs(swipeOffset) > swipeThreshold) {
-                                AnimationUtils.Haptics.threshold(context)
-                            }
-                            change.consume()
-                        },
-                        onDragEnd = {
-                            if (kotlin.math.abs(swipeOffset) > swipeThreshold) {
-                                onReply(message)
-                                AnimationUtils.Haptics.tapMedium(context)
-                            }
-                            swipeOffset = 0f
+                .then(
+                    if (ENABLE_SWIPE_TO_REPLY) {
+                        Modifier.pointerInput(message.id, isOwn) {
+                            detectHorizontalDragGestures(
+                                onHorizontalDrag = { change, dragAmount ->
+                                    val next = swipeOffset + dragAmount
+                                    swipeOffset = if (isOwn) {
+                                        next.coerceIn(-swipeThreshold * 1.45f, 0f)
+                                    } else {
+                                        next.coerceIn(0f, swipeThreshold * 1.45f)
+                                    }
+                                    if (kotlin.math.abs(swipeOffset) > swipeThreshold) {
+                                        AnimationUtils.Haptics.threshold(context)
+                                    }
+                                    change.consume()
+                                },
+                                onDragEnd = {
+                                    if (kotlin.math.abs(swipeOffset) > swipeThreshold) {
+                                        onReply(message)
+                                        AnimationUtils.Haptics.tapMedium(context)
+                                    }
+                                    swipeOffset = 0f
+                                }
+                            )
                         }
-                    )
-                }
+                    } else {
+                        Modifier
+                    }
+                )
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),

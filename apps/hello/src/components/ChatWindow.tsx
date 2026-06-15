@@ -265,10 +265,17 @@ export function ChatWindow({
   const handleTouchMove = (e: React.TouchEvent, msg: Message) => {
     if (!touchStart) return;
     const currentX = e.touches[0].clientX;
+    const currentY = e.touches[0].clientY;
     const deltaX = currentX - touchStart.x;
+    const deltaY = currentY - touchStart.y;
 
-    // Only allow swipe to right
-    if (deltaX > 0 && deltaX < 80) {
+    if (Math.abs(deltaY) > Math.abs(deltaX)) {
+      setSwipeOffset(null);
+      return;
+    }
+
+    // Only allow swipe to right after horizontal intent is clear.
+    if (deltaX > 12 && deltaX < 80) {
       setSwipeOffset({ id: msg.id, x: deltaX });
     }
   };
@@ -1387,7 +1394,9 @@ export function ChatWindow({
            style={{ ...getWallpaperStyles(), opacity: (chatWallpaperOpacity ?? 100) / 100 }} 
         />
         <section
-          className="flex-1 min-h-0 overflow-y-auto p-4 md:p-8 space-y-4 z-10 relative custom-scrollbar"
+          ref={messageViewportRef}
+          onScroll={handleViewportScroll}
+          className="chat-scroll-viewport flex-1 min-h-0 overflow-y-auto p-4 md:p-8 space-y-4 z-10 relative custom-scrollbar"
         >
         <div className="flex justify-center">
           <span className="bg-white/80 dark:bg-slate-800/80 px-3 py-1 rounded-md text-[10px] text-slate-500 dark:text-slate-400 uppercase tracking-widest shadow-sm">
@@ -1437,7 +1446,7 @@ export function ChatWindow({
                 key={msg.id}
                 id={`msg-${msg.id}`}
                 className={cn(
-                  "flex relative transition-all duration-300 ease-out",
+                  "flex relative transition-transform duration-150 ease-out",
                   isMe ? "justify-end" : "justify-start",
                 )}
                 style={{

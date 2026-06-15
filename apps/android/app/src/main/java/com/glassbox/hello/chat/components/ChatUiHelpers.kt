@@ -69,7 +69,7 @@ fun buildImageClusterTimeline(messages: List<ChatModels.Message>): ImageClusterT
         while (nextIndex < messages.size) {
             val candidate = messages[nextIndex]
             val previous = messages[nextIndex - 1]
-            if (!isCollageImageMessage(candidate) || !shouldGroupTogether(previous, candidate)) break
+            if (!isCollageImageMessage(candidate) || !shouldClusterImagesTogether(previous, candidate)) break
             cluster += candidate
             nextIndex++
         }
@@ -122,10 +122,28 @@ fun buildChatRenderRows(
             imageCluster = imageClusterTimeline.clustersByLeadIndex[index],
             grouping = grouping,
             showUnreadDivider = grouping.showUnreadDivider ||
-                imageClusterTimeline.followerToLeadIndex[unreadStartIndex] == index
+                imageClusterTimeline.followerToLeadIndex[unreadStartIndex] == index,
+            timestampLabel = formatTimestamp(message.timestamp),
+            reactionSummary = buildReactionSummary(message.reactions)
         )
     }
     return rows
+}
+
+fun buildReactionSummary(reactions: List<ChatModels.Reaction>?): ReactionSummary? {
+    val items = reactions.orEmpty()
+    if (items.isEmpty()) return null
+    val countsByEmoji = LinkedHashMap<String, Int>()
+    items.forEach { reaction ->
+        countsByEmoji[reaction.emoji] = (countsByEmoji[reaction.emoji] ?: 0) + 1
+    }
+    return ReactionSummary(
+        emojis = countsByEmoji.entries
+            .sortedByDescending { it.value }
+            .take(4)
+            .map { it.key },
+        totalCount = items.size
+    )
 }
 
 fun normalizeAttachmentUrl(url: String?): String? {
@@ -250,8 +268,20 @@ private fun shouldGroupTogether(previous: ChatModels.Message, current: ChatModel
         current.timestamp - previous.timestamp < 5 * 60 * 1000
 }
 
+private fun shouldClusterImagesTogether(previous: ChatModels.Message, current: ChatModels.Message): Boolean {
+    return previous.senderId == current.senderId &&
+        previous.isDeleted != true &&
+        current.isDeleted != true
+}
+
 private fun isCollageImageMessage(message: ChatModels.Message): Boolean {
-    return attachmentKind(message) == "image" && !normalizeAttachmentUrl(message.attachmentUrl).isNullOrBlank()
+    return attachmentKind(message) == "image" &&
+        !normalizeAttachmentUrl(message.attachmentUrl).isNullOrBlank() &&
+        message.text.isBlank() &&
+        message.isDeleted != true &&
+        message.location == null &&
+        message.callInfo == null &&
+        message.messageType != "call_log"
 }
 
 fun unreadBoundaryIndex(messages: List<ChatModels.Message>, currentUserId: String, unreadCount: Int): Int? {

@@ -14,7 +14,8 @@ data class HelloSettingsState(
     val wallpaper: String = "theme cute",
     val wallpaperOpacity: Int = 100,
     val chatSounds: Boolean = true,
-    val cloudChatEnabled: Boolean = true
+    val cloudChatEnabled: Boolean = true,
+    val showCallLogsInChat: Boolean = false
 )
 
 object HelloPreferences {
@@ -25,6 +26,7 @@ object HelloPreferences {
     const val KEY_WALLPAPER_OPACITY = "wallpaper_opacity"
     const val KEY_CHAT_SOUNDS = "chat_sounds"
     const val KEY_CLOUD_CHAT_ENABLED = "cloud_chat_enabled"
+    const val KEY_SHOW_CALL_LOGS_IN_CHAT = "show_call_logs_in_chat"
     private const val KEY_CUTE_THEME_MIGRATED = "cute_theme_migrated"
     private const val KEY_CLOUD_CHAT_DEFAULT_MIGRATED = "cloud_chat_default_migrated"
 
@@ -40,7 +42,8 @@ object HelloPreferences {
             wallpaper = prefs.getString(KEY_WALLPAPER, "theme cute") ?: "theme cute",
             wallpaperOpacity = prefs.getInt(KEY_WALLPAPER_OPACITY, 100),
             chatSounds = prefs.getBoolean(KEY_CHAT_SOUNDS, true),
-            cloudChatEnabled = prefs.getBoolean(KEY_CLOUD_CHAT_ENABLED, true)
+            cloudChatEnabled = prefs.getBoolean(KEY_CLOUD_CHAT_ENABLED, true),
+            showCallLogsInChat = prefs.getBoolean(KEY_SHOW_CALL_LOGS_IN_CHAT, false)
         )
     }
 
@@ -87,6 +90,10 @@ object HelloPreferences {
 
     fun setCloudChatEnabled(context: Context, enabled: Boolean) {
         prefs(context).edit().putBoolean(KEY_CLOUD_CHAT_ENABLED, enabled).apply()
+    }
+
+    fun setShowCallLogsInChat(context: Context, enabled: Boolean) {
+        prefs(context).edit().putBoolean(KEY_SHOW_CALL_LOGS_IN_CHAT, enabled).apply()
     }
 }
 

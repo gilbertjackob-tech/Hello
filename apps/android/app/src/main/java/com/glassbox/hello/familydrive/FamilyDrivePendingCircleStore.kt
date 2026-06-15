@@ -29,7 +29,11 @@ class FamilyDrivePendingCircleStore private constructor(context: Context) {
     }
 
     suspend fun getRetryable(circleId: String? = null): List<PendingDriveCircle> = withContext(Dispatchers.IO) {
-        val retryableStatuses = setOf(PendingDriveCircleStatus.PENDING_LOCAL, PendingDriveCircleStatus.FAILED_RETRYABLE)
+        val retryableStatuses = setOf(
+            PendingDriveCircleStatus.PENDING_LOCAL,
+            PendingDriveCircleStatus.SYNCING,
+            PendingDriveCircleStatus.FAILED_RETRYABLE
+        )
         synchronized(lock) {
             val all = readAllLocked()
             if (circleId != null) {

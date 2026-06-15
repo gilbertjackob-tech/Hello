@@ -122,6 +122,14 @@
     background-clip: padding-box;
   }
 
+  .chat-scroll-viewport {
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-y: contain;
+    scroll-behavior: auto;
+    touch-action: pan-y;
+    contain: paint;
+  }
+
   .hello-panel {
     background: var(--hello-panel);
     border: 1px solid var(--hello-border);

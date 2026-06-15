@@ -105,13 +105,16 @@ fun HelloApp(darkTheme: Boolean = true) {
     val sessionManager = remember { SessionManager(context) }
     val cloudSessionManager = remember { CloudSessionManager(context) }
     val cloudUserRepository = remember { CloudUserRepository(context) }
-    val currentUser = remember {
-        mutableStateOf<User?>(
-            cloudSessionManager.cachedUser()
-                ?.takeIf { !cloudSessionManager.token().isNullOrBlank() }
-        )
+    val cachedCloudUser = remember {
+        cloudSessionManager.cachedUser()
+            ?.takeIf { !cloudSessionManager.token().isNullOrBlank() }
     }
-    val resolvingCloudIdentity = remember { mutableStateOf(!cloudSessionManager.token().isNullOrBlank()) }
+    val currentUser = remember {
+        mutableStateOf<User?>(cachedCloudUser)
+    }
+    val resolvingCloudIdentity = remember {
+        mutableStateOf(!cloudSessionManager.token().isNullOrBlank() && cachedCloudUser == null)
+    }
     val selectedTab = remember { mutableIntStateOf(0) }
     val tabBackStack = remember { mutableStateListOf<Int>() }
     val lastExitBackAt = remember { mutableStateOf(0L) }
@@ -160,11 +163,14 @@ fun HelloApp(darkTheme: Boolean = true) {
             HelloDebugLog.d("App", "resolveCloudIdentity skipped reason=no_token")
             return@LaunchedEffect
         }
-        resolvingCloudIdentity.value = true
+        resolvingCloudIdentity.value = currentUser.value == null
         val cloudUser = withTimeoutOrNull(8_000L) { cloudUserRepository.currentUser().getOrNull() }
         if (cloudUser == null) {
             HelloDebugLog.w("App", "resolveCloudIdentity failed reason=currentUser_null")
-            clearLocalAccountState()
+            if (currentUser.value == null) {
+                clearLocalAccountState()
+            }
+            resolvingCloudIdentity.value = false
             return@LaunchedEffect
         }
         cloudSessionManager.save(cloudUser)
@@ -281,6 +287,7 @@ fun HelloApp(darkTheme: Boolean = true) {
         currentUser.value?.let {
             HelloDebugLog.d("App", "userReady userId=${it.id} initializing notifications and calls")
             HelloNotificationCenter.initialize(context, it.id)
+            delay(1500)
             FcmPushRegistrar.registerPendingToken(context, "user_ready")
             FcmPushRegistrar.refreshAndRegister(context)
             callViewModel.connect(context, it)

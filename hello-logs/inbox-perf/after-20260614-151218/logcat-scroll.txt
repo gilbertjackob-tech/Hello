@@ -1,0 +1,2 @@
+06-14 15:12:43.218  5423 30552 D ModernSamsungCoreService: applyPending()
+06-14 15:12:45.116 24122 24122 W Finsky  : [2] STU: Failed to get storage stats for package 'com.samsung.android.kgclient' (1601: Error getting stats: java.lang.SecurityException)

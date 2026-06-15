@@ -5,12 +5,15 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalContext
+import com.glassbox.hello.core.DeviceCapabilityPolicy
 import com.glassbox.hello.ui.theme.HelloAppThemes
 import com.glassbox.hello.ui.theme.HelloColors
 import com.glassbox.hello.ui.theme.HelloThemeRuntime
@@ -25,6 +28,10 @@ fun AppBackground(
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit
 ) {
+    val context = LocalContext.current
+    val reduceDecorativeRendering = remember(context) {
+        DeviceCapabilityPolicy.profile(context).reduceDecorativeRendering
+    }
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -56,6 +63,7 @@ fun AppBackground(
                         )
                     )
                 )
+                if (reduceDecorativeRendering) return@Canvas
                 drawCircle(
                     color = Color.White.copy(alpha = 0.52f),
                     center = Offset(w * 0.12f, h * 0.18f),

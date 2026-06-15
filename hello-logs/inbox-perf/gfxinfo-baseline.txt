@@ -1,0 +1,67 @@
+Applications Graphics Acceleration Info:
+Uptime: 81018518 Realtime: 366772527
+
+** Graphics info for pid 24783 [com.glassbox.hello] **
+
+Stats since: 80365821688456ns
+Total frames rendered: 10562
+Janky frames: 200 (1.89%)
+Janky frames (legacy): 2973 (28.15%)
+50th percentile: 30ms
+90th percentile: 31ms
+95th percentile: 31ms
+99th percentile: 65ms
+Number Missed Vsync: 100
+Number High input latency: 20772
+Number Slow UI thread: 195
+Number Slow bitmap uploads: 0
+Number Slow issue draw commands: 131
+Number Frame deadline missed: 200
+Number Frame deadline missed (legacy): 131
+HISTOGRAM: 5ms=0 6ms=0 7ms=0 8ms=0 9ms=0 10ms=0 11ms=0 12ms=0 13ms=1 14ms=12 15ms=7 16ms=5 17ms=0 18ms=1 19ms=1 20ms=7 21ms=13 22ms=10 23ms=10 24ms=22 25ms=57 26ms=16 27ms=1258 28ms=552 29ms=229 30ms=6193 31ms=1722 32ms=293 34ms=1 36ms=2 38ms=3 40ms=4 42ms=9 44ms=8 46ms=3 48ms=10 53ms=2 57ms=2 61ms=2 65ms=5 69ms=2 73ms=0 77ms=1 81ms=1 85ms=1 89ms=2 93ms=3 97ms=1 101ms=0 105ms=1 109ms=1 113ms=0 117ms=0 121ms=1 125ms=1 129ms=1 133ms=0 150ms=5 200ms=8 250ms=9 300ms=9 350ms=8 400ms=5 450ms=1 500ms=4 550ms=2 600ms=1 650ms=3 700ms=3 750ms=2 800ms=4 850ms=1 900ms=0 950ms=2 1000ms=0 1050ms=2 1100ms=0 1150ms=0 1200ms=1 1250ms=0 1300ms=1 1350ms=5 1400ms=1 1450ms=1 1500ms=2 1550ms=0 1600ms=0 1650ms=2 1700ms=1 1750ms=0 1800ms=0 1850ms=0 1900ms=1 1950ms=0 2000ms=0 2050ms=0 2100ms=0 2150ms=0 2200ms=0 2250ms=0 2300ms=0 2350ms=0 2400ms=0 2450ms=0 2500ms=0 2550ms=0 2600ms=0 2650ms=0 2700ms=0 2750ms=0 2800ms=0 2850ms=0 2900ms=0 2950ms=0 3000ms=0 3050ms=0 3100ms=0 3150ms=0 3200ms=0 3250ms=0 3300ms=0 3350ms=0 3400ms=0 3450ms=0 3500ms=0 3550ms=0 3600ms=0 3650ms=0 3700ms=0 3750ms=0 3800ms=0 3850ms=0 3900ms=0 3950ms=0 4000ms=0 4050ms=0 4100ms=0 4150ms=0 4200ms=0 4250ms=0 4300ms=0 4350ms=0 4400ms=0 4450ms=0 4500ms=0 4550ms=0 4600ms=0 4650ms=0 4700ms=0 4750ms=0 4800ms=0 4850ms=0 4900ms=0 4950ms=2
+50th gpu percentile: 17ms
+90th gpu percentile: 19ms
+95th gpu percentile: 20ms
+99th gpu percentile: 21ms
+GPU HISTOGRAM: 1ms=0 2ms=54 3ms=154 4ms=23 5ms=9 6ms=3 7ms=1 8ms=0 9ms=7 10ms=28 11ms=33 12ms=22 13ms=375 14ms=405 15ms=536 16ms=1713 17ms=2242 18ms=2395 19ms=1588 20ms=854 21ms=114 22ms=5 23ms=0 24ms=0 25ms=0 4950ms=1
+Pipeline=Skia (OpenGL)
+CPU Caches:
+  Glyph Cache: 83.01 KB (1 entry)
+  Glyph Count: 66 
+Total CPU memory usage:
+  85004 bytes, 83.01 KB (0.00 bytes is purgeable)
+GPU Caches:
+  Other:
+    Other: 6.23 KB (1 entry)
+    Buffer Object: 2.05 KB (2 entries)
+  Image:
+    Texture: 11.54 KB (14 entries)
+  Scratch:
+    Texture: 2.00 MB (1 entry)
+    Buffer Object: 78.00 KB (2 entries)
+Total GPU memory usage:
+  2197320 bytes, 2.10 MB (2.05 KB is purgeable)
+
+Profile data in ms:
+
+	com.glassbox.hello/com.glassbox.hello.MainActivity/android.view.ViewRootImpl@1af6e82 (visibility=0)
+
+---PROFILEDATA---
+Flags,FrameTimelineVsyncId,IntendedVsync,Vsync,InputEventId,HandleInputStart,AnimationStart,PerformTraversalsStart,DrawStart,FrameDeadline,FrameInterval,FrameStartTime,SyncQueued,SyncStart,IssueDrawCommandsStart,SwapBuffers,FrameCompleted,DequeueBufferDuration,QueueBufferDuration,GpuCompleted,SwapBuffersCompleted,DisplayPresentTime,
+0,1097692,81016274387901,81016274387901,0,81016275392999,81016275400447,81016279783572,81016279927843,81016307721233,81016275381541,16666666,81016279983468,81016280356593,81016280628156,81016286899510,81016302471281,2205990,1117032,81016302471281,81016288785604,0,
+0,1097694,81016291007459,81016291007459,0,81016292299822,81016292307583,81016296686124,81016296817114,81016324340791,81016292289562,16666666,81016296871697,81016297234666,81016297469979,81016301918833,81016319000447,40416,959427,81016319000447,81016303634406,0,
+---PROFILEDATA---
+
+
+View hierarchy:
+
+  com.glassbox.hello/com.glassbox.hello.MainActivity/android.view.ViewRootImpl@1af6e82
+  7 views, 10.69 kB of render nodes
+
+
+Total ViewRootImpl   : 1
+Total attached Views : 7
+Total RenderNode     : 10.69 kB (used) / 43.23 kB (capacity)
+
+  ProcessConfig={0.8 470mcc1mnc [en_GB,es_ES] ldltr sw411dp w411dp h799dp 280dpi nrml long port night finger -keyb/v/h -nav/h winConfig={ mBounds=Rect(0, 0 - 720, 1560) mAppBounds=Rect(0, 65 - 720, 1476) mMaxBounds=Rect(0, 0 - 720, 1560) mWindowingMode=fullscreen mDisplayWindowingMode=fullscreen mActivityType=undefined mAlwaysOnTop=undefined mRotation=ROTATION_0 mPopOver=off mFreeformTaskPinningState=unpinned} s.1674 fontWeightAdjustment=0 ff=0 bf=0 bts=0 enb/d themeSeq=0}
+  Application ResourcesConfig={0.8 470mcc1mnc [en_GB,es_ES] ldltr sw411dp w411dp h799dp 280dpi nrml long port night finger -keyb/v/h -nav/h winConfig={ mBounds=Rect(0, 0 - 720, 1560) mAppBounds=Rect(0, 65 - 720, 1476) mMaxBounds=Rect(0, 0 - 720, 1560) mWindowingMode=fullscreen mDisplayWindowingMode=fullscreen mActivityType=undefined mAlwaysOnTop=undefined mRotation=ROTATION_0 mPopOver=off mFreeformTaskPinningState=unpinned} s.1674 fontWeightAdjustment=0 ff=0 bf=0 bts=0 enb/d themeSeq=0}

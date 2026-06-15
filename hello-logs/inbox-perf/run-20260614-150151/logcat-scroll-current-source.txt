@@ -1,0 +1,2 @@
+06-14 15:03:29.403 28781 28804 I .glassbox.hell: Explicit concurrent copying GC freed 5999KB AllocSpace bytes, 8(160KB) LOS objects, 49% free, 7968KB/15MB, paused 189us,139us total 183.725ms
+06-14 15:03:30.535  5423 29202 D ModernSamsungCoreService: applyPending()

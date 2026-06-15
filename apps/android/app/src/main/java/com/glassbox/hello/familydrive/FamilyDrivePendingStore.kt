@@ -21,7 +21,11 @@ class FamilyDrivePendingStore private constructor(context: Context) {
     }
 
     suspend fun getRetryable(itemId: String? = null): List<PendingDriveItem> = withContext(Dispatchers.IO) {
-        val retryableStatuses = setOf(PendingDriveStatus.PENDING_LOCAL, PendingDriveStatus.FAILED_RETRYABLE)
+        val retryableStatuses = setOf(
+            PendingDriveStatus.PENDING_LOCAL,
+            PendingDriveStatus.UPLOADING,
+            PendingDriveStatus.FAILED_RETRYABLE
+        )
         synchronized(lock) {
             val all = readAllLocked()
             if (itemId != null) {
@@ -70,6 +74,29 @@ class FamilyDrivePendingStore private constructor(context: Context) {
                 val nextCircleIds = item.selectedCircleIds.map { circleId -> circleIdMap[circleId] ?: circleId }
                 if (nextCircleIds == item.selectedCircleIds) item else item.copy(selectedCircleIds = nextCircleIds)
             }
+        }
+    }
+
+    suspend fun remapEventIds(eventIdMap: Map<String, String>) = mutate { existing ->
+        if (eventIdMap.isEmpty()) {
+            existing
+        } else {
+            existing.map { item ->
+                val nextEventId = item.eventId?.let { eventIdMap[it] ?: it }
+                if (nextEventId == item.eventId) item else item.copy(eventId = nextEventId)
+            }
+        }
+    }
+
+    suspend fun removeEventId(eventId: String) = mutate { existing ->
+        existing.map { item ->
+            if (item.eventId == eventId) item.copy(eventId = null, eventName = null) else item
+        }
+    }
+
+    suspend fun updateEventName(eventId: String, eventName: String) = mutate { existing ->
+        existing.map { item ->
+            if (item.eventId == eventId) item.copy(eventName = eventName) else item
         }
     }
 

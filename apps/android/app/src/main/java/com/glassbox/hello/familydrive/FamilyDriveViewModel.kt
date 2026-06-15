@@ -49,6 +49,8 @@ class FamilyDriveViewModel : ViewModel() {
     private val pageSize = 60
     private var pendingObserverJob: Job? = null
     private var pendingCirclesObserverJob: Job? = null
+    private var pendingEventsObserverJob: Job? = null
+    private var appContext: Context? = null
     private var activeUserId: String? = null
     private var activeCircleId: String? = null
     private var activeEventId: String? = null
@@ -64,13 +66,27 @@ class FamilyDriveViewModel : ViewModel() {
     }
 
     fun startPendingObserver(context: Context) {
-        if (pendingObserverJob != null && pendingCirclesObserverJob != null) return
+        appContext = context.applicationContext
+        if (pendingObserverJob != null && pendingCirclesObserverJob != null && pendingEventsObserverJob != null) return
         HelloDebugLog.d("DriveVm", "startPendingObserver")
         if (pendingObserverJob == null) {
             pendingObserverJob = viewModelScope.launch {
                 repository.observePendingUploads(context.applicationContext).collect { pending ->
                     HelloDebugLog.d("DriveVm", "pendingObserver update count=${pending.size}")
-                    _state.update { it.copy(pendingItems = pending) }
+                    _state.update { current ->
+                        val pendingCounts = pending.mapNotNull { it.eventId }.groupingBy { it }.eachCount()
+                        current.copy(
+                            pendingItems = pending,
+                            events = current.events.map { event ->
+                                val localCount = pendingCounts[event.id] ?: 0
+                                if (event.syncStatus != PendingDriveEventStatus.SYNCED || localCount > event.itemCount) {
+                                    event.copy(itemCount = maxOf(event.itemCount, localCount))
+                                } else {
+                                    event
+                                }
+                            }
+                        )
+                    }
                 }
             }
         }
@@ -91,11 +107,45 @@ class FamilyDriveViewModel : ViewModel() {
                 }
             }
         }
+        if (pendingEventsObserverJob == null) {
+            pendingEventsObserverJob = viewModelScope.launch {
+                FamilyDrivePendingEventStore.getInstance(context.applicationContext).observeActive().collect { pending ->
+                    val activeCircle = activeCircleId
+                    _state.update { current ->
+                        val remote = current.events.filter { it.syncStatus == PendingDriveEventStatus.SYNCED }
+                        val local = pending
+                            .filter { activeCircle.isNullOrBlank() || it.circleId == activeCircle }
+                            .map { event ->
+                                val itemCount = current.pendingItems.count { it.eventId == event.id }
+                                event.asDriveEvent().copy(itemCount = itemCount)
+                            }
+                        current.copy(
+                            events = (local + remote)
+                                .distinctBy { it.id }
+                                .sortedByDescending { it.updatedAt }
+                        )
+                    }
+                }
+            }
+        }
     }
 
     fun refresh(userId: String = activeUserId.orEmpty(), circleId: String? = activeCircleId, eventId: String? = activeEventId) {
         if (_state.value.isLoading || userId.isBlank()) return
         setScope(userId, circleId, eventId)
+        if (circleId?.startsWith("local_circle_") == true || eventId?.startsWith("local_event_") == true) {
+            _state.update {
+                it.copy(
+                    items = emptyList(),
+                    total = 0,
+                    nextCursor = null,
+                    hasMore = false,
+                    isLoading = false,
+                    error = null
+                )
+            }
+            return
+        }
         HelloDebugLog.d("DriveVm", "refresh userId=$userId circleId=$circleId eventId=$eventId")
         _state.update { it.copy(isLoading = true, error = null, nextCursor = null, hasMore = false) }
         viewModelScope.launch {
@@ -181,6 +231,7 @@ class FamilyDriveViewModel : ViewModel() {
 
     fun refreshDriveSetup(context: Context, userId: String, circleId: String? = activeCircleId) {
         if (userId.isBlank()) return
+        appContext = context.applicationContext
         HelloDebugLog.d("DriveVm", "refreshDriveSetup userId=$userId circleId=$circleId")
         setScope(userId, circleId, activeEventId)
         viewModelScope.launch {
@@ -192,11 +243,11 @@ class FamilyDriveViewModel : ViewModel() {
                     _state.update { it.copy(circles = uniqueCircles, activeCircleId = nextCircleId) }
                     if (!nextCircleId.isNullOrBlank()) {
                         val activeCircle = uniqueCircles.firstOrNull { it.id == nextCircleId }
+                        loadEvents(userId, nextCircleId)
                         if (activeCircle?.syncStatus == PendingDriveCircleStatus.SYNCED) {
-                            loadEvents(userId, nextCircleId)
                             loadDeletePolls(userId, nextCircleId)
                         } else {
-                            _state.update { state -> state.copy(events = emptyList(), deletePolls = emptyList(), activeEventId = null) }
+                            _state.update { state -> state.copy(deletePolls = emptyList()) }
                         }
                     } else {
                         _state.update { it.copy(deletePolls = emptyList(), events = emptyList(), activeEventId = null) }
@@ -214,10 +265,11 @@ class FamilyDriveViewModel : ViewModel() {
 
     fun loadEvents(userId: String = activeUserId.orEmpty(), circleId: String? = activeCircleId) {
         if (userId.isBlank()) return
+        val context = appContext ?: return
         activeCircleId = circleId?.ifBlank { null }
         _state.update { it.copy(activeCircleId = activeCircleId) }
         viewModelScope.launch {
-            repository.fetchEvents(userId, activeCircleId).fold(
+            repository.fetchEventsWithPending(context, userId, activeCircleId).fold(
                 onSuccess = { events ->
                     val nextEventId = activeEventId?.takeIf { id -> events.any { it.id == id } }
                     activeEventId = nextEventId
@@ -254,14 +306,14 @@ class FamilyDriveViewModel : ViewModel() {
         }
     }
 
-    fun createEvent(name: String, userId: String, circleId: String, onCreated: (DriveEvent) -> Unit = {}) {
+    fun createEvent(context: Context, name: String, userId: String, circleId: String, onCreated: (DriveEvent) -> Unit = {}) {
         val cleanName = name.trim()
         if (cleanName.isBlank()) {
             _state.update { it.copy(error = "Enter an event name") }
             return
         }
         viewModelScope.launch {
-            repository.createEvent(cleanName, userId, circleId).fold(
+            repository.createEvent(context.applicationContext, cleanName, userId, circleId).fold(
                 onSuccess = { event ->
                     activeCircleId = circleId
                     activeEventId = event.id
@@ -270,7 +322,12 @@ class FamilyDriveViewModel : ViewModel() {
                             events = (listOf(event) + current.events.filterNot { it.id == event.id }),
                             activeCircleId = circleId,
                             activeEventId = event.id,
-                            infoMessage = "Event created."
+                            infoMessage = if (event.syncStatus == PendingDriveEventStatus.SYNCED) {
+                                "Event created."
+                            } else {
+                                "Event saved locally. Waiting for PC."
+                            },
+                            error = null
                         )
                     }
                     onCreated(event)
@@ -280,14 +337,14 @@ class FamilyDriveViewModel : ViewModel() {
         }
     }
 
-    fun renameEvent(eventId: String, userId: String, name: String, onRenamed: (DriveEvent) -> Unit = {}) {
+    fun renameEvent(context: Context, eventId: String, userId: String, name: String, onRenamed: (DriveEvent) -> Unit = {}) {
         val cleanName = name.trim()
         if (cleanName.isBlank()) {
             _state.update { it.copy(error = "Enter an event name") }
             return
         }
         viewModelScope.launch {
-            repository.renameEvent(eventId, userId, cleanName).fold(
+            repository.renameEvent(context.applicationContext, eventId, userId, cleanName).fold(
                 onSuccess = { event ->
                     _state.update { current ->
                         current.copy(
@@ -304,9 +361,9 @@ class FamilyDriveViewModel : ViewModel() {
         }
     }
 
-    fun deleteEvent(eventId: String, userId: String, onDeleted: () -> Unit = {}) {
+    fun deleteEvent(context: Context, eventId: String, userId: String, onDeleted: () -> Unit = {}) {
         viewModelScope.launch {
-            repository.deleteEvent(eventId, userId).fold(
+            repository.deleteEvent(context.applicationContext, eventId, userId).fold(
                 onSuccess = {
                     if (activeEventId == eventId) activeEventId = null
                     _state.update {
@@ -368,11 +425,11 @@ class FamilyDriveViewModel : ViewModel() {
                             error = null
                         )
                     }
+                    loadEvents(userId, circle.id)
                     if (circle.syncStatus == PendingDriveCircleStatus.SYNCED) {
-                        loadEvents(userId, circle.id)
                         loadDeletePolls(userId, circle.id)
                     } else {
-                        _state.update { it.copy(events = emptyList(), deletePolls = emptyList(), activeEventId = null) }
+                        _state.update { it.copy(deletePolls = emptyList(), activeEventId = null) }
                     }
                     onCreated(circle)
                 },

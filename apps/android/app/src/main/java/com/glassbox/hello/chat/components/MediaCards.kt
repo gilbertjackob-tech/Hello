@@ -11,7 +11,6 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -45,6 +44,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
@@ -63,60 +63,61 @@ fun ImageCard(
     resolvedUrl: String,
     onOpenImage: (String, String) -> Unit,
     onDownload: (String, String?) -> Unit,
-    lightweight: Boolean = false
+    lightweight: Boolean = false,
+    frameColor: Color = HelloColors.PanelMuted,
+    frameBorderColor: Color = HelloColors.BubbleInBorder
 ) {
     var aspectRatio by remember(resolvedUrl) { mutableStateOf(4f / 3f) }
-    BoxWithConstraints {
-        val ratio = aspectRatio.coerceIn(0.62f, 1.9f)
-        Box(
+    val ratio = aspectRatio.coerceIn(0.62f, 1.9f)
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val imageRequest = remember(context, resolvedUrl, message.id) {
+        ImageRequest.Builder(context)
+            .data(resolvedUrl)
+            .decoderFactory(SvgDecoder.Factory())
+            .crossfade(false)
+            .allowHardware(true)
+            .size(640, 720)
+            .memoryCacheKey(message.id)
+            .diskCacheKey(message.id)
+            .build()
+    }
+    Box(
+        modifier = Modifier
+            .widthIn(min = 156.dp, max = 320.dp)
+            .heightIn(max = 360.dp)
+            .aspectRatio(ratio)
+            .clip(RoundedCornerShape(16.dp))
+            .background(frameColor)
+            .border(1.dp, frameBorderColor.copy(alpha = 0.72f), RoundedCornerShape(16.dp))
+    ) {
+        AsyncImage(
+            model = imageRequest,
+            contentDescription = message.attachmentName ?: "Image attachment",
+            contentScale = ContentScale.Fit,
+            onSuccess = { state ->
+                val drawable = state.result.drawable
+                val width = drawable.intrinsicWidth
+                val height = drawable.intrinsicHeight
+                if (width > 0 && height > 0) {
+                    aspectRatio = width.toFloat() / height.toFloat()
+                }
+            },
             modifier = Modifier
-                .widthIn(min = 156.dp, max = maxWidth)
-                .heightIn(max = 360.dp)
-                .aspectRatio(ratio)
-        ) {
-            if (lightweight) {
-                AttachmentPlaceholder(
-                    label = message.attachmentName ?: "Image",
-                    aspectRatio = ratio
-                )
-            } else {
-                AsyncImage(
-                    model = ImageRequest.Builder(androidx.compose.ui.platform.LocalContext.current)
-                        .data(resolvedUrl)
-                        .decoderFactory(SvgDecoder.Factory())
-                        .crossfade(false)
-                        .allowHardware(true)
-                        .memoryCacheKey(message.id)
-                        .diskCacheKey(message.id)
-                        .build(),
-                    contentDescription = message.attachmentName ?: "Image attachment",
-                    contentScale = ContentScale.Fit,
-                    onSuccess = { state ->
-                        val drawable = state.result.drawable
-                        val width = drawable.intrinsicWidth
-                        val height = drawable.intrinsicHeight
-                        if (width > 0 && height > 0) {
-                            aspectRatio = width.toFloat() / height.toFloat()
-                        }
-                    },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 120.dp, max = 360.dp)
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(Color(0xFF071219))
-                        .combinedClickable(onClick = { onOpenImage(resolvedUrl, message.attachmentName ?: "Image") }),
-                    placeholder = null,
-                    error = null
-                )
-            }
-            if (!lightweight) {
-                DownloadChip(
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(10.dp),
-                    onClick = { onDownload(resolvedUrl, message.attachmentName) }
-                )
-            }
+                .fillMaxWidth()
+                .heightIn(min = 120.dp, max = 360.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(HelloColors.PanelMuted)
+                .combinedClickable(onClick = { onOpenImage(resolvedUrl, message.attachmentName ?: "Image") }),
+            placeholder = null,
+            error = null
+        )
+        if (!lightweight) {
+            DownloadChip(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(10.dp),
+                onClick = { onDownload(resolvedUrl, message.attachmentName) }
+            )
         }
     }
 }
@@ -126,7 +127,9 @@ fun ImageCollageCard(
     messages: List<ChatModels.Message>,
     onOpenImage: (String, String) -> Unit,
     onDownload: (String, String?) -> Unit,
-    lightweight: Boolean = false
+    lightweight: Boolean = false,
+    frameColor: Color = HelloColors.PanelMuted,
+    frameBorderColor: Color = HelloColors.BubbleInBorder
 ) {
     val items = remember(messages) {
         messages.mapNotNull { message ->
@@ -136,84 +139,154 @@ fun ImageCollageCard(
         }
     }
     if (items.isEmpty()) return
-    val visibleItems = items.take(4)
-    if (lightweight) {
-        AttachmentPlaceholder(
-            label = buildString {
-                append(visibleItems.size)
-                append(if (visibleItems.size == 1) " image" else " images")
-            },
-            aspectRatio = 1.18f
-        )
-        return
-    }
+    val visibleItems = items.take(6)
+    val collageMatte = remember(frameColor) { lerp(HelloColors.GlassBgStrong, frameColor, 0.18f) }
+    val gutterColor = remember(frameColor) { lerp(HelloColors.GlassBgStrong, frameColor, 0.06f) }
     Box(
         modifier = Modifier
-            .widthIn(min = 180.dp, max = 320.dp)
-            .clip(RoundedCornerShape(28.dp))
-            .background(Color.White.copy(alpha = 0.86f))
-            .padding(6.dp)
+            .widthIn(min = 220.dp, max = 332.dp)
+            .clip(RoundedCornerShape(30.dp))
+            .background(collageMatte)
+            .border(1.dp, frameBorderColor.copy(alpha = 0.34f), RoundedCornerShape(30.dp))
+            .padding(8.dp)
     ) {
-        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-            val gap = 6.dp
-            val leftWide = (maxWidth - gap) * 0.58f
-            val rightNarrow = maxWidth - leftWide - gap
-            val halfWidth = (maxWidth - gap) / 2
+        val gap = 7.dp
+        Box(modifier = Modifier.fillMaxWidth()) {
             when (visibleItems.size) {
-                1 -> {
-                    val (message, resolvedUrl) = visibleItems.first()
-                    CollageImageTile(
-                        message = message,
-                        resolvedUrl = resolvedUrl,
-                        shape = RoundedCornerShape(24.dp),
-                        modifier = Modifier.fillMaxWidth().aspectRatio(1.22f),
-                        onOpenImage = onOpenImage
-                    )
+            1 -> {
+                val (message, resolvedUrl) = visibleItems.first()
+                CollageImageTile(
+                    message = message,
+                    resolvedUrl = resolvedUrl,
+                    shape = RoundedCornerShape(24.dp),
+                    modifier = Modifier.fillMaxWidth().aspectRatio(1.22f),
+                    onOpenImage = onOpenImage,
+                    surfaceColor = gutterColor
+                )
+            }
+            2 -> {
+                Row(horizontalArrangement = Arrangement.spacedBy(gap), modifier = Modifier.fillMaxWidth()) {
+                    val (firstMessage, firstUrl) = visibleItems[0]
+                    val (secondMessage, secondUrl) = visibleItems[1]
+                    CollageImageTile(firstMessage, firstUrl, RoundedCornerShape(topStart = 24.dp, topEnd = 18.dp, bottomStart = 22.dp, bottomEnd = 16.dp), Modifier.weight(1.44f).aspectRatio(0.88f), onOpenImage, surfaceColor = gutterColor)
+                    CollageImageTile(secondMessage, secondUrl, RoundedCornerShape(topStart = 18.dp, topEnd = 24.dp, bottomStart = 16.dp, bottomEnd = 22.dp), Modifier.weight(1f).aspectRatio(0.88f), onOpenImage, surfaceColor = gutterColor)
                 }
-                2 -> {
+            }
+            3 -> {
+                Column(verticalArrangement = Arrangement.spacedBy(gap), modifier = Modifier.fillMaxWidth()) {
+                    val (heroMessage, heroUrl) = visibleItems[0]
+                    CollageImageTile(heroMessage, heroUrl, RoundedCornerShape(24.dp), Modifier.fillMaxWidth().aspectRatio(1.52f), onOpenImage, surfaceColor = gutterColor)
                     Row(horizontalArrangement = Arrangement.spacedBy(gap), modifier = Modifier.fillMaxWidth()) {
-                        val (firstMessage, firstUrl) = visibleItems[0]
-                        val (secondMessage, secondUrl) = visibleItems[1]
-                        CollageImageTile(firstMessage, firstUrl, RoundedCornerShape(topStart = 24.dp, topEnd = 18.dp, bottomStart = 22.dp, bottomEnd = 16.dp), Modifier.width(leftWide).aspectRatio(0.92f), onOpenImage)
-                        CollageImageTile(secondMessage, secondUrl, RoundedCornerShape(topStart = 18.dp, topEnd = 24.dp, bottomStart = 16.dp, bottomEnd = 22.dp), Modifier.width(rightNarrow).aspectRatio(0.92f), onOpenImage)
+                        visibleItems.drop(1).forEachIndexed { index, entry ->
+                            val (message, resolvedUrl) = entry
+                            val shape = if (index == 0) {
+                                RoundedCornerShape(topStart = 18.dp, topEnd = 14.dp, bottomStart = 22.dp, bottomEnd = 14.dp)
+                            } else {
+                                RoundedCornerShape(topStart = 14.dp, topEnd = 18.dp, bottomStart = 14.dp, bottomEnd = 22.dp)
+                            }
+                            CollageImageTile(message, resolvedUrl, shape, Modifier.weight(1f).aspectRatio(1.08f), onOpenImage, surfaceColor = gutterColor)
+                        }
                     }
                 }
-                3 -> {
+            }
+            4 -> {
+                Row(horizontalArrangement = Arrangement.spacedBy(gap), modifier = Modifier.fillMaxWidth()) {
+                    val (heroMessage, heroUrl) = visibleItems[0]
+                    CollageImageTile(heroMessage, heroUrl, RoundedCornerShape(topStart = 24.dp, topEnd = 18.dp, bottomStart = 24.dp, bottomEnd = 18.dp), Modifier.weight(1.46f).aspectRatio(0.92f), onOpenImage, surfaceColor = gutterColor)
+                    Column(verticalArrangement = Arrangement.spacedBy(gap), modifier = Modifier.weight(1f)) {
+                        visibleItems.drop(1).forEachIndexed { index, entry ->
+                            val (message, resolvedUrl) = entry
+                            val extraCount = items.size - visibleItems.size
+                            CollageImageTile(
+                                message = message,
+                                resolvedUrl = resolvedUrl,
+                                shape = when (index) {
+                                    0 -> RoundedCornerShape(topStart = 18.dp, topEnd = 22.dp, bottomStart = 14.dp, bottomEnd = 14.dp)
+                                    1 -> RoundedCornerShape(14.dp)
+                                    else -> RoundedCornerShape(topStart = 14.dp, topEnd = 18.dp, bottomStart = 16.dp, bottomEnd = 24.dp)
+                                },
+                                modifier = Modifier.fillMaxWidth().aspectRatio(1.04f),
+                                onOpenImage = onOpenImage,
+                                surfaceColor = gutterColor,
+                                overlayLabel = if (index == 2 && extraCount > 0) "+$extraCount" else null
+                            )
+                        }
+                    }
+                }
+            }
+                5 -> {
                     Column(verticalArrangement = Arrangement.spacedBy(gap), modifier = Modifier.fillMaxWidth()) {
-                        val (heroMessage, heroUrl) = visibleItems[0]
-                        CollageImageTile(heroMessage, heroUrl, RoundedCornerShape(24.dp), Modifier.fillMaxWidth().aspectRatio(1.38f), onOpenImage)
                         Row(horizontalArrangement = Arrangement.spacedBy(gap), modifier = Modifier.fillMaxWidth()) {
-                            visibleItems.drop(1).forEachIndexed { index, entry ->
+                            visibleItems.take(2).forEachIndexed { index, entry ->
                                 val (message, resolvedUrl) = entry
-                                val shape = if (index == 0) {
-                                    RoundedCornerShape(topStart = 18.dp, topEnd = 14.dp, bottomStart = 22.dp, bottomEnd = 14.dp)
-                                } else {
-                                    RoundedCornerShape(topStart = 14.dp, topEnd = 18.dp, bottomStart = 14.dp, bottomEnd = 22.dp)
-                                }
-                                CollageImageTile(message, resolvedUrl, shape, Modifier.width(halfWidth).aspectRatio(1f), onOpenImage)
+                                CollageImageTile(
+                                    message = message,
+                                    resolvedUrl = resolvedUrl,
+                                    shape = if (index == 0) {
+                                        RoundedCornerShape(topStart = 24.dp, topEnd = 18.dp, bottomStart = 18.dp, bottomEnd = 14.dp)
+                                    } else {
+                                        RoundedCornerShape(topStart = 18.dp, topEnd = 24.dp, bottomStart = 14.dp, bottomEnd = 18.dp)
+                                    },
+                                    modifier = Modifier.weight(if (index == 0) 1.28f else 1f).aspectRatio(1.12f),
+                                    onOpenImage = onOpenImage,
+                                    surfaceColor = gutterColor
+                                )
+                            }
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(gap), modifier = Modifier.fillMaxWidth()) {
+                            visibleItems.drop(2).forEachIndexed { index, entry ->
+                                val (message, resolvedUrl) = entry
+                                CollageImageTile(
+                                    message = message,
+                                    resolvedUrl = resolvedUrl,
+                                    shape = when (index) {
+                                        0 -> RoundedCornerShape(topStart = 18.dp, topEnd = 14.dp, bottomStart = 24.dp, bottomEnd = 16.dp)
+                                        1 -> RoundedCornerShape(14.dp)
+                                        else -> RoundedCornerShape(topStart = 14.dp, topEnd = 18.dp, bottomStart = 16.dp, bottomEnd = 24.dp)
+                                    },
+                                    modifier = Modifier.weight(1f).aspectRatio(0.88f),
+                                    onOpenImage = onOpenImage,
+                                    surfaceColor = gutterColor
+                                )
                             }
                         }
                     }
                 }
                 else -> {
-                    Row(horizontalArrangement = Arrangement.spacedBy(gap), modifier = Modifier.fillMaxWidth()) {
-                        val (heroMessage, heroUrl) = visibleItems[0]
-                        CollageImageTile(heroMessage, heroUrl, RoundedCornerShape(topStart = 24.dp, topEnd = 18.dp, bottomStart = 24.dp, bottomEnd = 18.dp), Modifier.width(leftWide).aspectRatio(0.96f), onOpenImage)
-                        Column(verticalArrangement = Arrangement.spacedBy(gap), modifier = Modifier.width(rightNarrow)) {
-                            visibleItems.drop(1).forEachIndexed { index, entry ->
+                    val overflow = items.size - visibleItems.size
+                    Column(verticalArrangement = Arrangement.spacedBy(gap), modifier = Modifier.fillMaxWidth()) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(gap), modifier = Modifier.fillMaxWidth()) {
+                            visibleItems.take(3).forEachIndexed { index, entry ->
                                 val (message, resolvedUrl) = entry
-                                val extraCount = items.size - visibleItems.size
                                 CollageImageTile(
                                     message = message,
                                     resolvedUrl = resolvedUrl,
                                     shape = when (index) {
-                                        0 -> RoundedCornerShape(topStart = 18.dp, topEnd = 22.dp, bottomStart = 14.dp, bottomEnd = 14.dp)
-                                        1 -> RoundedCornerShape(14.dp)
-                                        else -> RoundedCornerShape(topStart = 14.dp, topEnd = 18.dp, bottomStart = 16.dp, bottomEnd = 24.dp)
+                                        0 -> RoundedCornerShape(topStart = 24.dp, topEnd = 18.dp, bottomStart = 16.dp, bottomEnd = 14.dp)
+                                        1 -> RoundedCornerShape(18.dp)
+                                        else -> RoundedCornerShape(topStart = 18.dp, topEnd = 24.dp, bottomStart = 14.dp, bottomEnd = 16.dp)
                                     },
-                                    modifier = Modifier.fillMaxWidth().aspectRatio(1.08f),
+                                    modifier = Modifier.weight(if (index == 1) 1.08f else 1f).aspectRatio(if (index == 1) 0.94f else 0.88f),
                                     onOpenImage = onOpenImage,
-                                    overlayLabel = if (index == 2 && extraCount > 0) "+$extraCount" else null
+                                    surfaceColor = gutterColor
+                                )
+                            }
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(gap), modifier = Modifier.fillMaxWidth()) {
+                            visibleItems.drop(3).forEachIndexed { index, entry ->
+                                val (message, resolvedUrl) = entry
+                                CollageImageTile(
+                                    message = message,
+                                    resolvedUrl = resolvedUrl,
+                                    shape = when (index) {
+                                        0 -> RoundedCornerShape(topStart = 16.dp, topEnd = 14.dp, bottomStart = 24.dp, bottomEnd = 16.dp)
+                                        1 -> RoundedCornerShape(topStart = 14.dp, topEnd = 18.dp, bottomStart = 18.dp, bottomEnd = 14.dp)
+                                        else -> RoundedCornerShape(topStart = 14.dp, topEnd = 20.dp, bottomStart = 16.dp, bottomEnd = 24.dp)
+                                    },
+                                    modifier = Modifier.weight(1f).aspectRatio(0.88f),
+                                    onOpenImage = onOpenImage,
+                                    surfaceColor = gutterColor,
+                                    overlayLabel = if (index == 2 && overflow > 0) "+$overflow" else null
                                 )
                             }
                         }
@@ -221,7 +294,7 @@ fun ImageCollageCard(
                 }
             }
         }
-        if (!lightweight) {
+        if (!lightweight && items.size == 1) {
             DownloadChip(
                 modifier = Modifier.align(Alignment.TopEnd).padding(10.dp),
                 onClick = {
@@ -240,22 +313,29 @@ private fun CollageImageTile(
     shape: RoundedCornerShape,
     modifier: Modifier,
     onOpenImage: (String, String) -> Unit,
+    surfaceColor: Color,
     overlayLabel: String? = null
 ) {
-    Box(modifier = modifier.clip(shape).background(Color(0xFF071219))) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val imageRequest = remember(context, resolvedUrl, message.id) {
+        ImageRequest.Builder(context)
+            .data(resolvedUrl)
+            .decoderFactory(SvgDecoder.Factory())
+            .crossfade(false)
+            .allowHardware(true)
+            .size(420, 420)
+            .memoryCacheKey(message.id)
+            .diskCacheKey(message.id)
+            .build()
+    }
+    Box(modifier = modifier.clip(shape).background(surfaceColor)) {
         AsyncImage(
-            model = ImageRequest.Builder(androidx.compose.ui.platform.LocalContext.current)
-                .data(resolvedUrl)
-                .decoderFactory(SvgDecoder.Factory())
-                .crossfade(false)
-                .allowHardware(true)
-                .memoryCacheKey(message.id)
-                .diskCacheKey(message.id)
-                .build(),
+            model = imageRequest,
             contentDescription = message.attachmentName ?: "Image attachment",
             contentScale = ContentScale.Crop,
             modifier = Modifier
                 .fillMaxSize()
+                .clip(shape)
                 .combinedClickable(onClick = { onOpenImage(resolvedUrl, message.attachmentName ?: "Image") }),
             placeholder = null,
             error = null
@@ -419,36 +499,38 @@ fun VideoCard(
     resolvedUrl: String,
     onOpen: (String) -> Unit,
     onDownload: (String, String?) -> Unit,
-    lightweight: Boolean = false
+    lightweight: Boolean = false,
+    frameColor: Color = HelloColors.PanelMuted,
+    frameBorderColor: Color = HelloColors.BubbleInBorder
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val imageRequest = remember(context, resolvedUrl, message.id) {
+        ImageRequest.Builder(context)
+            .data(resolvedUrl)
+            .crossfade(false)
+            .allowHardware(true)
+            .size(640, 360)
+            .memoryCacheKey(message.id)
+            .diskCacheKey(message.id)
+            .build()
+    }
     Box(
         modifier = Modifier
             .widthIn(min = 180.dp, max = 340.dp)
             .aspectRatio(16f / 9f)
             .clip(RoundedCornerShape(18.dp))
-            .background(Color.Black.copy(alpha = 0.32f))
-            .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(18.dp))
+            .background(frameColor)
+            .border(1.dp, frameBorderColor.copy(alpha = 0.72f), RoundedCornerShape(18.dp))
             .combinedClickable(onClick = { onOpen(resolvedUrl) })
     ) {
-        if (lightweight) {
-            AttachmentPlaceholder(
-                label = message.attachmentName ?: "Video",
-                aspectRatio = 16f / 9f
-            )
-        } else {
-            AsyncImage(
-                model = ImageRequest.Builder(androidx.compose.ui.platform.LocalContext.current)
-                    .data(resolvedUrl)
-                    .crossfade(false)
-                    .allowHardware(true)
-                    .memoryCacheKey(message.id)
-                    .diskCacheKey(message.id)
-                    .build(),
-                contentDescription = message.attachmentName ?: "Video attachment",
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize()
-            )
-        }
+        AsyncImage(
+            model = imageRequest,
+            contentDescription = message.attachmentName ?: "Video attachment",
+            contentScale = ContentScale.Crop,
+            modifier = Modifier
+                .fillMaxSize()
+                .background(HelloColors.PanelMuted)
+        )
         Box(
             modifier = Modifier
                 .align(Alignment.Center)

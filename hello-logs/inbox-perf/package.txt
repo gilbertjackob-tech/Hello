@@ -1,0 +1,6 @@
+    versionCode=1 minSdk=24 targetSdk=36
+    versionName=1.0
+    flags=[ DEBUGGABLE HAS_CODE ALLOW_CLEAR_USER_DATA ALLOW_BACKUP ]
+    firstInstallTime=2026-06-11 18:07:06
+    lastUpdateTime=2026-06-14 14:35:50
+    pkgFlags=[ DEBUGGABLE HAS_CODE ALLOW_CLEAR_USER_DATA ALLOW_BACKUP ]

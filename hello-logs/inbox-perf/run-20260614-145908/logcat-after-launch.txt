@@ -1,0 +1,2 @@
+06-14 14:59:08.756  1649  2188 W ActivityManager: Invalid packageName: com.glassbox.hello
+06-14 14:59:09.383  1649  2188 I ActivityTaskManager: START u0 {flg=0x10000000 cmp=com.glassbox.hello/.MainActivity} from uid 2000

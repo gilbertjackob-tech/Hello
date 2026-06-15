@@ -8,7 +8,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -53,6 +52,9 @@ fun ChatMessageBubble(
     onDownloadAttachment: (String, String?) -> Unit,
     bubbleOpacity: Float,
     imageCluster: List<ChatModels.Message>? = null,
+    timestampLabel: String,
+    reactionSummary: ReactionSummary? = null,
+    lightweightMedia: Boolean = false,
     scrollInProgress: Boolean = false,
     modifier: Modifier = Modifier,
     showSenderName: Boolean = false,
@@ -78,6 +80,9 @@ fun ChatMessageBubble(
         isOwn -> HelloColors.BubbleOutBorder
         else -> HelloColors.BubbleInBorder
     }
+    val isImageCluster = !imageCluster.isNullOrEmpty()
+    val shellColor = if (isImageCluster) Color.Transparent else bubbleColor
+    val shellBorder = if (isImageCluster) Color.Transparent else bubbleBorder
     val bubbleShape = messageBubbleShape(isOwn, compactWithPrevious, compactWithNext)
     val bubbleShadow = when {
         isStickerMessage(message.text) -> 0.dp
@@ -96,8 +101,6 @@ fun ChatMessageBubble(
         )
     }
 
-    val timestampLabel = remember(message.timestamp) { formatTimestamp(message.timestamp) }
-
     Box(
         modifier = modifier
             .fillMaxWidth()
@@ -115,9 +118,7 @@ fun ChatMessageBubble(
         ) {
             Column(
                 modifier = Modifier
-                    .fillMaxWidth(0.82f)
-                    .widthIn(max = 340.dp)
-                    .wrapContentWidth(if (isOwn) Alignment.End else Alignment.Start),
+                    .widthIn(max = 340.dp),
                 horizontalAlignment = if (isOwn) Alignment.End else Alignment.Start
             ) {
                 if (showSenderName && !isOwn) {
@@ -133,10 +134,13 @@ fun ChatMessageBubble(
                     modifier = Modifier
                         .then(if (bubbleShadow > 0.dp) Modifier.shadow(bubbleShadow, bubbleShape, ambientColor = HelloColors.Accent.copy(alpha = 0.12f)) else Modifier)
                         .clip(bubbleShape)
-                        .background(bubbleColor)
-                        .border(1.2.dp, bubbleBorder, bubbleShape)
+                        .background(shellColor)
+                        .border(1.2.dp, shellBorder, bubbleShape)
                         .then(interactionModifier)
-                        .padding(horizontal = 12.dp, vertical = 10.dp)
+                        .padding(
+                            horizontal = if (isImageCluster) 0.dp else 12.dp,
+                            vertical = if (isImageCluster) 0.dp else 10.dp
+                        )
                 ) {
                     Column {
                         if (!scrollInProgress) {
@@ -147,11 +151,14 @@ fun ChatMessageBubble(
                             message = message,
                             isOwn = isOwn,
                             textColor = contentColor,
+                            bubbleColor = bubbleColor,
+                            bubbleBorder = bubbleBorder,
+                            timestampLabel = timestampLabel,
                             onOpenAttachment = onOpenAttachment,
                             onOpenImage = onOpenImage,
                             onDownloadAttachment = onDownloadAttachment,
                             imageCluster = imageCluster,
-                            scrollInProgress = scrollInProgress
+                            lightweightMedia = lightweightMedia
                         )
                         MessageMeta(
                             message = message,
@@ -163,7 +170,7 @@ fun ChatMessageBubble(
                     }
                 }
                 if (!scrollInProgress) {
-                    ReactionStrip(message.reactions.orEmpty())
+                    ReactionStrip(reactionSummary)
                 }
             }
         }
@@ -233,11 +240,14 @@ private fun MessageBody(
     message: ChatModels.Message,
     isOwn: Boolean,
     textColor: Color,
+    bubbleColor: Color,
+    bubbleBorder: Color,
+    timestampLabel: String,
     onOpenAttachment: (String) -> Unit,
     onOpenImage: (String, String) -> Unit,
     onDownloadAttachment: (String, String?) -> Unit,
     imageCluster: List<ChatModels.Message>? = null,
-    scrollInProgress: Boolean = false
+    lightweightMedia: Boolean = false
 ) {
     val resolved = remember(message.attachmentUrl) { normalizeAttachmentUrl(message.attachmentUrl) }
     val resolvedAttachmentKind = remember(message.attachmentType, message.attachmentName, message.attachmentUrl) {
@@ -264,7 +274,12 @@ private fun MessageBody(
     }
 
     if (message.callInfo != null || message.messageType == "call_log") {
-        CallSummaryCard(message = message, isOwn = isOwn, textColor = textColor)
+        CallSummaryCard(
+            message = message,
+            isOwn = isOwn,
+            textColor = textColor,
+            timestampLabel = timestampLabel
+        )
         return
     }
 
@@ -279,13 +294,15 @@ private fun MessageBody(
             messages = imageCluster,
             onOpenImage = onOpenImage,
             onDownload = onDownloadAttachment,
-            lightweight = scrollInProgress
+            lightweight = lightweightMedia,
+            frameColor = bubbleColor.copy(alpha = 0.94f),
+            frameBorderColor = bubbleBorder
         )
     } else if (!resolved.isNullOrBlank()) {
         when (resolvedAttachmentKind) {
-            "image" -> ImageCard(message, resolved, onOpenImage, onDownloadAttachment, lightweight = scrollInProgress)
-            "audio" -> AudioCard(message, resolved, onDownloadAttachment, lightweight = scrollInProgress)
-            "video" -> VideoCard(message, resolved, onOpenAttachment, onDownloadAttachment, lightweight = scrollInProgress)
+            "image" -> ImageCard(message, resolved, onOpenImage, onDownloadAttachment, lightweightMedia, bubbleColor.copy(alpha = 0.94f), bubbleBorder)
+            "audio" -> AudioCard(message, resolved, onDownloadAttachment, lightweightMedia)
+            "video" -> VideoCard(message, resolved, onOpenAttachment, onDownloadAttachment, lightweightMedia, bubbleColor.copy(alpha = 0.94f), bubbleBorder)
             else -> FileCard(message, resolved, onOpenAttachment, onDownloadAttachment)
         }
     }
@@ -310,7 +327,8 @@ private fun MessageBody(
 private fun CallSummaryCard(
     message: ChatModels.Message,
     isOwn: Boolean,
-    textColor: Color
+    textColor: Color,
+    timestampLabel: String
 ) {
     val callInfo = message.callInfo
     val accent = if (callInfo?.status.equals("missed", ignoreCase = true)) HelloColors.DarkDanger else HelloColors.DarkAccentStrong
@@ -342,11 +360,7 @@ private fun CallSummaryCard(
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.SemiBold
                 )
-                val detail = when {
-                    callInfo?.startedAt != null -> formatTimestamp(callInfo.startedAt)
-                    message.timestamp > 0L -> formatTimestamp(message.timestamp)
-                    else -> ""
-                }
+                val detail = timestampLabel
                 if (detail.isNotBlank()) {
                     Text(
                         text = detail,
@@ -406,9 +420,8 @@ private fun MessageMeta(
 }
 
 @Composable
-private fun ReactionStrip(reactions: List<ChatModels.Reaction>) {
-    if (reactions.isEmpty()) return
-    val grouped = reactions.groupBy { it.emoji }.entries.sortedByDescending { it.value.size }
+private fun ReactionStrip(summary: ReactionSummary?) {
+    if (summary == null) return
     Row(
         modifier = Modifier
             .padding(top = 3.dp, start = 8.dp, end = 8.dp)
@@ -419,10 +432,10 @@ private fun ReactionStrip(reactions: List<ChatModels.Reaction>) {
         horizontalArrangement = Arrangement.spacedBy(4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        grouped.take(4).forEach { entry ->
-            Text(entry.key, style = MaterialTheme.typography.bodySmall)
+        summary.emojis.forEach { emoji ->
+            Text(emoji, style = MaterialTheme.typography.bodySmall)
         }
-        Text(reactions.size.toString(), color = HelloColors.DarkTextMuted, style = MaterialTheme.typography.labelSmall)
+        Text(summary.totalCount.toString(), color = HelloColors.DarkTextMuted, style = MaterialTheme.typography.labelSmall)
     }
 }
 

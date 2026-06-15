@@ -152,7 +152,6 @@ class CallViewModel(
             socketManager.disconnect()
         } else {
             addDebug("ANDROID: switching signaling transport to cloud socket")
-            socketManager.disconnect()
         }
         socketManager = CallSignalingClient(context.applicationContext).also { cloudSocket ->
             cloudSocket.onConnectedChanged = { connected ->

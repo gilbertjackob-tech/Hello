@@ -1,0 +1,169 @@
+06-14 15:01:51.240  1649  2437 I ActivityManager: Force stopping com.glassbox.hello appid=10514 user=0: from pid 28764
+06-14 15:01:51.256  1649  1649 D SamsungAlarmManager: Remove alarm for next reason : android.intent.action.PACKAGE_RESTARTED : package: com.glassbox.hello
+06-14 15:01:51.258  1649  1863 W BroadcastQueue: Background execution not allowed: receiving Intent { act=android.intent.action.PACKAGE_RESTARTED dat=package:com.glassbox.hello flg=0x10 (has extras) } to android/com.kddi.android.CpaNotiReceiver
+06-14 15:01:51.818  1649  2437 I ActivityTaskManager: START u0 {flg=0x10000000 cmp=com.glassbox.hello/.MainActivity} from uid 2000
+06-14 15:01:51.830  1649  2437 D ActivityTaskManager: TaskLaunchParamsModifier:task=null activity=ActivityRecord{d7c0356 u0 com.glassbox.hello/.MainActivity display-id=0 display-windowing-mode=1 suggested-display-area=DefaultTaskDisplayArea@56119556
+06-14 15:01:51.830  1649  2437 D [secipm]: mSecIpmManager Preload com.glassbox.hello dex files
+06-14 15:01:51.834  1649  2437 D ActivityTaskManager: TaskLaunchParamsModifier:task=null activity=ActivityRecord{d7c0356 u0 com.glassbox.hello/.MainActivity t-1} display-id=0 display-windowing-mode=1 suggested-display-area=DefaultTaskDisplayArea@56119556 non-freeform-display display-area=DefaultTaskDisplayArea@56119556 maximized-bounds
+06-14 15:01:51.842  1649  2437 D ActivityTaskManager: TaskLaunchParamsModifier:task=Task{3d9273 #3725 type=standard A=10514:com.glassbox.hello U=0 visible=false mode=fullscreen translucent=true sz=0} activity=ActivityRecord{d7c0356 u0 com.glassbox.hello/.MainActivity t-1} display-from-task=0 display-id=0 display-windowing-mode=1 suggested-display-area=DefaultTaskDisplayArea@56119556 non-freeform-display display-area=DefaultTaskDisplayArea@56119556 maximized-bounds
+06-14 15:01:51.843  1649  3342 D PkgPredictorService-IpmAdcpController: create a new DexPreloadTask pkg:com.glassbox.hello  path:/data/app/~~D6cJkzO5Teorc9Gb5OedoA==/com.glassbox.hello-rzebTX_WRzbRcMhob9aDPQ==
+06-14 15:01:51.848  1059  3828 I SurfaceFlinger: id=7263 createSurf (0x0),-1 flag=80004, ActivityRecord{d7c0356 u0 com.glassbox.hello/.MainActivity t3725}#0
+06-14 15:01:51.869  2346  2495 D StartingSurfaceDrawer: addSplashScreen com.glassbox.hello theme=7f11022d task=3725 suggestType=3
+06-14 15:01:51.906  1059  1457 I SurfaceFlinger: id=7264 createSurf (0x0),-1 flag=80004, 92b883a Splash Screen com.glassbox.hello#0
+06-14 15:01:51.911  1649  4022 D MARsPolicyManager: onPackageResumedFG pkgName = com.glassbox.hello, userId = 0
+06-14 15:01:51.934  1649  4022 D WindowManager: rotationForOrientation, orientationSource=ActivityRecord{d7c0356 u0 com.glassbox.hello/.MainActivity t3725}
+06-14 15:01:51.934  1649  1864 I ActivityManager: Start proc 28781:com.glassbox.hello/u0a514 for pre-top-activity {com.glassbox.hello/com.glassbox.hello.MainActivity}
+06-14 15:01:51.934  1649  1864 D ActivityManager: [SecIpm] it's a ML_TYPE_EMPTYPROCESS protected process com.glassbox.hello
+06-14 15:01:51.938  1649  4018 V WindowManager: Relayout Window{92b883a u0 Splash Screen com.glassbox.hello}: viewVisibility=0 req=720x1560 d0
+06-14 15:01:51.940  1059  1457 I SurfaceFlinger: id=7265 createSurf (720x1560),-3 flag=40004, Splash Screen com.glassbox.hello$_2346#0
+06-14 15:01:51.941  1649  4018 D WindowManager: makeSurface duration=3 name=Splash Screen com.glassbox.hello$_2346
+06-14 15:01:51.950  1649  4018 D WindowManager: rotationForOrientation, orientationSource=ActivityRecord{d7c0356 u0 com.glassbox.hello/.MainActivity t3725}
+06-14 15:01:52.000  1649  4018 D WindowManager: finishDrawingWindow: Window{92b883a u0 Splash Screen com.glassbox.hello} mDrawState=DRAW_PENDING
+06-14 15:01:52.025 28781 28781 E USNET   : USNET: appName: com.glassbox.hello
+06-14 15:01:52.068  1649  4022 I ActivityManager: DSS OFF for com.glassbox.hello
+06-14 15:01:52.072  2346  2495 D InsetsSourceConsumer: ensureControlAlpha: for ITYPE_NAVIGATION_BAR on Splash Screen com.glassbox.hello
+06-14 15:01:52.073  2346  2495 D InsetsSourceConsumer: ensureControlAlpha: for ITYPE_STATUS_BAR on Splash Screen com.glassbox.hello
+06-14 15:01:52.077  1649  4022 D ActivityManager: attachApplicationLocked() app=ProcessRecord{ed4e2cf 28781:com.glassbox.hello/u0a514} app.isolatedEntryPoint=null instr2=null
+06-14 15:01:52.081  1649  4022 D WindowManager: rotationForOrientation, orientationSource=ActivityRecord{d7c0356 u0 com.glassbox.hello/.MainActivity t3725}
+06-14 15:01:52.094  1059  1059 D SurfaceFlinger:      DEVICE | 0xf27c6630 | 0100 | RGBA_8888    |    0.0    0.0  720.0 1560.0 |   45   97  675 1463 | Splash Screen com.glassbox.hello$_2346#0
+06-14 15:01:52.098  1649  4022 D SGM:PkgDataHelper: notifyAppCreate(), pkgName: com.glassbox.hello, userId: 0, sendRet: true
+06-14 15:01:52.098  1649  2205 D SGM:GameManager: onLooperPrepared(), msg: MSG_APP_CREATE, pkgName: com.glassbox.hello, userId: 0
+06-14 15:01:52.099  1649  4022 D MARsPolicyManager: onPackageResumedFG pkgName = com.glassbox.hello, userId = 0
+06-14 15:01:52.102  1649  4022 D SGM:GameManager:   sendRunningComponentFocus(), pkgName: com.glassbox.hello, userId: 0
+06-14 15:01:52.102  1649  2205 D SGM:GameManager: onLooperPrepared(), msg: MSG_TASK_FOCUSED, pkgName: com.glassbox.hello, userId: 0
+06-14 15:01:52.102  1649  2205 D SGM:GameManager:   handleTaskFocused(), pkgName: com.glassbox.hello, userID:0
+06-14 15:01:52.102  1649  2205 D SGM:GameManager:   handleResume(). pkgName: com.glassbox.hello, userId: 0, isTunableApp: null
+06-14 15:01:52.102  1649  2205 D SGM:GameManager: notifyFocusInOut(). of pkg: com.glassbox.hello, type: 4, isMinimized: false, isTunableApp: false, userId: 0
+06-14 15:01:52.105  1649  2204 V ActivityManager: Changed top to ProcessRecord{ed4e2cf 28781:com.glassbox.hello/u0a514}
+06-14 15:01:52.114 28781 28781 D ActivityThread: handleBindApplication()++ app=com.glassbox.hello
+06-14 15:01:52.123  1649  1824 I GameSDK@LifeCycle: noteResumeComponent(): package name  : com.glassbox.hello
+06-14 15:01:52.136  1649  2793 D SGM:GameManager: identifyForegroundApp. com.glassbox.hello, mCurrentUserId: 0, callerUserId: 0
+06-14 15:01:52.136  1649  2793 D SGM:PkgDataHelper: getGamePkgData(). com.glassbox.hello
+06-14 15:01:52.137  1649  4020 D SGM:GameManager: identifyGamePackage. com.glassbox.hello, mCurrentUserId: 0, callerUserId: 0, callingMethodInfo: com.samsung.android.game.IGameManagerService$Stub.onTransact(IGameManagerService.java:242)
+06-14 15:01:52.137  1649  4020 D SGM:PkgDataHelper: getGamePkgData(). com.glassbox.hello
+06-14 15:01:52.140  6494  6494 I Utils   : HomePackage : com.sec.android.app.launcher, resumePackageName : com.glassbox.hello
+06-14 15:01:52.140  1649  1824 D SGM:GameManager: identifyGamePackage. com.glassbox.hello, mCurrentUserId: 0, callerUserId: 0, callingMethodInfo: com.android.server.ssrm.fgapps.GameAppUtils.isGame(GameAppUtils.java:84)
+06-14 15:01:52.140  1649  1824 D SGM:PkgDataHelper: getGamePkgData(). com.glassbox.hello
+06-14 15:01:52.140  1649  1824 D SGM:GameManager: noteResumeComponent(), received pkgName: com.glassbox.hello, userId: 0
+06-14 15:01:52.141  1649  2205 D SGM:GameManager: onLooperPrepared(), msg: MSG_APP_RESUME, pkgName: com.glassbox.hello, userid: 0
+06-14 15:01:52.145  1649  1824 D SGM:GameManager: identifyGamePackage. com.glassbox.hello, mCurrentUserId: 0, callerUserId: 0, callingMethodInfo: com.samsung.android.game.SemGameManager.isGamePackage(SemGameManager.java:104)
+06-14 15:01:52.145  1649  1824 D SGM:PkgDataHelper: getGamePkgData(). com.glassbox.hello
+06-14 15:01:52.145  1649  1824 D SGM:SemGameManager: isGamePackage(), pkgName=com.glassbox.hello, ret=false
+06-14 15:01:52.248  1649  2392 D MdnieScenarioControlService:  packageName : com.glassbox.hello    className : com.glassbox.hello.MainActivity
+06-14 15:01:52.410  1059  1059 D SurfaceFlinger:      DEVICE | 0xf27c6630 | 0100 | RGBA_8888    |    0.0    0.0  720.0 1560.0 |    0    0  720 1560 | Splash Screen com.glassbox.hello$_2346#0
+06-14 15:01:52.721  1649  2283 W SemWifiTransportLayerUtils: getApplicationCategory - IOException com.glassbox.hello
+06-14 15:01:52.721  1649  2283 W System.err: java.io.FileNotFoundException: https://play.google.com/store/apps/details?id=com.glassbox.hello&hl=en
+06-14 15:01:55.087 28781 28781 D nativeloader: Configuring clns-4 for other apk /data/app/~~D6cJkzO5Teorc9Gb5OedoA==/com.glassbox.hello-rzebTX_WRzbRcMhob9aDPQ==/base.apk. target_sdk_version=36, uses_libraries=, library_path=/data/app/~~D6cJkzO5Teorc9Gb5OedoA==/com.glassbox.hello-rzebTX_WRzbRcMhob9aDPQ==/lib/arm:/data/app/~~D6cJkzO5Teorc9Gb5OedoA==/com.glassbox.hello-rzebTX_WRzbRcMhob9aDPQ==/base.apk!/lib/armeabi-v7a, permitted_path=/data:/mnt/expand:/data/user/0/com.glassbox.hello
+06-14 15:01:55.111 28781 28781 V GraphicsEnvironment: ANGLE Developer option for 'com.glassbox.hello' set to: 'default'
+06-14 15:01:55.116 28781 28781 D LoadedApk: LoadedApk::makeApplication() appContext.mOpPackageName=com.glassbox.hello appContext.mBasePackageName=com.glassbox.hello
+06-14 15:01:55.741  1649  2823 D PackageManager: setEnabledSetting : userId = 0 packageName = com.glassbox.hello cmp = androidx.work.impl.background.systemjob.SystemJobService newState = 1 callingPackage = 10514/com.glassbox.hello
+06-14 15:01:56.225  1059  1094 I SurfaceFlinger: id=7270 createSurf (0x0),-1 flag=80004, 7634e7d com.glassbox.hello/com.glassbox.hello.MainActivity#0
+06-14 15:01:59.791  1649  2121 D OverlayManager: reconcileSettingsForPackage pkgName=com.glassbox.hello userId=0
+06-14 15:01:59.792  1649  2121 I OverlayManager: updateOverlaysForTarget() called with: targetPackage = [com.glassbox.hello], userId = [0], flags = [0], skipUpdateState = [true]
+06-14 15:01:59.794  1649  1821 D CompanionDeviceManagerService: onPackageModified(packageName = com.glassbox.hello)
+06-14 15:01:59.820  2346  2346 D FaceWidgetMetadataParser: updatePackage() com.glassbox.hello false
+06-14 15:01:59.821  2346  2346 D FaceWidgetMetadataParser: removePackage() key = com.glassbox.hello
+06-14 15:01:59.826  2323  2323 D ImsResolver: maybeAddedImsService, packageName: com.glassbox.hello
+06-14 15:01:59.916  2735  2855 I PackageUpdatedTask: mAllAppsList.updatePackage com.glassbox.hello
+06-14 15:01:59.948  2735  2855 I AppIconSolution: getThemeIconWithBG called with public API, pkg = com.glassbox.hello
+06-14 15:01:59.949  2735  2855 I AppIconSolution: start to load, pkg=com.glassbox.hello, bg=192-192, dr=144-144, forDefault=true, density=480
+06-14 15:01:59.950  2735  2855 I AppIconSolution: getIconScale, pkg=com.glassbox.hello, size=144, iconScale=IconScale[alpha=0, scale=1.0, isCrop=true]
+06-14 15:01:59.956  2735  2855 I AppIconSolution: default container[CROP], pkg=com.glassbox.hello, bg=144-144, dr=144-144, isNight = true
+06-14 15:01:59.963  2735  2855 I LauncherActivityInfo: packageName: com.glassbox.hello, useThemeIcon: false, height: 144, width: 144, density: 480
+06-14 15:02:00.050  2735  2855 I PackageUpdatedTask: modified, appInfo : AppInfo(id=374 type=APP hidden=0 container=all_apps screen=1 rank=0 rankOfList=-1 user=UserHandle{0} title=Hello componentName=ComponentInfo{com.glassbox.hello/com.glassbox.hello.MainActivity} screenType=0)
+06-14 15:02:00.193  2346  2346 W Looper  : Slow dispatch took 110ms main h=android.view.Choreographer$FrameHandler c=android.view.Choreographer$FrameDisplayEventReceiver@d6aa8a m=0
+06-14 15:02:00.195  1649  4020 D SGM:GameManager: identifyForegroundApp. com.glassbox.hello, mCurrentUserId: 0, callerUserId: 0
+06-14 15:02:00.195  1649  4020 D SGM:PkgDataHelper: getGamePkgData(). com.glassbox.hello
+06-14 15:02:00.296  2346  2346 W Looper  : Slow delivery took 20ms main h=android.view.Choreographer$FrameHandler c=android.view.Choreographer$FrameDisplayEventReceiver@d6aa8a m=0
+06-14 15:02:00.460 24122 24122 W Finsky  : [2] STU: Failed to get storage stats for package 'com.glassbox.hello' (1601: Error getting stats: java.lang.SecurityException)
+06-14 15:02:00.930  1649  2376 V WindowManager: Relayout Window{7634e7d u0 com.glassbox.hello/com.glassbox.hello.MainActivity}: viewVisibility=0 req=720x1560 d0
+06-14 15:02:00.932  1059  1457 I SurfaceFlinger: id=7271 createSurf (1x1),-3 flag=40004, com.glassbox.hello/com.glassbox.hello.MainActivity$_28781#0
+06-14 15:02:00.932  1649  2376 D WindowManager: makeSurface duration=2 name=com.glassbox.hello/com.glassbox.hello.MainActivity$_28781
+06-14 15:02:00.937  1649  2376 V WindowManager: Changing focus from null to Window{7634e7d u0 com.glassbox.hello/com.glassbox.hello.MainActivity} displayId=0 Callers=com.android.server.wm.RootWindowContainer.updateFocusedWindowLocked:583 com.android.server.wm.WindowManagerService.updateFocusedWindowLocked:6497 com.android.server.wm.WindowManagerService.relayoutWindow:2770 com.android.server.wm.Session.relayout:242 
+06-14 15:02:00.937  1649  2376 D MARsPolicyManager: onPackageResumedFG pkgName = com.glassbox.hello, userId = 0
+06-14 15:02:00.957  1649  2376 D InputDispatcher: Focus request (0): 7634e7d com.glassbox.hello/com.glassbox.hello.MainActivity but waiting because NOT_VISIBLE
+06-14 15:02:02.175  1649  2437 D WindowManager: finishDrawingWindow: Window{7634e7d u0 com.glassbox.hello/com.glassbox.hello.MainActivity} mDrawState=DRAW_PENDING
+06-14 15:02:02.177 28781 28781 I Choreographer: Skipped 345 frames!  The application may be doing too much work on its main thread.
+06-14 15:02:02.186  1649  1821 I PkgPredictorService-SecIpmManagerServiceImpl: reportToNAP uid:10514 com.glassbox.hello/com.glassbox.hello.MainActivity thisTime:10363
+06-14 15:02:02.187  1649  3342 D PkgPredictorService-IpmAdcpController: com.glassbox.hello become forground, dex profile begin
+06-14 15:02:02.189  1649  1825 I WindowManager: Reparenting to leash, surface=Surface(name=7634e7d com.glassbox.hello/com.glassbox.hello.MainActivity)/@0x806917c, leashParent=Surface(name=ActivityRecord{d7c0356 u0 com.glassbox.hello/.MainActivity t3725})/@0xd07ea05
+06-14 15:02:02.189  1649  2529 D InputDispatcher: Focus entered window (0): 7634e7d com.glassbox.hello/com.glassbox.hello.MainActivity
+06-14 15:02:02.190  1059  1094 I SurfaceFlinger: id=7274 createSurf (0x0),-1 flag=24000, Surface(name=7634e7d com.glassbox.hello/com.glassbox.hello.MainActivity)/@0x806917c - animation-leash of starting_reveal#0
+06-14 15:02:02.190  1649  1825 D WindowManager: makeSurface duration=2 leash=Surface(name=Surface(name=7634e7d com.glassbox.hello/com.glassbox.hello.MainActivity)/@0x806917c - animation-leash of starting_reveal)/@0xa8a5a5a
+06-14 15:02:02.191 28781 28781 D HelloDebug: [App] resolveCloudIdentity tokenPresent=true logoutToken=0
+06-14 15:02:02.197  1059  1059 D SurfaceFlinger:      DEVICE | 0xf27c5ad0 | 0102 | RGBA_8888    |    0.0    0.0  720.0 1560.0 |    0    0  720 1560 | com.glassbox.hello/com.glassbox.hello.MainActivity$_28781#0
+06-14 15:02:02.197  1059  1059 D SurfaceFlinger:      DEVICE | 0xf27c6630 | 0100 | RGBA_8888    |    0.0    0.0  720.0 1560.0 |    0    0  720 1560 | Splash Screen com.glassbox.hello$_2346#0
+06-14 15:02:02.200  1649  1821 I ActivityTaskManager: Displayed com.glassbox.hello/.MainActivity: +10s363ms
+06-14 15:02:02.200  1649  1821 I Pageboost: Launch time gathered : pid 28781 com.glassbox.hello 10363
+06-14 15:02:02.224 28781 28781 D HelloDebug: [App] userReady userId=usr_037b138ad6af468ab9a03ba1576c3341 initializing notifications and calls
+06-14 15:02:02.278  1649  2392 D MdnieScenarioControlService:  packageName : com.glassbox.hello    className : com.glassbox.hello.MainActivity
+06-14 15:02:02.296  1649  2529 V WindowManager: Relayout Window{92b883a u0 Splash Screen com.glassbox.hello}: viewVisibility=8 req=720x1560 d0
+06-14 15:02:02.299  1649  2529 I WindowManager: Reparenting to leash, surface=Surface(name=92b883a Splash Screen com.glassbox.hello)/@0xade0e0a, leashParent=Surface(name=ActivityRecord{d7c0356 u0 com.glassbox.hello/.MainActivity t3725})/@0xd07ea05
+06-14 15:02:02.300  1059  1094 I SurfaceFlinger: id=7275 createSurf (0x0),-1 flag=24000, Surface(name=92b883a Splash Screen com.glassbox.hello)/@0xade0e0a - animation-leash of window_animation#0
+06-14 15:02:02.301  1649  2529 D WindowManager: makeSurface duration=1 leash=Surface(name=Surface(name=92b883a Splash Screen com.glassbox.hello)/@0xade0e0a - animation-leash of window_animation)/@0xe8f367b
+06-14 15:02:02.310  1649  2529 I WindowManager: Cancelling animation restarting=false, leash=Surface(name=Surface(name=7634e7d com.glassbox.hello/com.glassbox.hello.MainActivity)/@0x806917c - animation-leash of starting_reveal)/@0xa8a5a5a
+06-14 15:02:02.310  1649  2529 I WindowManager: Reparenting to original parent: Surface(name=ActivityRecord{d7c0356 u0 com.glassbox.hello/.MainActivity t3725})/@0xd07ea05, destroy=false, surface=Surface(name=7634e7d com.glassbox.hello/com.glassbox.hello.MainActivity)/@0x806917c
+06-14 15:02:02.315  1649  2529 W InputManager-JNI: Input channel object '92b883a Splash Screen com.glassbox.hello (client)' was disposed without first being removed with the input manager!
+06-14 15:02:02.322  1059  1059 I Layer   : id=7274 mRemovedFromDrawingState Surface(name=7634e7d com.glassbox.hello/com.glassbox.hello.MainActivity)/@0x806917c - animation-leash of starting_reveal#0 (105)
+06-14 15:02:02.356  1649  1825 I WindowManager: Reparenting to original parent: Surface(name=ActivityRecord{d7c0356 u0 com.glassbox.hello/.MainActivity t3725})/@0xd07ea05, destroy=true, surface=Surface(name=92b883a Splash Screen com.glassbox.hello)/@0xade0e0a
+06-14 15:02:02.360  1649  1825 E WindowManager: win=Window{92b883a u0 Splash Screen com.glassbox.hello EXITING} destroySurfaces: appStopped=false win.mWindowRemovalAllowed=true win.mRemoveOnExit=true win.mViewVisibility=8 caller=com.android.server.wm.ActivityRecord.destroySurfaces:5873 com.android.server.wm.ActivityRecord.destroySurfaces:5854 com.android.server.wm.WindowState.onExitAnimationDone:6000 com.android.server.wm.WindowStateAnimator.onAnimationFinished:242 com.android.server.wm.WindowState.onAnimationFinished:6253 com.android.server.wm.WindowContainer$$ExternalSyntheticLambda0.onAnimationFinished:2 com.android.server.wm.SurfaceAnimator.lambda$getFinishedCallback$0$SurfaceAnimator:113 
+06-14 15:02:02.361  1649  1825 I WindowManager: Destroying surface Surface(name=Splash Screen com.glassbox.hello$_2346)/@0xad0bf57 called by com.android.server.wm.WindowStateAnimator.destroySurface:987 com.android.server.wm.WindowStateAnimator.destroySurfaceLocked:518 com.android.server.wm.WindowState.destroySurfaceUnchecked:4246 com.android.server.wm.WindowState.destroySurface:4220 com.android.server.wm.ActivityRecord.destroySurfaces:5873 com.android.server.wm.ActivityRecord.destroySurfaces:5854 com.android.server.wm.WindowState.onExitAnimationDone:6000 com.android.server.wm.WindowStateAnimator.onAnimationFinished:242 
+06-14 15:02:02.372  1059  1059 I Layer   : id=7265 mRemovedFromDrawingState Splash Screen com.glassbox.hello$_2346#0 (105)
+06-14 15:02:02.372  1059  1059 I Layer   : id=7264 mRemovedFromDrawingState 92b883a Splash Screen com.glassbox.hello#0 (105)
+06-14 15:02:02.372  1059  1059 I Layer   : id=7275 mRemovedFromDrawingState Surface(name=92b883a Splash Screen com.glassbox.hello)/@0xade0e0a - animation-leash of window_animation#0 (105)
+06-14 15:02:02.372  1059  1059 I SurfaceFlinger: id=7264 Removed 92b883a Splash Screen com.glassbox.hello#0 (105)
+06-14 15:02:02.372  1059  1059 I SurfaceFlinger: id=7265 Removed Splash Screen com.glassbox.hello$_2346#0 (105)
+06-14 15:02:02.372  1059  1059 I SurfaceFlinger: id=7275 Removed Surface(name=92b883a Splash Screen com.glassbox.hello)/@0xade0e0a - animation-leash of window_animation#0 (105)
+06-14 15:02:02.373  1059  1059 I Layer   : id=7275 Destroyed Surface(name=92b883a Splash Screen com.glassbox.hello)/@0xade0e0a - animation-leash of window_animation#0
+06-14 15:02:02.373  1059  1059 I Layer   : id=7264 Destroyed 92b883a Splash Screen com.glassbox.hello#0
+06-14 15:02:02.375  1059  1059 I Layer   : id=7265 Destroyed Splash Screen com.glassbox.hello$_2346#0
+06-14 15:02:02.382  1059  1059 D SurfaceFlinger:      DEVICE | 0xf27c5ad0 | 0102 | RGBA_8888    |    0.0    0.0  720.0 1560.0 |    0    0  720 1560 | com.glassbox.hello/com.glassbox.hello.MainActivity$_28781#0
+06-14 15:02:03.180 28781 28781 I Choreographer: Skipped 47 frames!  The application may be doing too much work on its main thread.
+06-14 15:02:03.357 28781 28781 D InsetsSourceConsumer: ensureControlAlpha: for ITYPE_NAVIGATION_BAR on com.glassbox.hello/com.glassbox.hello.MainActivity
+06-14 15:02:03.360 28781 28781 D InsetsSourceConsumer: ensureControlAlpha: for ITYPE_STATUS_BAR on com.glassbox.hello/com.glassbox.hello.MainActivity
+06-14 15:02:03.367 28781 28909 D ProfileInstaller: Installing profile for com.glassbox.hello
+06-14 15:02:03.368 28781 28781 D HelloDebug: [Socket] connectCloud userId=usr_037b138ad6af468ab9a03ba1576c3341 origin=https://chat.bookhelloctg.com
+06-14 15:02:04.078 28781 28781 I Choreographer: Skipped 32 frames!  The application may be doing too much work on its main thread.
+06-14 15:02:04.101 28781 28781 D HelloDebug: [App] resolveCloudIdentity success userId=usr_037b138ad6af468ab9a03ba1576c3341 name=Bihi
+06-14 15:02:04.116 28781 28781 D HelloDebug: [Call] connectCloud userId=usr_037b138ad6af468ab9a03ba1576c3341
+06-14 15:02:04.154 28781 28781 I Choreographer: Skipped 36 frames!  The application may be doing too much work on its main thread.
+06-14 15:02:04.778 28781 28910 D HelloSocket: Cloud chat realtime connected for usr_037b138ad6af468ab9a03ba1576c3341 origin=https://chat.bookhelloctg.com
+06-14 15:02:04.779 28781 28910 D HelloDebug: [Socket] cloudOpen userId=usr_037b138ad6af468ab9a03ba1576c3341 origin=https://chat.bookhelloctg.com
+06-14 15:02:04.780 28781 28910 D HelloDebug: [Socket] emitCloud event=identify
+06-14 15:02:04.782 28781 28910 D HelloDebug: [Socket] emitCloud event=online
+06-14 15:02:04.786 28781 28910 D HelloDebug: [Socket] cloudMessage event=connected
+06-14 15:02:04.787 28781 28910 D HelloDebug: [Socket] dispatchCloudEvent event=connected
+06-14 15:02:04.788 28781 28910 D HelloDebug: [Socket] cloudMessage event=user_presence
+06-14 15:02:04.789 28781 28910 D HelloDebug: [Socket] dispatchCloudEvent event=user_presence
+06-14 15:02:04.791 28781 28910 D HelloDebug: [Socket] cloudMessage event=user_updated
+06-14 15:02:04.791 28781 28910 D HelloDebug: [Socket] dispatchCloudEvent event=user_updated
+06-14 15:02:04.792 28781 28910 D HelloDebug: [Socket] cloudMessage event=presence_updated
+06-14 15:02:04.792 28781 28910 D HelloDebug: [Socket] dispatchCloudEvent event=presence_updated
+06-14 15:02:04.793 28781 28910 D HelloDebug: [Socket] cloudMessage event=user_presence
+06-14 15:02:04.794 28781 28910 D HelloDebug: [Socket] dispatchCloudEvent event=user_presence
+06-14 15:02:04.816 28781 28910 D HelloDebug: [Socket] cloudMessage event=user_presence
+06-14 15:02:04.816 28781 28910 D HelloDebug: [Socket] dispatchCloudEvent event=user_presence
+06-14 15:02:04.819 28781 28910 D HelloDebug: [Socket] cloudMessage event=user_updated
+06-14 15:02:04.820 28781 28910 D HelloDebug: [Socket] dispatchCloudEvent event=user_updated
+06-14 15:02:04.822 28781 28910 D HelloDebug: [Socket] cloudMessage event=presence_updated
+06-14 15:02:04.822 28781 28910 D HelloDebug: [Socket] dispatchCloudEvent event=presence_updated
+06-14 15:02:04.914 28781 28910 D HelloDebug: [Socket] cloudMessage event=user_presence
+06-14 15:02:04.915 28781 28910 D HelloDebug: [Socket] dispatchCloudEvent event=user_presence
+06-14 15:02:04.921 28781 28910 D HelloDebug: [Socket] cloudMessage event=user_updated
+06-14 15:02:04.921 28781 28910 D HelloDebug: [Socket] dispatchCloudEvent event=user_updated
+06-14 15:02:04.925 28781 28910 D HelloDebug: [Socket] cloudMessage event=presence_updated
+06-14 15:02:04.925 28781 28910 D HelloDebug: [Socket] dispatchCloudEvent event=presence_updated
+06-14 15:02:04.935 28781 28910 D HelloDebug: [Socket] cloudMessage event=user_presence
+06-14 15:02:04.935 28781 28910 D HelloDebug: [Socket] dispatchCloudEvent event=user_presence
+06-14 15:02:04.945 28781 28910 D HelloDebug: [Socket] cloudMessage event=user_updated
+06-14 15:02:04.945 28781 28910 D HelloDebug: [Socket] dispatchCloudEvent event=user_updated
+06-14 15:02:04.948 28781 28910 D HelloDebug: [Socket] cloudMessage event=presence_updated
+06-14 15:02:04.948 28781 28910 D HelloDebug: [Socket] dispatchCloudEvent event=presence_updated
+06-14 15:02:08.409 28781 28788 W .glassbox.hell: Failed to flush directory /data/misc/profiles/cur/0/com.glassbox.hello: Permission denied
+06-14 15:02:10.250 28781 28781 D [secipm]: mSecIpmManager setProfileLength com.glassbox.hello profile:13357
+06-14 15:02:10.253  1649  3330 D PkgPredictorService-IpmAdcpController:  prepare a new task for pkg:com.glassbox.hello dex2oat
+06-14 15:02:10.253  1649 10368 I PkgPredictorService-IpmAdcpController:  start a thread to run dex2oat task for pkg:com.glassbox.hello
+06-14 15:02:10.258  1649 10368 I PackageDexOptimizer: Running dexopt (dexoptNeeded=1) on: /data/app/~~D6cJkzO5Teorc9Gb5OedoA==/com.glassbox.hello-rzebTX_WRzbRcMhob9aDPQ==/base.apk pkg=com.glassbox.hello isa=arm dexoptFlags=boot_complete,debuggable,public,enable_hidden_api_checks targetFilter=verify oatDir=/data/app/~~D6cJkzO5Teorc9Gb5OedoA==/com.glassbox.hello-rzebTX_WRzbRcMhob9aDPQ==/oat classLoaderContext=PCL[]{} async=false
+06-14 15:02:10.264  1259  3867 V installd: DexInv: --- BEGIN '/data/app/~~D6cJkzO5Teorc9Gb5OedoA==/com.glassbox.hello-rzebTX_WRzbRcMhob9aDPQ==/base.apk' ---
+06-14 15:02:10.264  1259  3867 V installd: Running /apex/com.android.art/bin/dex2oat32 in=base.apk out=/data/app/~~D6cJkzO5Teorc9Gb5OedoA==/com.glassbox.hello-rzebTX_WRzbRcMhob9aDPQ==/oat/arm/base.odex
+06-14 15:02:10.407 28939 28939 I dex2oat32: /apex/com.android.art/bin/dex2oat32 --input-vdex-fd=-1 --output-vdex-fd=10 --classpath-dir=/data/app/~~D6cJkzO5Teorc9Gb5OedoA==/com.glassbox.hello-rzebTX_WRzbRcMhob9aDPQ== --class-loader-context=PCL[]{} --compiler-filter=verify --compilation-reason=adcp --max-image-block-size=524288 --resolve-startup-const-strings=true --debuggable --generate-mini-debug-info -j6

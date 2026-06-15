@@ -294,6 +294,7 @@ class DrivePcApiClient : DrivePcApi {
         if (id.isBlank() || name.isBlank()) return null
         return DriveEvent(
             id = id,
+            circleId = map.stringOrNull("circleId"),
             name = name,
             createdByUserId = map.stringOrNull("createdByUserId"),
             coverItemId = map.stringOrNull("coverItemId"),

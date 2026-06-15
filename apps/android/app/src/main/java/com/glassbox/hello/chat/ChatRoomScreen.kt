@@ -62,7 +62,6 @@ import com.glassbox.hello.chat.components.ChatActionSheet
 import com.glassbox.hello.chat.components.ChatComposer
 import com.glassbox.hello.chat.components.ChatHeader
 import com.glassbox.hello.chat.components.ChatMessageList
-import com.glassbox.hello.chat.components.buildChatRenderRows
 import com.glassbox.hello.chat.components.ContactShareDialog
 import com.glassbox.hello.chat.components.EmojiStickerPickerSheet
 import com.glassbox.hello.chat.components.MediaViewer
@@ -74,18 +73,15 @@ import com.glassbox.hello.chat.components.downloadAttachment
 import com.glassbox.hello.chat.components.normalizeAttachmentUrl
 import com.glassbox.hello.chat.components.openExternalTarget
 import com.glassbox.hello.chat.components.rememberNearBottom
-import com.glassbox.hello.chat.components.visibleForUser
 import com.glassbox.hello.core.ResultState
 import com.glassbox.hello.core.User
 import com.glassbox.hello.debug.HelloDebugLog
 import com.glassbox.hello.core.rememberHelloSettingsState
 import com.glassbox.hello.network.SocketManager
 import com.glassbox.hello.notifications.HelloNotificationCenter
-import com.glassbox.hello.ui.components.AppBackground
 import com.glassbox.hello.ui.components.ErrorView
 import com.glassbox.hello.ui.components.HelloSearchBar
 import com.glassbox.hello.ui.components.LoadingView
-import com.glassbox.hello.ui.theme.ChatWallpaperBackground
 import com.glassbox.hello.ui.theme.HelloColors
 import com.glassbox.hello.ui.theme.HelloShapes
 import com.glassbox.hello.ui.theme.HelloSpacing
@@ -114,12 +110,9 @@ fun ChatRoomScreen(
     onChatDeleted: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val mountedWindowSize = 140
-    val mountedWindowShift = 40
-    val mountedWindowEdgeThreshold = 24
-
     val viewModel: ChatViewModel = viewModel()
     val messagesState by viewModel.messagesState.collectAsState()
+    val preparedMessagesState by viewModel.preparedMessagesState.collectAsState()
     val messagesRefreshing by viewModel.messagesRefreshing.collectAsState()
     val sendMessageState by viewModel.sendMessageState.collectAsState()
     val uploadState by viewModel.uploadState.collectAsState()
@@ -135,7 +128,6 @@ fun ChatRoomScreen(
     val settingsState = rememberHelloSettingsState(context).value
     val chatTheme by rememberChatTheme(context, currentUserId)
     val listState = rememberLazyListState()
-    val isNearBottom = rememberNearBottom(listState)
 
     var messageText by remember(chat.id) { mutableStateOf("") }
     var showAttachmentMenu by remember { mutableStateOf(false) }
@@ -166,7 +158,6 @@ fun ChatRoomScreen(
     var lastReadMessageId by remember(chat.id) { mutableStateOf<String?>(null) }
     var typingExpirations by remember(chat.id) { mutableStateOf<Map<String, Long>>(emptyMap()) }
     var pendingBelowMessageIds by remember(chat.id) { mutableStateOf<Set<String>>(emptySet()) }
-    var mountedWindowStart by remember(chat.id) { mutableStateOf(0) }
     val latestCloudChatEnabled by rememberUpdatedState(settingsState.cloudChatEnabled)
     val typingNames by remember(typingExpirations) {
         derivedStateOf {
@@ -177,41 +168,34 @@ fun ChatRoomScreen(
         }
     }
 
-    val visibleMessages by remember(messagesState, currentUserId) {
-        derivedStateOf {
-            when (messagesState) {
-                is ResultState.Success -> (messagesState as ResultState.Success<List<Message>>).data.visibleForUser(currentUserId)
-                else -> emptyList()
+    val unreadBelowCount = maxOf(chat.unreadCount ?: 0, pendingBelowMessageIds.size)
+    LaunchedEffect(currentUserId, chat.isGroup, unreadBelowCount) {
+        viewModel.configureMessagePresentation(
+            currentUserId = currentUserId,
+            chatIsGroup = chat.isGroup,
+            unreadCount = unreadBelowCount
+        )
+    }
+    val preparedMessages = (preparedMessagesState as? ResultState.Success)?.data
+    val visibleMessages = preparedMessages?.visibleMessages.orEmpty()
+    val visibleRows = remember(preparedMessages?.rows, settingsState.showCallLogsInChat) {
+        preparedMessages?.rows.orEmpty().let { rows ->
+            if (settingsState.showCallLogsInChat) {
+                rows
+            } else {
+                rows.filterNot { row ->
+                    row.message.callInfo != null || row.message.messageType == "call_log"
+                }
             }
         }
     }
-    val mountedWindowEndExclusive by remember(visibleMessages.size, mountedWindowStart) {
-        derivedStateOf {
-            minOf(visibleMessages.size, mountedWindowStart + mountedWindowSize)
-        }
-    }
-    val mountedMessages by remember(visibleMessages, mountedWindowStart, mountedWindowEndExclusive) {
-        derivedStateOf {
-            visibleMessages.subList(
-                mountedWindowStart.coerceAtMost(visibleMessages.size),
-                mountedWindowEndExclusive.coerceAtMost(visibleMessages.size)
-            )
-        }
-    }
-    val mountedRows by remember(mountedMessages, currentUserId, chat.isGroup, chat.unreadCount, pendingBelowMessageIds.size) {
-        derivedStateOf {
-            buildChatRenderRows(
-                messages = mountedMessages,
-                currentUserId = currentUserId,
-                chatIsGroup = chat.isGroup,
-                unreadCount = maxOf(chat.unreadCount ?: 0, pendingBelowMessageIds.size)
-            )
-        }
-    }
+    val isNearBottom = rememberNearBottom(
+        listState = listState,
+        itemCount = visibleRows.size + if (hasMoreOlderMessages || isLoadingOlderMessages) 1 else 0
+    )
 
     val title = chat.displayName(currentUserId)
     val other = chat.otherParticipant(currentUserId)
-    val wallpaperOpacity = chatTheme.wallpaperOpacity.coerceIn(35, 100) / 100f
     val bubbleOpacity = chatTheme.bubbleOpacity.coerceIn(40, 100) / 100f
     val subtitle = when {
         chat.isGroup -> "${chat.participantCount()} participants"
@@ -285,62 +269,23 @@ fun ChatRoomScreen(
 
     LaunchedEffect(chat.id, settingsState.cloudChatEnabled) {
         snapshotFlow {
-            Triple(mountedWindowStart + listState.firstVisibleItemIndex, hasMoreOlderMessages, isLoadingOlderMessages)
-        }.collect { (firstGlobalVisibleIndex, hasOlder, loadingOlder) ->
-            if (hasAutoScrolledInitial && hasOlder && !loadingOlder && firstGlobalVisibleIndex <= 1) {
-                viewModel.loadOlderMessages(chat.id, cloudChatEnabled = settingsState.cloudChatEnabled)
-            }
-        }
-    }
-
-    LaunchedEffect(chat.id, visibleMessages.size, mountedWindowStart, mountedWindowEndExclusive) {
-        if (visibleMessages.size <= mountedWindowSize || mountedMessages.isEmpty()) return@LaunchedEffect
-        snapshotFlow { listState.firstVisibleItemIndex }
-            .collectLatest { localFirstVisibleIndex ->
-                val currentWindowSize = mountedMessages.size
-                if (currentWindowSize == 0) return@collectLatest
-                val oldStart = mountedWindowStart
-                val maxWindowStart = (visibleMessages.size - mountedWindowSize).coerceAtLeast(0)
-                val newStart = when {
-                    localFirstVisibleIndex <= mountedWindowEdgeThreshold && oldStart > 0 -> {
-                        (oldStart - mountedWindowShift).coerceAtLeast(0)
-                    }
-                    localFirstVisibleIndex >= currentWindowSize - mountedWindowEdgeThreshold &&
-                        oldStart < maxWindowStart -> {
-                        (oldStart + mountedWindowShift).coerceAtMost(maxWindowStart)
-                    }
-                    else -> oldStart
-                }
-                if (newStart != oldStart) {
-                    val anchorGlobalIndex = oldStart + localFirstVisibleIndex
-                    mountedWindowStart = newStart
-                    val newLocalIndex = (anchorGlobalIndex - newStart).coerceAtLeast(0)
-                    listState.scrollToItem(newLocalIndex, listState.firstVisibleItemScrollOffset)
-                }
-            }
-    }
-
-    LaunchedEffect(chat.id) {
-        snapshotFlow {
-            listState.layoutInfo.visibleItemsInfo.mapNotNull { it.key?.toString() }
+            Triple(listState.firstVisibleItemIndex, hasMoreOlderMessages, isLoadingOlderMessages)
         }
             .distinctUntilChanged()
-            .collect { visibleKeys ->
-                HelloDebugLog.d(
-                    "ChatScroll",
-                    "chatId=${chat.id} visibleRows=${visibleKeys.size} mounted=${mountedMessages.size}/${visibleMessages.size} windowStart=$mountedWindowStart first=${visibleKeys.firstOrNull().orEmpty()} last=${visibleKeys.lastOrNull().orEmpty()}"
-                )
+            .collect { (firstVisibleIndex, hasOlder, loadingOlder) ->
+                if (hasAutoScrolledInitial && hasOlder && !loadingOlder && firstVisibleIndex <= 1) {
+                    viewModel.loadOlderMessages(chat.id, cloudChatEnabled = settingsState.cloudChatEnabled)
+                }
             }
     }
 
     val lastVisibleMessage = visibleMessages.lastOrNull()
 
-    LaunchedEffect(chat.id, lastVisibleMessage?.id, visibleMessages.size) {
-        HelloDebugLog.d("ChatRoom", "visibleMessages chatId=${chat.id} count=${visibleMessages.size} nearBottom=$isNearBottom")
-        if (visibleMessages.isNotEmpty()) {
+    LaunchedEffect(chat.id, lastVisibleMessage?.id, visibleMessages.size, visibleRows.size) {
+        if (visibleMessages.isNotEmpty() && visibleRows.isNotEmpty()) {
             if (!hasAutoScrolledInitial) {
-                mountedWindowStart = (visibleMessages.size - mountedWindowSize).coerceAtLeast(0)
-                listState.scrollToItem((visibleMessages.lastIndex - mountedWindowStart).coerceAtLeast(0))
+                delay(16)
+                listState.scrollToItem(visibleRows.lastIndex)
                 hasAutoScrolledInitial = true
             } else {
                 val messageAppended =
@@ -348,14 +293,13 @@ fun ChatRoomScreen(
                 val sentByCurrentUser = lastVisibleMessage?.senderId == currentUserId
                 val shouldStickToBottom = messageAppended && (isNearBottom || sentByCurrentUser)
                 if (shouldStickToBottom) {
-                    mountedWindowStart = (visibleMessages.size - mountedWindowSize).coerceAtLeast(0)
-                    listState.scrollToItem((visibleMessages.lastIndex - mountedWindowStart).coerceAtLeast(0))
+                    delay(16)
+                    listState.scrollToItem(visibleRows.lastIndex)
                 }
             }
             previousMessageCount = visibleMessages.size
             previousLastMessageId = lastVisibleMessage?.id
         } else {
-            mountedWindowStart = 0
             previousMessageCount = 0
             previousLastMessageId = null
         }
@@ -369,7 +313,6 @@ fun ChatRoomScreen(
         val latestMessage = lastVisibleMessage ?: return@LaunchedEffect
         if (latestMessage.senderId == currentUserId) return@LaunchedEffect
         if (lastReadMessageId == latestMessage.id) return@LaunchedEffect
-        socketManager.markMessagesRead(chat.id, currentUserId)
         viewModel.clearUnreadForChat(chat.id, currentUserId, latestCloudChatEnabled)
         lastReadMessageId = latestMessage.id
     }
@@ -751,16 +694,6 @@ fun ChatRoomScreen(
         socketManager.addMessageListener(messageListener)
         socketManager.addMessageUpdateListener(updateListener)
         socketManager.addTypingListener(typingListener)
-        val chatUpdateListener: (Chat) -> Unit = { updatedChat ->
-            viewModel.upsertChatFromSocket(updatedChat, currentUserId)
-        }
-        socketManager.addChatUpdateListener(chatUpdateListener)
-        socketManager.connect(context, User(id = currentUserId, name = currentUserName, avatar = currentUserAvatar))
-        socketManager.joinChat(chat.id)
-        socketManager.markMessagesRead(chat.id, currentUserId)
-        viewModel.clearUnreadForChat(chat.id, currentUserId, latestCloudChatEnabled)
-        lastReadMessageId = lastVisibleMessage?.takeIf { it.senderId != currentUserId }?.id
-        pendingBelowMessageIds = emptySet()
         onDispose {
             HelloNotificationCenter.setOpenChat(null)
             stopTypingIndicator()
@@ -770,11 +703,19 @@ fun ChatRoomScreen(
             socketManager.removeMessageListener(messageListener)
             socketManager.removeMessageUpdateListener(updateListener)
             socketManager.removeTypingListener(typingListener)
-            socketManager.removeChatUpdateListener(chatUpdateListener)
         }
     }
 
-    AppBackground(modifier = modifier.fillMaxSize()) {
+    LaunchedEffect(chat.id, currentUserId, currentUserName, currentUserAvatar) {
+        delay(1500)
+        socketManager.connect(context, User(id = currentUserId, name = currentUserName, avatar = currentUserAvatar))
+        socketManager.joinChat(chat.id)
+        viewModel.clearUnreadForChat(chat.id, currentUserId, latestCloudChatEnabled)
+        lastReadMessageId = lastVisibleMessage?.takeIf { it.senderId != currentUserId }?.id
+        pendingBelowMessageIds = emptySet()
+    }
+
+    Box(modifier = modifier.fillMaxSize().background(HelloColors.DarkBg)) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -792,11 +733,10 @@ fun ChatRoomScreen(
                 onMore = { showChatActions = true }
             )
 
-            ChatWallpaperBackground(
-                wallpaper = chatTheme.wallpaper,
-                opacity = wallpaperOpacity,
-                darkOverride = chatTheme.darkMode,
-                modifier = Modifier.weight(1f)
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .background(if (chatTheme.darkMode) HelloColors.DarkBg else HelloColors.Bg)
             ) {
                 Box(modifier = Modifier.fillMaxSize()) {
                     if (messagesRefreshing) {
@@ -818,13 +758,13 @@ fun ChatRoomScreen(
                             onRetry = { viewModel.loadMessages(chat.id, cloudChatEnabled = settingsState.cloudChatEnabled) }
                         )
                         is ResultState.Success -> {
-                            if (visibleMessages.isEmpty()) {
+                            if (visibleRows.isEmpty()) {
                                 EmptyRoom()
                             } else {
                                 ChatMessageList(
-                                    rows = mountedRows,
+                                    rows = visibleRows,
                                     currentUserId = currentUserId,
-                                    unreadCount = maxOf(chat.unreadCount ?: 0, pendingBelowMessageIds.size),
+                                    unreadCount = unreadBelowCount,
                                     typingNames = typingNames,
                                     listState = listState,
                                     hasMoreOlderMessages = hasMoreOlderMessages,
@@ -838,9 +778,8 @@ fun ChatRoomScreen(
                                     bubbleOpacity = bubbleOpacity,
                                     onJumpToLatest = {
                                         scope.launch {
-                                            if (visibleMessages.isNotEmpty()) {
-                                                mountedWindowStart = (visibleMessages.size - mountedWindowSize).coerceAtLeast(0)
-                                                listState.scrollToItem((visibleMessages.lastIndex - mountedWindowStart).coerceAtLeast(0))
+                                            if (visibleRows.isNotEmpty()) {
+                                                listState.scrollToItem(visibleRows.lastIndex)
                                                 pendingBelowMessageIds = emptySet()
                                             }
                                         }

@@ -1,0 +1,8 @@
+06-14 15:02:47.069 28781 28781 D HelloDebug: [ChatRoom] configureCloudChat chatId=direct_usr_037b138ad6af468ab9a03ba1576c3341_usr_545102c40fec4fd3b2e039a33ff17909 currentUserId=usr_037b138ad6af468ab9a03ba1576c3341
+06-14 15:02:47.073 28781 28781 D HelloDebug: [ChatRoom] loadMessages chatId=direct_usr_037b138ad6af468ab9a03ba1576c3341_usr_545102c40fec4fd3b2e039a33ff17909 cloudChatEnabled=true
+06-14 15:02:47.092 28781 28781 I Choreographer: Skipped 62 frames!  The application may be doing too much work on its main thread.
+06-14 15:02:48.974 28781 28781 D HelloDebug: [Socket] connectCloud reuse userId=usr_037b138ad6af468ab9a03ba1576c3341 connected=true connecting=false
+06-14 15:02:48.975 28781 28781 D HelloDebug: [Socket] joinChat chatId=direct_usr_037b138ad6af468ab9a03ba1576c3341_usr_545102c40fec4fd3b2e039a33ff17909 cloudConnected=true
+06-14 15:02:48.975 28781 28781 D HelloDebug: [Socket] emitCloud event=join_chat
+06-14 15:02:48.978 28781 28781 I Choreographer: Skipped 71 frames!  The application may be doing too much work on its main thread.
+06-14 15:02:50.196 28781 28781 I Choreographer: Skipped 68 frames!  The application may be doing too much work on its main thread.

@@ -60,19 +60,52 @@ class FamilyDriveRepository(
         return api.fetchDriveDeleteLimit(userId)
     }
 
-    suspend fun fetchEvents(userId: String, circleId: String? = null): Result<List<DriveEvent>> {
-        return api.fetchDriveEvents(userId, circleId)
-    }
-
-    suspend fun createEvent(name: String, userId: String, circleId: String): Result<DriveEvent> {
-        return api.createDriveEvent(name, userId, circleId).also { result ->
-            result.getOrNull()?.let { event ->
-                mirrorDriveMetadataToFirestore("events", event.id, event)
+    suspend fun fetchEventsWithPending(context: Context, userId: String, circleId: String? = null): Result<List<DriveEvent>> = withContext(Dispatchers.IO) {
+        val appContext = context.applicationContext
+        syncPendingEvents(appContext, userId)
+        val pending = pendingEventStore(appContext).getActive(circleId)
+        val remote = api.fetchDriveEvents(userId, circleId)
+        remote.fold(
+            onSuccess = { events -> Result.success(mergeEvents(events, pending)) },
+            onFailure = { error ->
+                if (pending.isNotEmpty()) Result.success(mergeEvents(emptyList(), pending)) else Result.failure(error)
             }
-        }
+        )
     }
 
-    suspend fun renameEvent(eventId: String, userId: String, name: String): Result<DriveEvent> {
+    suspend fun createEvent(context: Context, name: String, userId: String, circleId: String): Result<DriveEvent> = withContext(Dispatchers.IO) {
+        if (!circleId.startsWith(LOCAL_CIRCLE_PREFIX)) {
+            val remoteResult = api.createDriveEvent(name, userId, circleId)
+            remoteResult.getOrNull()?.let { event ->
+                mirrorDriveMetadataToFirestore("events", event.id, event)
+                return@withContext Result.success(event)
+            }
+            val error = remoteResult.exceptionOrNull() ?: Exception("Event could not be created")
+            if (!DrivePcApiClient.isPcUnavailable(error)) return@withContext Result.failure(error)
+        }
+        val now = System.currentTimeMillis()
+        val pending = PendingDriveEvent(
+            id = buildLocalEventId(),
+            circleId = circleId,
+            name = name,
+            createdByUserId = userId,
+            createdAt = now,
+            updatedAt = now
+        )
+        pendingEventStore(context.applicationContext).upsert(pending)
+        Result.success(pending.asDriveEvent())
+    }
+
+    suspend fun renameEvent(context: Context, eventId: String, userId: String, name: String): Result<DriveEvent> {
+        if (eventId.startsWith(LOCAL_EVENT_PREFIX)) {
+            val store = pendingEventStore(context.applicationContext)
+            val existing = store.getActive().firstOrNull { it.id == eventId }
+                ?: return Result.failure(IllegalArgumentException("Local event not found"))
+            val updated = existing.copy(name = name, updatedAt = System.currentTimeMillis())
+            store.upsert(updated)
+            pendingStore(context.applicationContext).updateEventName(eventId, name)
+            return Result.success(updated.asDriveEvent())
+        }
         return api.renameDriveEvent(eventId, userId, name).also { result ->
             result.getOrNull()?.let { event ->
                 mirrorDriveMetadataToFirestore("events", event.id, event)
@@ -80,7 +113,12 @@ class FamilyDriveRepository(
         }
     }
 
-    suspend fun deleteEvent(eventId: String, userId: String): Result<Unit> {
+    suspend fun deleteEvent(context: Context, eventId: String, userId: String): Result<Unit> {
+        if (eventId.startsWith(LOCAL_EVENT_PREFIX)) {
+            pendingEventStore(context.applicationContext).delete(eventId)
+            pendingStore(context.applicationContext).removeEventId(eventId)
+            return Result.success(Unit)
+        }
         return api.deleteDriveEvent(eventId, userId)
     }
 
@@ -156,6 +194,7 @@ class FamilyDriveRepository(
                     mirrorDriveMetadataToFirestore("circles", created.id, created)
                     remappedIds[circle.id] = created.id
                     uploadStore.remapCircleIds(mapOf(circle.id to created.id))
+                    pendingEventStore(appContext).remapCircleIds(mapOf(circle.id to created.id))
                     circleStore.delete(circle.id)
                 } catch (error: Exception) {
                     HelloDebugLog.w("DriveRepo", "syncPendingCircles item_failed circleId=${circle.id} error=${error.message}", error)
@@ -165,6 +204,33 @@ class FamilyDriveRepository(
             Result.success(remappedIds)
         } catch (error: Exception) {
             HelloDebugLog.w("DriveRepo", "syncPendingCircles failure error=${error.message}", error)
+            Result.failure(error)
+        }
+    }
+
+    suspend fun syncPendingEvents(context: Context, userId: String): Result<Map<String, String>> = withContext(Dispatchers.IO) {
+        try {
+            val appContext = context.applicationContext
+            val store = pendingEventStore(appContext)
+            val uploadStore = pendingStore(appContext)
+            val remappedIds = mutableMapOf<String, String>()
+            for (event in store.getRetryable()) {
+                if (event.circleId.startsWith(LOCAL_CIRCLE_PREFIX)) continue
+                store.updateStatus(event.id, PendingDriveEventStatus.SYNCING)
+                try {
+                    val created = api.createDriveEvent(event.name, userId, event.circleId).getOrThrow()
+                    mirrorDriveMetadataToFirestore("events", created.id, created)
+                    remappedIds[event.id] = created.id
+                    uploadStore.remapEventIds(mapOf(event.id to created.id))
+                    store.delete(event.id)
+                } catch (error: Exception) {
+                    HelloDebugLog.w("DriveRepo", "syncPendingEvents item_failed eventId=${event.id} error=${error.message}", error)
+                    store.markRetryable(event.id, error.message ?: "Sync failed")
+                }
+            }
+            Result.success(remappedIds)
+        } catch (error: Exception) {
+            HelloDebugLog.w("DriveRepo", "syncPendingEvents failure error=${error.message}", error)
             Result.failure(error)
         }
     }
@@ -282,8 +348,14 @@ class FamilyDriveRepository(
 
     suspend fun removePendingCircle(context: Context, circleId: String): Result<Unit> = withContext(Dispatchers.IO) {
         try {
-            pendingCircleStore(context.applicationContext).delete(circleId)
-            pendingStore(context.applicationContext).removeCircleId(circleId)
+            val appContext = context.applicationContext
+            val eventStore = pendingEventStore(appContext)
+            val uploadStore = pendingStore(appContext)
+            val localEventIds = eventStore.getActive(circleId).map { it.id }
+            pendingCircleStore(appContext).delete(circleId)
+            eventStore.deleteForCircle(circleId)
+            uploadStore.removeCircleId(circleId)
+            localEventIds.forEach { uploadStore.removeEventId(it) }
             Result.success(Unit)
         } catch (error: Exception) {
             Result.failure(error)
@@ -299,8 +371,16 @@ class FamilyDriveRepository(
     ): Result<DriveUploadOutcome> = withContext(Dispatchers.IO) {
         try {
             HelloDebugLog.d("DriveRepo", "uploadUris uploaderId=$uploaderId count=${uris.size} eventId=${plan.eventId} circles=${plan.circleIds.size} users=${plan.allowedUserIds.size}")
-            val uploadedItems = mutableListOf<DriveItem>()
             val appContext = context.applicationContext
+            val requiresLocalQueue = plan.eventId?.startsWith(LOCAL_EVENT_PREFIX) == true ||
+                plan.circleIds.any { it.startsWith(LOCAL_CIRCLE_PREFIX) }
+            if (requiresLocalQueue) {
+                val pendingItems = savePendingUploads(appContext, uris, plan).getOrThrow()
+                FamilyDriveUploadWorker.enqueue(appContext, uploaderId)
+                onProgress(uris.size, uris.size)
+                return@withContext Result.success(DriveUploadOutcome(pendingItems = pendingItems))
+            }
+            val uploadedItems = mutableListOf<DriveItem>()
             var pendingItems = emptyList<PendingDriveItem>()
             for ((index, uri) in uris.withIndex()) {
                 try {
@@ -338,6 +418,7 @@ class FamilyDriveRepository(
             HelloDebugLog.d("DriveRepo", "retryPendingUploads uploaderId=$uploaderId itemId=$itemId")
             val appContext = context.applicationContext
             syncPendingCircles(appContext, uploaderId)
+            syncPendingEvents(appContext, uploaderId)
             val store = pendingStore(appContext)
             val items = store.getRetryable(itemId)
             var uploadedCount = 0
@@ -454,6 +535,10 @@ class FamilyDriveRepository(
         return FamilyDrivePendingCircleStore.getInstance(context.applicationContext)
     }
 
+    private fun pendingEventStore(context: Context): FamilyDrivePendingEventStore {
+        return FamilyDrivePendingEventStore.getInstance(context.applicationContext)
+    }
+
     private fun mergeCircles(remote: List<DriveCircle>, pending: List<PendingDriveCircle>): List<DriveCircle> {
         val remoteIds = remote.map { it.id }.toSet()
         val pendingCircles = pending
@@ -464,8 +549,22 @@ class FamilyDriveRepository(
             .sortedByDescending { it.updatedAt }
     }
 
+    private fun mergeEvents(remote: List<DriveEvent>, pending: List<PendingDriveEvent>): List<DriveEvent> {
+        val remoteIds = remote.map { it.id }.toSet()
+        val pendingEvents = pending
+            .filter { it.serverEventId.isNullOrBlank() || it.serverEventId !in remoteIds }
+            .map { it.asDriveEvent() }
+        return (pendingEvents + remote)
+            .distinctBy { it.id }
+            .sortedByDescending { it.updatedAt }
+    }
+
     private fun buildLocalCircleId(): String {
-        return "local_circle_${System.currentTimeMillis()}"
+        return "$LOCAL_CIRCLE_PREFIX${System.currentTimeMillis()}"
+    }
+
+    private fun buildLocalEventId(): String {
+        return "$LOCAL_EVENT_PREFIX${System.currentTimeMillis()}"
     }
 
     private fun normalizedContactName(user: ChatModels.User): String {
@@ -522,4 +621,9 @@ class FamilyDriveRepository(
         val mimeType: String,
         val size: Long
     )
+
+    companion object {
+        private const val LOCAL_CIRCLE_PREFIX = "local_circle_"
+        private const val LOCAL_EVENT_PREFIX = "local_event_"
+    }
 }

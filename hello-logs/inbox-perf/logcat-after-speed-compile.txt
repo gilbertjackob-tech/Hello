@@ -1,0 +1,49 @@
+06-14 14:53:01.748 26658 26658 I Choreographer: Skipped 153 frames!  The application may be doing too much work on its main thread.
+06-14 14:53:01.759 26658 26658 D HelloDebug: [App] resolveCloudIdentity tokenPresent=true logoutToken=0
+06-14 14:53:01.763  1649  1821 I ActivityTaskManager: Displayed com.glassbox.hello/.MainActivity: +3s727ms
+06-14 14:53:01.775 26658 26658 D HelloDebug: [App] userReady userId=usr_037b138ad6af468ab9a03ba1576c3341 initializing notifications and calls
+06-14 14:53:01.789 26658 26658 D HelloInbox: screen_init userId=usr_037b138ad6af468ab9a03ba1576c3341 userName=Bihi cloudChatEnabled=true cloudTokenPresent=true cloudSessionUserId=usr_037b138ad6af468ab9a03ba1576c3341 cloudSessionUserName=Bihi
+06-14 14:53:01.789 26658 26658 D HelloInbox: configure_cloud_chat context=Application
+06-14 14:53:02.382 26658 26658 I Choreographer: Skipped 31 frames!  The application may be doing too much work on its main thread.
+06-14 14:53:02.570 26658 26658 D HelloInbox: vm_load_chats_start userId=usr_037b138ad6af468ab9a03ba1576c3341 currentUserName=Bihi cloudChatEnabled=true hadVisibleState=false cachedVisibleCount=1 cachedIds=direct_usr_037b138ad6af468ab9a03ba1576c3341_usr_545102c40fec4fd3b2e039a33ff17909
+06-14 14:53:02.571 26658 26658 D HelloInbox: vm_load_chats_cached_visible userId=usr_037b138ad6af468ab9a03ba1576c3341 count=1 elapsedMs=775
+06-14 14:53:02.582 26658 26688 D HelloInbox: repo_fetch_chats_start requestedUserId=usr_037b138ad6af468ab9a03ba1576c3341 displayName=Bihi resolvedUserId=usr_037b138ad6af468ab9a03ba1576c3341 effectiveUserId=usr_037b138ad6af468ab9a03ba1576c3341 tokenPresent=true cachedUserId=usr_037b138ad6af468ab9a03ba1576c3341
+06-14 14:53:02.583 26658 26688 D HelloInbox: api_fetch_conversations_start userId=usr_037b138ad6af468ab9a03ba1576c3341 tokenPresent=true
+06-14 14:53:03.085 26658 26658 D HelloDebug: [Socket] connectCloud userId=usr_037b138ad6af468ab9a03ba1576c3341 origin=https://chat.bookhelloctg.com
+06-14 14:53:03.881 26658 26658 D HelloDebug: [App] resolveCloudIdentity success userId=usr_037b138ad6af468ab9a03ba1576c3341 name=Bihi
+06-14 14:53:04.303 26658 26658 D HelloDebug: [Call] connectCloud userId=usr_037b138ad6af468ab9a03ba1576c3341
+06-14 14:53:04.610 26658 26688 D HelloInbox: api_fetch_conversations_body length=932 snippet=[{"id":"direct_usr_037b138ad6af468ab9a03ba1576c3341_usr_545102c40fec4fd3b2e039a33ff17909","type":"direct","directKey":"usr_037b138ad6af468ab9a03ba1576c3341:usr_545102c40fec4fd3b2e039a33ff17909","name":"Bihi","avatar":"https://chat.bookhello
+06-14 14:53:04.619 26658 26688 D HelloInbox: api_fetch_conversations_success userId=usr_037b138ad6af468ab9a03ba1576c3341 count=1 ids=direct_usr_037b138ad6af468ab9a03ba1576c3341_usr_545102c40fec4fd3b2e039a33ff17909
+06-14 14:53:04.702 26658 26688 D HelloInbox: repo_fetch_chats_success requestedUserId=usr_037b138ad6af468ab9a03ba1576c3341 resolvedUserId=usr_037b138ad6af468ab9a03ba1576c3341 effectiveUserId=usr_037b138ad6af468ab9a03ba1576c3341 count=1 ids=direct_usr_037b138ad6af468ab9a03ba1576c3341_usr_545102c40fec4fd3b2e039a33ff17909
+06-14 14:53:04.712 26658 26658 D HelloInbox: vm_load_chats_success userId=usr_037b138ad6af468ab9a03ba1576c3341 cloudChatEnabled=true visibleCount=1 elapsedMs=2915 ids=direct_usr_037b138ad6af468ab9a03ba1576c3341_usr_545102c40fec4fd3b2e039a33ff17909 previews=direct_usr_037b138ad6af468ab9a03ba1576c3341_usr_545102c40fec4fd3b2e039a33ff17909:
+06-14 14:53:05.784 26658 26721 D HelloDebug: [Socket] cloudOpen userId=usr_037b138ad6af468ab9a03ba1576c3341 origin=https://chat.bookhelloctg.com
+06-14 14:53:05.785 26658 26721 D HelloDebug: [Socket] emitCloud event=identify
+06-14 14:53:05.786 26658 26721 D HelloDebug: [Socket] emitCloud event=online
+06-14 14:53:05.789 26658 26721 D HelloDebug: [Socket] cloudMessage event=connected
+06-14 14:53:05.789 26658 26721 D HelloDebug: [Socket] dispatchCloudEvent event=connected
+06-14 14:53:05.793 26658 26721 D HelloDebug: [Socket] cloudMessage event=user_presence
+06-14 14:53:05.793 26658 26721 D HelloDebug: [Socket] dispatchCloudEvent event=user_presence
+06-14 14:53:05.797 26658 26721 D HelloDebug: [Socket] cloudMessage event=user_presence
+06-14 14:53:05.797 26658 26721 D HelloDebug: [Socket] dispatchCloudEvent event=user_presence
+06-14 14:53:05.800 26658 26721 D HelloDebug: [Socket] cloudMessage event=user_updated
+06-14 14:53:05.800 26658 26721 D HelloDebug: [Socket] dispatchCloudEvent event=user_updated
+06-14 14:53:05.803 26658 26721 D HelloDebug: [Socket] cloudMessage event=user_updated
+06-14 14:53:05.803 26658 26721 D HelloDebug: [Socket] dispatchCloudEvent event=user_updated
+06-14 14:53:05.807 26658 26721 D HelloDebug: [Socket] cloudMessage event=presence_updated
+06-14 14:53:05.807 26658 26721 D HelloDebug: [Socket] dispatchCloudEvent event=presence_updated
+06-14 14:53:05.811 26658 26721 D HelloDebug: [Socket] cloudMessage event=presence_updated
+06-14 14:53:05.811 26658 26721 D HelloDebug: [Socket] dispatchCloudEvent event=presence_updated
+06-14 14:53:05.814 26658 26721 D HelloDebug: [Socket] cloudMessage event=user_presence
+06-14 14:53:05.814 26658 26721 D HelloDebug: [Socket] dispatchCloudEvent event=user_presence
+06-14 14:53:05.992 26658 26721 D HelloDebug: [Socket] cloudMessage event=user_presence
+06-14 14:53:05.992 26658 26721 D HelloDebug: [Socket] dispatchCloudEvent event=user_presence
+06-14 14:53:05.994 26658 26721 D HelloDebug: [Socket] cloudMessage event=user_updated
+06-14 14:53:05.994 26658 26721 D HelloDebug: [Socket] dispatchCloudEvent event=user_updated
+06-14 14:53:05.996 26658 26721 D HelloDebug: [Socket] cloudMessage event=presence_updated
+06-14 14:53:05.996 26658 26721 D HelloDebug: [Socket] dispatchCloudEvent event=presence_updated
+06-14 14:53:06.142 26658 26721 D HelloDebug: [Socket] cloudMessage event=user_presence
+06-14 14:53:06.143 26658 26721 D HelloDebug: [Socket] dispatchCloudEvent event=user_presence
+06-14 14:53:06.144 26658 26721 D HelloDebug: [Socket] cloudMessage event=user_updated
+06-14 14:53:06.144 26658 26721 D HelloDebug: [Socket] dispatchCloudEvent event=user_updated
+06-14 14:53:06.146 26658 26721 D HelloDebug: [Socket] cloudMessage event=presence_updated
+06-14 14:53:06.146 26658 26721 D HelloDebug: [Socket] dispatchCloudEvent event=presence_updated

@@ -1,0 +1,7 @@
+06-14 15:08:28.458 29846 29846 I Choreographer: Skipped 211 frames!  The application may be doing too much work on its main thread.
+06-14 15:08:28.470 29846 29846 D HelloDebug: [App] resolveCloudIdentity tokenPresent=true logoutToken=0
+06-14 15:08:28.488 29846 29846 D HelloDebug: [App] userReady userId=usr_037b138ad6af468ab9a03ba1576c3341 initializing notifications and calls
+06-14 15:08:28.497  1649  1821 I ActivityTaskManager: Displayed com.glassbox.hello/.MainActivity: +4s726ms
+06-14 15:08:29.574 29846 29846 I Choreographer: Skipped 59 frames!  The application may be doing too much work on its main thread.
+06-14 15:08:30.761 29846 29846 I Choreographer: Skipped 40 frames!  The application may be doing too much work on its main thread.
+06-14 15:08:31.913 29846 29846 D HelloDebug: [App] resolveCloudIdentity success userId=usr_037b138ad6af468ab9a03ba1576c3341 name=Bihi

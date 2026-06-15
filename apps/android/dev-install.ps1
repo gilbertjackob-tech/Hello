@@ -20,37 +20,97 @@ function Get-LatestApk {
         Select-Object -First 1
 }
 
-function Install-Apk {
-    param([string]$apkPath)
+function Get-VariantApk {
+    param(
+        [string]$BuildRoot,
+        [ValidateSet('debug', 'release')]
+        [string]$BuildType
+    )
 
-    $device = & adb devices | Select-String "device$"
-
-    if ($device) {
-        $installStart = Get-Date
-
-        Write-Host "Installing to device..."
-        & adb install -r -t -d $apkPath
-
-        $installEnd = Get-Date
-        $installTime = ($installEnd - $installStart).TotalSeconds
-
-        Write-Host "Install time: $installTime sec"
-        return $installTime
-    }
-
-    return 0
+    $separator = [IO.Path]::DirectorySeparatorChar
+    $variantSegment = "${separator}apk${separator}${BuildType}${separator}"
+    Get-ChildItem -Path "$BuildRoot\app\build" -Recurse -Filter *.apk -ErrorAction SilentlyContinue |
+        Where-Object { $_.FullName -like "*$variantSegment*" } |
+        Sort-Object LastWriteTime -Descending |
+        Select-Object -First 1
 }
 
-$abi = (& adb shell getprop ro.product.cpu.abi).Trim()
+function Get-ReadyDeviceSerial {
+    $line = & adb devices | Select-String -Pattern '^\S+\s+device$' | Select-Object -First 1
+    if (-not $line) {
+        return $null
+    }
+
+    return ($line.ToString() -split '\s+')[0]
+}
+
+function Wait-ForReadyDevice {
+    param(
+        [int]$TimeoutSeconds = 30,
+        [switch]$RestartServer
+    )
+
+    if ($RestartServer) {
+        & adb kill-server | Out-Null
+        Start-Sleep -Milliseconds 750
+        & adb start-server | Out-Null
+    }
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    do {
+        $serial = Get-ReadyDeviceSerial
+        if ($serial) {
+            return $serial
+        }
+        Start-Sleep -Seconds 1
+    } while ((Get-Date) -lt $deadline)
+
+    $states = (& adb devices -l) -join [Environment]::NewLine
+    throw "No authorized ADB device became ready within $TimeoutSeconds seconds.`n$states"
+}
+
+function Install-Apk {
+    param(
+        [string]$apkPath,
+        [int]$MaxAttempts = 3
+    )
+
+    if (-not (Test-Path -LiteralPath $apkPath)) {
+        throw "APK not found: $apkPath"
+    }
+
+    $installStart = Get-Date
+    for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+        $serial = Wait-ForReadyDevice -TimeoutSeconds 30 -RestartServer:($attempt -gt 1)
+        Write-Host "Installing to $serial (attempt $attempt/$MaxAttempts)..."
+
+        if ($attempt -eq 1) {
+            & adb -s $serial install -r -t -d $apkPath | ForEach-Object { Write-Host $_ }
+        } else {
+            # Non-streaming is slower but avoids EOF/transport loss on unstable USB links.
+            & adb -s $serial install --no-streaming -r -t -d $apkPath | ForEach-Object { Write-Host $_ }
+        }
+
+        if ($LASTEXITCODE -eq 0) {
+            $installTime = ((Get-Date) - $installStart).TotalSeconds
+            Write-Host "Install time: $installTime sec"
+            return $installTime
+        }
+
+        Write-Warning "ADB install attempt $attempt failed. Re-establishing the device transport."
+    }
+
+    throw "APK installation failed after $MaxAttempts attempts: $apkPath"
+}
+
+$serial = Wait-ForReadyDevice -TimeoutSeconds 30
+$abi = (& adb -s $serial shell getprop ro.product.cpu.abi).Trim()
 
 if ([string]::IsNullOrWhiteSpace($abi)) {
     $abi = "arm64-v8a"
 }
 
 Write-Host "Device ABI: $abi"
-
-& adb kill-server
-& adb start-server
 
 $gradleAbi = ""
 
@@ -82,44 +142,38 @@ if ($rel) {
         exit $LASTEXITCODE
     }
 
-    $apk = Get-LatestApk -BuildRoot $root
+    $buildEnd = Get-Date
+    $buildTime = ($buildEnd - $buildStart).TotalSeconds
+    $apk = Get-VariantApk -BuildRoot $root -BuildType release
 }
 else {
+    & .\gradlew.bat :app:assembleDebug "-Pandroid.injected.build.abi=$abi" -x lint -x test --parallel
 
-    & .\gradlew.bat :app:installDebug "-Pandroid.injected.build.abi=$abi" -x lint -x test --parallel
-
-    $code = $LASTEXITCODE
-
-    $apk = Get-LatestApk -BuildRoot $root
-
-    if ($code -ne 0) {
-
-        & .\gradlew.bat :app:assembleDebug "-Pandroid.injected.build.abi=$abi" -x lint -x test --parallel
-
-        if ($LASTEXITCODE -ne 0) {
-            exit $LASTEXITCODE
-        }
-
-        $apk = Get-LatestApk -BuildRoot $root
-
-        if (-not $apk) {
-            throw "Debug APK not found"
-        }
-
-        Install-Apk $apk.FullName
+    if ($LASTEXITCODE -ne 0) {
+        exit $LASTEXITCODE
     }
 
-    & adb shell monkey -p com.glassbox.hello -c android.intent.category.LAUNCHER 1
+    $apk = Get-VariantApk -BuildRoot $root -BuildType debug
+    if (-not $apk) {
+        throw "Debug APK not found below $root\app\build"
+    }
+    $buildEnd = Get-Date
+    $buildTime = ($buildEnd - $buildStart).TotalSeconds
+    $installTime = Install-Apk $apk.FullName
 
-    $apk = Get-LatestApk -BuildRoot $root
+    $serial = Wait-ForReadyDevice -TimeoutSeconds 20
+    & adb -s $serial shell monkey -p com.glassbox.hello -c android.intent.category.LAUNCHER 1 |
+        ForEach-Object { Write-Host $_ }
+    if ($LASTEXITCODE -ne 0) {
+        throw "APK installed, but the app launch command failed"
+    }
 }
-
-$buildEnd = Get-Date
-$buildTime = ($buildEnd - $buildStart).TotalSeconds
 
 # ---------------- INSTALL (release path) ----------------
 
-$installTime = 0
+if (-not $installTime) {
+    $installTime = 0
+}
 
 if ($rel -and $apk) {
     Write-Host $apk.FullName

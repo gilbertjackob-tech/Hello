@@ -71,7 +71,6 @@ import com.glassbox.hello.networkstatus.NetworkStatus
 import com.glassbox.hello.networkstatus.checkCloudChatNetwork
 import com.glassbox.hello.networkstatus.checkHelloNetwork
 import com.glassbox.hello.ui.components.ErrorView
-import com.glassbox.hello.ui.components.AppBackground
 import com.glassbox.hello.ui.components.FilterChip
 import com.glassbox.hello.ui.components.GlassSearchBar
 import com.glassbox.hello.ui.components.HelloAvatar
@@ -107,6 +106,9 @@ private enum class ChatFilter(val label: String) {
 }
 
 private const val INBOX_DEBUG_TAG = "HelloInbox"
+private val inboxTimeFormatter = ThreadLocal.withInitial {
+    SimpleDateFormat("HH:mm", Locale.getDefault())
+}
 
 @Composable
 fun ChatListScreen(
@@ -199,7 +201,6 @@ fun ChatListScreen(
         val presenceListener: (org.json.JSONObject) -> Unit = presenceListener@{
             val payloadUserId = it.optString("userId").ifBlank { it.optString("id") }
             if (payloadUserId == currentUserId) {
-                Log.d(INBOX_DEBUG_TAG, "socket_presence_ignored_self currentUserId=$currentUserId payload=$it")
                 return@presenceListener
             }
             Log.d(INBOX_DEBUG_TAG, "socket_presence currentUserId=$currentUserId payload=$it")
@@ -208,12 +209,16 @@ fun ChatListScreen(
         socketManager.addChatUpdateListener(chatListener)
         socketManager.addMessageListener(messageListener)
         socketManager.addPresenceListener(presenceListener)
-        socketManager.connect(context, CoreUser(id = currentUserId, name = currentUserName))
         onDispose {
             socketManager.removeChatUpdateListener(chatListener)
             socketManager.removeMessageListener(messageListener)
             socketManager.removePresenceListener(presenceListener)
         }
+    }
+
+    LaunchedEffect(currentUserId, currentUserName) {
+        delay(900)
+        socketManager.connect(context, CoreUser(id = currentUserId, name = currentUserName))
     }
 
     LaunchedEffect(showNewChat, showGroupChat, userSearchQuery, groupSearchQuery) {
@@ -261,7 +266,7 @@ fun ChatListScreen(
 
     fun openNetworkDiagnostics() {}
 
-    AppBackground(modifier = modifier.fillMaxSize()) {
+    Box(modifier = modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -465,9 +470,7 @@ fun ChatListScreen(
                                 HelloChatCard(
                                     title = title,
                                     subtitle = chat.lastMessage ?: chat.presenceSubtitle(currentUserId),
-                                    time = chat.lastMessageTime?.let {
-                                        SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(it))
-                                    }.orEmpty(),
+                                    time = formatInboxTime(chat.lastMessageTime),
                                     unreadCount = chat.unreadCount ?: 0,
                                     active = (chat.unreadCount ?: 0) > 0,
                                     avatarUrl = other?.avatar ?: chat.avatar,
@@ -1048,4 +1051,9 @@ private fun User.profileSubtitle(): String {
 private fun isCallChat(chat: Chat): Boolean {
     val preview = chat.lastMessage.orEmpty().lowercase(Locale.US)
     return "call" in preview || "missed" in preview || "video" in preview || "audio" in preview
+}
+
+private fun formatInboxTime(timestamp: Long?): String {
+    if (timestamp == null) return ""
+    return inboxTimeFormatter.get()?.format(Date(timestamp)).orEmpty()
 }

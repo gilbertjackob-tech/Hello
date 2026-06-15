@@ -9,10 +9,14 @@ import com.glassbox.hello.chat.ChatModels.Chat
 import com.glassbox.hello.chat.ChatModels.Message
 import com.glassbox.hello.chat.ChatModels.User
 import com.glassbox.hello.chat.components.AttachmentDraft
+import com.glassbox.hello.chat.components.ChatPreparedMessages
+import com.glassbox.hello.chat.components.buildChatRenderRows
 import com.glassbox.hello.chat.components.messagePreviewText
+import com.glassbox.hello.chat.components.visibleForUser
 import com.glassbox.hello.core.ResultState
 import com.glassbox.hello.network.HelloApiClient
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -29,6 +33,8 @@ class ChatViewModel : ViewModel() {
 
     private val _messagesState = MutableStateFlow<ResultState<List<Message>>>(ResultState.Loading)
     val messagesState: StateFlow<ResultState<List<Message>>> = _messagesState
+    private val _preparedMessagesState = MutableStateFlow<ResultState<ChatPreparedMessages>>(ResultState.Loading)
+    val preparedMessagesState: StateFlow<ResultState<ChatPreparedMessages>> = _preparedMessagesState
 
     private val _usersState = MutableStateFlow<ResultState<List<User>>>(ResultState.Success(emptyList()))
     val usersState: StateFlow<ResultState<List<User>>> = _usersState
@@ -53,10 +59,27 @@ class ChatViewModel : ViewModel() {
     val isLoadingOlderMessages: StateFlow<Boolean> = _isLoadingOlderMessages
     private val _hasMoreOlderMessages = MutableStateFlow(true)
     val hasMoreOlderMessages: StateFlow<Boolean> = _hasMoreOlderMessages
+    private var messagePresentationConfig: MessagePresentationConfig? = null
+    private var chatsLoadJob: Job? = null
 
     companion object {
-        private const val MESSAGE_PAGE_SIZE = 50
+        private const val MESSAGE_PAGE_SIZE = 30
         private const val TAG = "HelloInbox"
+    }
+
+    fun configureMessagePresentation(
+        currentUserId: String,
+        chatIsGroup: Boolean,
+        unreadCount: Int
+    ) {
+        val next = MessagePresentationConfig(
+            currentUserId = currentUserId,
+            chatIsGroup = chatIsGroup,
+            unreadCount = unreadCount
+        )
+        if (messagePresentationConfig == next) return
+        messagePresentationConfig = next
+        updatePreparedMessages(_messagesState.value)
     }
 
     fun configureCloudChat(context: Context) {
@@ -144,25 +167,29 @@ class ChatViewModel : ViewModel() {
     fun loadChats(userId: String, currentUserName: String? = null, cloudChatEnabled: Boolean = true) {
         val startedAt = SystemClock.elapsedRealtime()
         val hasCached = _chatsState.value is ResultState.Success
-        val cachedCloudChats = normalizeVisibleChats(
-            repository.cachedChats(userId, cloudChatEnabled),
-            userId
-        )
-        Log.d(
-            TAG,
-            "vm_load_chats_start userId=$userId currentUserName=${currentUserName.orEmpty()} cloudChatEnabled=$cloudChatEnabled hadVisibleState=$hasCached cachedVisibleCount=${cachedCloudChats.size} cachedIds=${cachedCloudChats.take(8).joinToString(",") { it.id }}"
-        )
-        if (cachedCloudChats.isNotEmpty()) {
-            _chatsState.value = ResultState.Success(cachedCloudChats)
-            Log.d(TAG, "vm_load_chats_cached_visible userId=$userId count=${cachedCloudChats.size} elapsedMs=${SystemClock.elapsedRealtime() - startedAt}")
-        }
-        val hasVisibleChats = hasCached || cachedCloudChats.isNotEmpty()
-        if (!hasVisibleChats) {
+        if (!hasCached) {
             _chatsState.value = ResultState.Loading
         } else {
             _chatsRefreshing.value = true
         }
-        viewModelScope.launch {
+        chatsLoadJob?.cancel()
+        chatsLoadJob = viewModelScope.launch {
+            val cachedCloudChats = withContext(Dispatchers.IO) {
+                normalizeVisibleChats(
+                    repository.cachedChats(userId, cloudChatEnabled),
+                    userId
+                )
+            }
+            Log.d(
+                TAG,
+                "vm_load_chats_start userId=$userId currentUserName=${currentUserName.orEmpty()} cloudChatEnabled=$cloudChatEnabled hadVisibleState=$hasCached cachedVisibleCount=${cachedCloudChats.size} cachedIds=${cachedCloudChats.take(8).joinToString(",") { it.id }}"
+            )
+            if (cachedCloudChats.isNotEmpty()) {
+                _chatsState.value = ResultState.Success(cachedCloudChats)
+                _chatsRefreshing.value = true
+                Log.d(TAG, "vm_load_chats_cached_visible userId=$userId count=${cachedCloudChats.size} elapsedMs=${SystemClock.elapsedRealtime() - startedAt}")
+            }
+            val hasVisibleChats = hasCached || cachedCloudChats.isNotEmpty()
             val result = withContext(Dispatchers.IO) {
                 repository.fetchChats(userId, currentUserName, cloudChatEnabled)
             }
@@ -201,19 +228,22 @@ class ChatViewModel : ViewModel() {
         val startedAt = SystemClock.elapsedRealtime()
         _messagesPaginationOffset.value = 0
         _hasMoreOlderMessages.value = true
-        val cachedMessages = normalizeMessages(repository.cachedMessages(chatId, cloudChatEnabled))
-        if (cachedMessages.isNotEmpty()) {
-            _messagesState.value = ResultState.Success(cachedMessages)
-            _messagesPaginationOffset.value = cachedMessages.size
-            Log.d(TAG, "vm_load_messages_cached chatId=$chatId count=${cachedMessages.size} elapsedMs=${SystemClock.elapsedRealtime() - startedAt}")
-        }
         val hasVisibleMessages = _messagesState.value is ResultState.Success
         if (!hasVisibleMessages) {
-            _messagesState.value = ResultState.Loading
+            publishMessages(ResultState.Loading)
         } else {
             _messagesRefreshing.value = true
         }
         viewModelScope.launch {
+            val cachedMessages = withContext(Dispatchers.IO) {
+                normalizeMessages(repository.cachedMessages(chatId, cloudChatEnabled))
+                    .takeLast(MESSAGE_PAGE_SIZE)
+            }
+            if (cachedMessages.isNotEmpty()) {
+                publishMessages(ResultState.Success(cachedMessages))
+                _messagesPaginationOffset.value = cachedMessages.size
+                Log.d(TAG, "vm_load_messages_cached chatId=$chatId count=${cachedMessages.size} elapsedMs=${SystemClock.elapsedRealtime() - startedAt}")
+            }
             val result = repository.fetchMessages(chatId, limit = MESSAGE_PAGE_SIZE, offset = 0, cloudChatEnabled = cloudChatEnabled)
             if (result.isSuccess) {
                 val remoteMessages = result.getOrNull().orEmpty()
@@ -221,12 +251,12 @@ class ChatViewModel : ViewModel() {
                     ?.data
                     .orEmpty()
                 val messages = withContext(Dispatchers.Default) { mergeMessages(currentMessages, remoteMessages) }
-                _messagesState.value = ResultState.Success(messages)
+                publishMessages(ResultState.Success(messages))
                 _hasMoreOlderMessages.value = remoteMessages.size >= MESSAGE_PAGE_SIZE
                 _messagesPaginationOffset.value = messages.size
                 Log.d(TAG, "vm_load_messages_remote chatId=$chatId remoteCount=${remoteMessages.size} visibleCount=${messages.size} elapsedMs=${SystemClock.elapsedRealtime() - startedAt}")
             } else if (!hasVisibleMessages) {
-                _messagesState.value = ResultState.Error(result.exceptionOrNull()?.message ?: "Failed to load messages")
+                publishMessages(ResultState.Error(result.exceptionOrNull()?.message ?: "Failed to load messages"))
                 Log.w(TAG, "vm_load_messages_error chatId=$chatId elapsedMs=${SystemClock.elapsedRealtime() - startedAt} error=${result.exceptionOrNull()?.message ?: "Failed to load messages"}")
             } else {
                 Log.w(TAG, "vm_load_messages_refresh_error chatId=$chatId elapsedMs=${SystemClock.elapsedRealtime() - startedAt} error=${result.exceptionOrNull()?.message ?: "Failed to load messages"}")
@@ -265,7 +295,7 @@ class ChatViewModel : ViewModel() {
                         unseenMessages
                     }
                 }
-                _messagesState.value = ResultState.Success(allMessages)
+                publishMessages(ResultState.Success(allMessages))
                 _hasMoreOlderMessages.value = fetchedMessages.size >= MESSAGE_PAGE_SIZE
                 _messagesPaginationOffset.value += fetchedMessages.size
             }
@@ -350,10 +380,10 @@ class ChatViewModel : ViewModel() {
     fun clearChat(chatId: String, userId: String, cloudChatEnabled: Boolean = true) {
         viewModelScope.launch {
             val previous = _messagesState.value
-            _messagesState.value = ResultState.Success(emptyList())
+            publishMessages(ResultState.Success(emptyList()))
             val result = repository.clearChat(chatId, userId, cloudChatEnabled)
             if (result.isFailure) {
-                _messagesState.value = previous
+                publishMessages(previous)
             }
         }
     }
@@ -361,7 +391,7 @@ class ChatViewModel : ViewModel() {
     fun deleteChat(chatId: String, userId: String, cloudChatEnabled: Boolean = true) {
         viewModelScope.launch {
             repository.deleteChat(chatId, userId, cloudChatEnabled)
-            _messagesState.value = ResultState.Success(emptyList())
+            publishMessages(ResultState.Success(emptyList()))
         }
     }
 
@@ -669,7 +699,9 @@ class ChatViewModel : ViewModel() {
                 }
             )
         }
-        repository.clearCachedUnread(currentUserId, chatId, cloudChatEnabled)
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.clearCachedUnread(currentUserId, chatId, cloudChatEnabled)
+        }
     }
 
     fun applyPresenceUpdate(payload: JSONObject) {
@@ -743,24 +775,14 @@ class ChatViewModel : ViewModel() {
         val current = _messagesState.value
         val messages = if (current is ResultState.Success) current.data else emptyList()
         val tempReplacementId = replaceTempId ?: findMatchingOptimisticMessageId(messages, message)
+        val existingIndex = messages.indexOfFirst { it.id == message.id }
+        val replacementIndex = tempReplacementId?.let { tempId -> messages.indexOfFirst { it.id == tempId } } ?: -1
         val next = when {
-            messages.any { it.id == message.id } -> {
-                messages.map { if (it.id == message.id) message else it }
-            }
-            tempReplacementId != null -> {
-                messages.map { candidate ->
-                    if (candidate.id == tempReplacementId) {
-                        message.copy(status = message.status ?: "sent")
-                    } else {
-                        candidate
-                    }
-                }
-            }
-            else -> {
-                messages + message
-            }
-        }.sortedBy { it.timestamp }
-        _messagesState.value = ResultState.Success(next)
+            existingIndex >= 0 -> replaceMessageAt(messages, existingIndex, message)
+            replacementIndex >= 0 -> replaceMessageAt(messages, replacementIndex, message.copy(status = message.status ?: "sent"))
+            else -> appendMessageInTimestampOrder(messages, message)
+        } ?: return
+        publishMessages(ResultState.Success(next))
     }
 
     private fun upsertChat(chat: Chat, currentUserId: String) {
@@ -821,7 +843,22 @@ class ChatViewModel : ViewModel() {
     private fun mutateMessages(transform: (Message) -> Message) {
         val current = _messagesState.value
         if (current !is ResultState.Success) return
-        _messagesState.value = ResultState.Success(current.data.map(transform))
+        val messages = current.data
+        var changedIndex = -1
+        var changedMessage: Message? = null
+        for (index in messages.indices) {
+            val old = messages[index]
+            val next = transform(old)
+            if (next != old) {
+                changedIndex = index
+                changedMessage = next
+                break
+            }
+        }
+        if (changedIndex < 0 || changedMessage == null) return
+        replaceMessageAt(messages, changedIndex, changedMessage)?.let { next ->
+            publishMessages(ResultState.Success(next))
+        }
     }
 
     private fun applyReactionPatch(messageId: String, emoji: String, userId: String) {
@@ -890,6 +927,84 @@ class ChatViewModel : ViewModel() {
     private fun normalizedSortKey(value: String?): String =
         value?.trim()?.lowercase().orEmpty()
 
+    private fun publishMessages(state: ResultState<List<Message>>) {
+        val previousMessages = (_messagesState.value as? ResultState.Success<List<Message>>)?.data.orEmpty()
+        if (_messagesState.value == state) return
+        _messagesState.value = state
+        updatePreparedMessages(state)
+        if (state is ResultState.Success) {
+            val preserved = countPreservedReferences(previousMessages, state.data)
+            Log.d(
+                TAG,
+                "vm_messages_emit count=${state.data.size} preservedRefs=$preserved changedRefs=${state.data.size - preserved}"
+            )
+        }
+    }
+
+    private fun updatePreparedMessages(state: ResultState<List<Message>>) {
+        _preparedMessagesState.value = when (state) {
+            is ResultState.Loading -> ResultState.Loading
+            is ResultState.Error -> ResultState.Error(state.message)
+            is ResultState.Success -> {
+                val config = messagePresentationConfig
+                if (config == null) {
+                    ResultState.Success(ChatPreparedMessages(state.data, emptyList()))
+                } else {
+                    val visibleMessages = state.data.visibleForUser(config.currentUserId)
+                    ResultState.Success(
+                        ChatPreparedMessages(
+                            visibleMessages = visibleMessages,
+                            rows = buildChatRenderRows(
+                                messages = visibleMessages,
+                                currentUserId = config.currentUserId,
+                                chatIsGroup = config.chatIsGroup,
+                                unreadCount = config.unreadCount
+                            )
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    private fun countPreservedReferences(previous: List<Message>, next: List<Message>): Int {
+        if (previous.isEmpty() || next.isEmpty()) return 0
+        val previousById = previous.associateBy { it.id }
+        return next.count { message -> previousById[message.id] === message }
+    }
+
+    private fun replaceMessageAt(messages: List<Message>, index: Int, message: Message): List<Message>? {
+        val current = messages.getOrNull(index) ?: return null
+        if (current == message) return null
+        val next = ArrayList<Message>(messages)
+        next[index] = message
+        return if (keepsTimestampOrder(next, index)) next else next.sortedBy { it.timestamp }
+    }
+
+    private fun appendMessageInTimestampOrder(messages: List<Message>, message: Message): List<Message> {
+        if (messages.isEmpty() || messages.last().timestamp <= message.timestamp) {
+            return messages + message
+        }
+        val next = ArrayList<Message>(messages.size + 1)
+        var inserted = false
+        for (existing in messages) {
+            if (!inserted && message.timestamp < existing.timestamp) {
+                next += message
+                inserted = true
+            }
+            next += existing
+        }
+        if (!inserted) next += message
+        return next
+    }
+
+    private fun keepsTimestampOrder(messages: List<Message>, index: Int): Boolean {
+        val previousTimestamp = messages.getOrNull(index - 1)?.timestamp ?: Long.MIN_VALUE
+        val nextTimestamp = messages.getOrNull(index + 1)?.timestamp ?: Long.MAX_VALUE
+        val timestamp = messages[index].timestamp
+        return timestamp >= previousTimestamp && timestamp <= nextTimestamp
+    }
+
     private fun normalizeVisibleChats(chats: List<Chat>, currentUserId: String): List<Chat> {
         if (chats.isEmpty()) return emptyList()
         return chats
@@ -909,7 +1024,10 @@ class ChatViewModel : ViewModel() {
         if (incomingMessages.isEmpty()) return currentMessages
         val mergedById = LinkedHashMap<String, Message>(currentMessages.size + incomingMessages.size)
         currentMessages.forEach { mergedById[it.id] = it }
-        incomingMessages.forEach { mergedById[it.id] = it }
+        incomingMessages.forEach { incoming ->
+            val existing = mergedById[incoming.id]
+            mergedById[incoming.id] = if (existing == incoming) existing else incoming
+        }
         return mergedById.values.sortedBy { it.timestamp }
     }
 
@@ -938,4 +1056,10 @@ class ChatViewModel : ViewModel() {
     fun resetCreateChatState() {
         _createChatState.value = null
     }
+
+    private data class MessagePresentationConfig(
+        val currentUserId: String,
+        val chatIsGroup: Boolean,
+        val unreadCount: Int
+    )
 }

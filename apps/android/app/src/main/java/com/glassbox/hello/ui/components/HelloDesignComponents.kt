@@ -420,19 +420,13 @@ fun HelloChatCard(
     onLongClick: (() -> Unit)? = null
 ) {
     val cute = HelloThemeRuntime.activePalette.value.id == "cute"
-    val pressScale by animateFloatAsState(
-        targetValue = if (active) 1f else 0.985f,
-        animationSpec = HelloMotion.SpringSnappy,
-        label = "chatCardScale"
-    )
     GlassCard(
         modifier = modifier
             .fillMaxWidth()
             .combinedClickable(
                 onClick = onClick,
                 onLongClick = onLongClick
-            )
-            .scale(pressScale),
+            ),
         cornerRadius = HelloDimens.CornerL,
         bgAlpha = if (cute) HelloColors.PanelStrong else if (dark) HelloColors.GlassBg else HelloColors.PanelStrong,
         borderColor = if (active) HelloColors.AccentStrong else if (cute) HelloColors.BorderStrong else HelloColors.GlassBorder

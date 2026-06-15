@@ -635,6 +635,9 @@ private fun CallsNotificationRows(userId: String?) {
     val context = LocalContext.current
     val prefs = LocalContext.current.getSharedPreferences("hello_settings", 0)
     var desktopNotifications by remember { mutableStateOf(prefs.getBoolean("desktop_notifications", false)) }
+    var showCallLogsInChat by remember {
+        mutableStateOf(prefs.getBoolean(HelloPreferences.KEY_SHOW_CALL_LOGS_IN_CHAT, false))
+    }
     var calls by remember { mutableStateOf(prefs.getBoolean(NotificationPrefs.KEY_CALL_NOTIFICATIONS, true)) }
     var missedCalls by remember { mutableStateOf(prefs.getBoolean(NotificationPrefs.KEY_MISSED_CALL_NOTIFICATIONS, true)) }
     var messages by remember { mutableStateOf(prefs.getBoolean(NotificationPrefs.KEY_MESSAGE_NOTIFICATIONS, true)) }
@@ -653,6 +656,10 @@ private fun CallsNotificationRows(userId: String?) {
         true
     }
     userId?.let { PrivacyInlineRow(it) }
+    ToggleRow("Show call logs in chats", showCallLogsInChat) {
+        showCallLogsInChat = it
+        HelloPreferences.setShowCallLogsInChat(context, it)
+    }
     ToggleRow("Incoming calls", calls) {
         calls = it
         prefs.edit().putBoolean(NotificationPrefs.KEY_CALL_NOTIFICATIONS, it).apply()
